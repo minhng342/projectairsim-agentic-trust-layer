@@ -1,5 +1,5 @@
-# Project AirSim client must match the simulator binary (Blocks v1.0.1)
-projectairsim==1.0.1
+# Client version specified by the Project AirSim v1.0.1 release notes (Blocks v1.0.1)
+projectairsim==1.0.2
 pydantic>=2,<3
 pytest>=8
 

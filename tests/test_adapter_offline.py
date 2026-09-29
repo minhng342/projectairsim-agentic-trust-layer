@@ -16,7 +16,7 @@ from tests import fake_projectairsim as fake
 fake.install()
 
 from adapters.projectairsim_adapter import ProjectAirSimAdapter, yaw_deg_from_quaternion  # noqa: E402
-from models.telemetry import LandedState, Quaternion, ValidationStatus  # noqa: E402
+from models.telemetry import GroundState, LandedState, Quaternion, ValidationStatus  # noqa: E402
 from validation.telemetry_validator import ValidationLimits  # noqa: E402
 
 T0 = 9_711_000_000  # kinematics time_stamp in GOOD_KINEMATICS
@@ -270,13 +270,128 @@ def test_landed_state_mapping_and_consistency_warning():
 def test_concurrent_snapshots_do_not_overlap_requests():
     a = make_adapter()
     fresh_pose(a)
-    threads = [threading.Thread(target=lambda: [a.get_snapshot("Drone1") for _ in range(5)])
-               for _ in range(6)]
+    errors = []
+
+    def worker():
+        try:
+            for _ in range(5):
+                a.get_snapshot("Drone1")
+        except Exception as err:  # collected so the main thread can assert on it
+            errors.append(err)
+
+    threads = [threading.Thread(target=worker) for _ in range(6)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
+    assert errors == [], errors
     assert a.drone("Drone1").overlapping_requests == 0
+
+
+# ------------------------------------------------------------ callback failures
+def test_nan_collision_timestamp_is_counted():
+    a = make_adapter()
+    fresh_pose(a)
+    publish_collision(a, {"time_stamp": float("nan"), "object_name": "Ground"})
+    assert a.topic_stats()["Drone1"]["bad_msgs"] == 1
+    s = a.get_snapshot("Drone1")
+    assert s.collision.count == 1 and s.collision.recent_collision is False
+    assert s.validation_status == ValidationStatus.INVALID
+
+
+def test_unexpected_callback_exception_is_counted_not_raised():
+    a = make_adapter()
+
+    def boom(*_args):
+        raise ZeroDivisionError("simulated bug")
+
+    a._update_ground_detector = boom
+    fresh_pose(a)  # must not raise into the receive thread
+    stats = a.topic_stats()["Drone1"]
+    assert stats["bad_msgs"] >= 1
+    assert "ZeroDivisionError" in a._cache["Drone1"].last_bad_msg
+
+
+# ------------------------------------------------------------ sim progress
+def test_duplicate_timestamps_keep_transport_fresh_but_go_stale():
+    a = make_adapter(limits=ValidationLimits(max_telemetry_age_ms=80))
+    fresh_pose(a)
+    for _ in range(6):                 # same time_stamp replayed for ~150 ms
+        time.sleep(0.025)
+        publish_pose(a, pose_msg(T0, 10.30, 16.51, -9.05))
+    s = a.get_snapshot("Drone1")
+    assert s.telemetry_age_ms < 80
+    assert s.sim_progress_age_ms > 80
+    assert s.validation_status == ValidationStatus.STALE, s.validation_errors
+    assert any("has not advanced" in e for e in s.validation_errors)
+
+
+# ------------------------------------------------------------ ground detector
+def descend_then_rest(a, t_end, rest_s, z_ground=-1.19, descend_mps=0.2, dt=3_000_000):
+    """Descend at 0.2 m/s for 0.3 s, touch (resting collision), then sit still."""
+    rest_n = int(rest_s * 1e9 / dt)
+    t_touch = t_end - rest_n * dt
+    for i in range(100, 0, -1):
+        t = t_touch - i * dt
+        publish_pose(a, pose_msg(t, 10.4, 16.2, z_ground - descend_mps * (t_touch - t) / 1e9))
+    publish_pose(a, pose_msg(t_touch, 10.4, 16.2, z_ground))
+    publish_collision(a, {"time_stamp": t_touch, "object_name": "Ground"})
+    for i in range(1, rest_n + 1):
+        publish_pose(a, pose_msg(t_touch + i * dt, 10.4, 16.2, z_ground))
+
+
+def test_grounded_by_contact_while_raw_state_still_flying():
+    """Reproduces the Pass 4.1 live run: touchdown, raw landed_state stays FLYING."""
+    a = make_adapter()
+    a.drone("Drone1").landed = 1  # FLYING (lagging)
+    descend_then_rest(a, T0, rest_s=1.2)
+    s = a.get_snapshot("Drone1")
+    assert s.landed_state == LandedState.FLYING           # raw value untouched
+    assert s.ground_state == GroundState.GROUNDED
+    assert s.ground_state_basis == "resting_contact+still"
+
+
+def test_not_grounded_before_stillness_dwell():
+    a = make_adapter()
+    descend_then_rest(a, T0, rest_s=0.6)
+    s = a.get_snapshot("Drone1")
+    assert s.ground_state == GroundState.AIRBORNE
+
+
+def test_ground_latch_released_after_climbing():
+    a = make_adapter()
+    descend_then_rest(a, T0 - 600_000_000, rest_s=1.2)
+    # take off: climb 1 m over 0.5 s, then hover still for 1.2 s at altitude
+    t = T0 - 600_000_000
+    for i in range(1, 168):
+        t += 3_000_000
+        publish_pose(a, pose_msg(t, 10.4, 16.2, -1.19 - 2.0 * i * 0.003))
+    z_hover = -1.19 - 2.0 * 167 * 0.003
+    for i in range(1, 400):
+        t += 3_000_000
+        publish_pose(a, pose_msg(t, 10.4, 16.2, z_hover))
+    a.drone("Drone1").kinematics = dict(fake.GOOD_KINEMATICS, time_stamp=t)
+    s = a.get_snapshot("Drone1")
+    assert s.ground_state == GroundState.AIRBORNE, s.ground_state_basis
+
+
+def test_impact_collision_does_not_latch_ground():
+    a = make_adapter()
+    publish_pose(a, *straight_line(T0 - 1_300_000_000, 10.0))
+    publish_collision(a, {"time_stamp": T0 - 1_300_000_000, "object_name": "Wall"})
+    for i in range(1, 434):
+        publish_pose(a, pose_msg(T0 - 1_300_000_000 + i * 3_000_000, 10.0, 16.5, -1.19))
+    s = a.get_snapshot("Drone1")
+    assert s.collision.is_resting_contact is False
+    assert s.ground_state == GroundState.AIRBORNE
+
+
+def test_raw_landed_state_grounds_immediately():
+    a = make_adapter()
+    fresh_pose(a)
+    a.drone("Drone1").landed = 0
+    s = a.get_snapshot("Drone1")
+    assert s.ground_state == GroundState.GROUNDED and s.ground_state_basis == "landed_state"
 
 
 if __name__ == "__main__":

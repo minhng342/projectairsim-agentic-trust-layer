@@ -26,7 +26,7 @@ def line(s) -> str:
     return (f"t={s.sim_time_s:7.2f}s  {s.validation_status.value:<7} "
             f"N={s.position_ned_m.x:6.1f} E={s.position_ned_m.y:6.1f} alt={s.altitude_local_m:5.1f}m "
             f"hdg={s.heading_deg:5.1f} trk={trk} gs={s.ground_speed_mps:4.1f} vs={s.vertical_speed_mps:+4.1f} "
-            f"{s.landed_state.value:<7} age={age} coll={coll}")
+            f"raw={s.landed_state.value:<7} ground={s.ground_state.value:<8} age={age} coll={coll}")
 
 
 async def sample(adapter, seconds: float, hz: float = 2.0):
@@ -64,7 +64,7 @@ async def main(do_fly: bool):
             finally:
                 if not flight.done():
                     flight.cancel()
-                await safe_shutdown(adapter.drone(VEHICLE))
+                await safe_shutdown(adapter.drone(VEHICLE), adapter=adapter, vehicle_id=VEHICLE)
             print("--- after landing ---")
             await sample(adapter, 2)
         print("\n--- full snapshot (JSON) ---")

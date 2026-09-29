@@ -38,8 +38,8 @@ from datetime import datetime, timezone
 
 from projectairsim import Drone, ProjectAirSimClient, World
 
-from models.telemetry import (CollisionState, LandedState, Quaternion,
-                              TelemetrySnapshot, Vector3)
+from models.telemetry import (CollisionState, GroundState, LandedState,
+                              Quaternion, TelemetrySnapshot, Vector3)
 from validation.telemetry_validator import ValidationLimits, validate_snapshot
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -112,7 +112,11 @@ class _VehicleCache:
     last_bad_msg: str | None = None
     last_bad_msg_at: float | None = None       # host perf_counter
     clock_resets: int = 0
+    pose_advanced: float | None = None          # host perf_counter when time_stamp last increased
     collision: CollisionState = field(default_factory=CollisionState)
+    # Ground detector (updated on the pose thread so it runs at ~330 Hz, not at snapshot rate)
+    contact_latch_z: float | None = None        # NED z at the last resting contact; None = no latch
+    still_since_ts: int | None = None           # sim ts when the vehicle became still
 
 
 # ---------------------------------------------------------------- adapter
@@ -130,6 +134,10 @@ class ProjectAirSimAdapter:
         min_track_speed_mps: float = 0.5,
         speed_window_s: float = 0.1,
         bad_msg_error_window_s: float = 1.0,
+        ground_still_max_gs_mps: float = 0.25,
+        ground_still_max_vs_mps: float = 0.15,
+        ground_still_dwell_s: float = 1.0,
+        ground_latch_release_climb_m: float = 0.3,
     ):
         self.vehicle_ids = list(vehicle_ids)
         self.scene = scene
@@ -142,6 +150,10 @@ class ProjectAirSimAdapter:
         self.min_track_speed_mps = min_track_speed_mps
         self.speed_window_ns = int(speed_window_s * 1e9)
         self.bad_msg_error_window_s = bad_msg_error_window_s
+        self.ground_still_max_gs_mps = ground_still_max_gs_mps
+        self.ground_still_max_vs_mps = ground_still_max_vs_mps
+        self.ground_still_dwell_ns = int(ground_still_dwell_s * 1e9)
+        self.ground_latch_release_climb_m = ground_latch_release_climb_m
 
         self._client: ProjectAirSimClient | None = None
         self._world: World | None = None
@@ -214,6 +226,16 @@ class ProjectAirSimAdapter:
         c.last_bad_msg = what
         c.last_bad_msg_at = time.perf_counter()
 
+    def _record_callback_failure(self, vid: str, topic: str, err: Exception) -> None:
+        """Last-resort handler: an unexpected exception in a callback is still counted."""
+        try:
+            with self._lock:
+                c = self._cache.get(vid)
+                if c is not None:
+                    self._record_bad_msg(c, f"{topic}: unexpected {type(err).__name__}: {err}")
+        except Exception:
+            pass
+
     def _on_pose(self, vid: str):
         def cb(_topic, msg):
             try:
@@ -237,12 +259,32 @@ class ProjectAirSimAdapter:
                         c.pose_window.append((ts, x, y, z))
                         while c.pose_window and ts - c.pose_window[0][0] > self.speed_window_ns:
                             c.pose_window.popleft()
+                        c.pose_advanced = now
+                        self._update_ground_detector(c, ts, z)
                     c.pose_ts = ts
                     c.pose_received = now
                     c.pose_count += 1
-            except Exception:  # never let an exception reach the receive thread
-                pass
+            except Exception as err:  # never let an exception reach the receive thread
+                self._record_callback_failure(vid, "actual_pose", err)
         return cb
+
+    def _update_ground_detector(self, c: _VehicleCache, ts: int, z: float) -> None:
+        """Called with the lock held on every advancing pose."""
+        if c.contact_latch_z is not None and (c.contact_latch_z - z) > self.ground_latch_release_climb_m:
+            c.contact_latch_z = None  # climbed away from the contact point: release
+        gs, vs = self._window_velocity(c.pose_window)
+        still = (gs is not None and gs <= self.ground_still_max_gs_mps
+                 and abs(vs) <= self.ground_still_max_vs_mps)
+        if still:
+            if c.still_since_ts is None:
+                c.still_since_ts = ts
+        else:
+            c.still_since_ts = None
+
+    def _grounded_by_contact(self, c: _VehicleCache) -> bool:
+        return (c.contact_latch_z is not None and c.still_since_ts is not None
+                and c.pose_ts is not None
+                and c.pose_ts - c.still_since_ts >= self.ground_still_dwell_ns)
 
     def _on_collision(self, vid: str):
         def cb(_topic, msg):
@@ -255,7 +297,12 @@ class ProjectAirSimAdapter:
                         self._record_bad_msg(c, f"collision_info: message is {type(msg).__name__}")
                         return
                     ts = msg.get("time_stamp")
-                    ts = int(ts) if isinstance(ts, (int, float)) and not isinstance(ts, bool) else None
+                    if (isinstance(ts, bool) or not isinstance(ts, (int, float))
+                            or not math.isfinite(ts) or ts <= 0):
+                        self._record_bad_msg(c, f"collision_info: invalid time_stamp ({ts!r})")
+                        ts = None
+                    else:
+                        ts = int(ts)
                     speed = self._window_speed(c.pose_window)
                     resting = None if speed is None else speed < self.impact_speed_threshold_mps
                     old = c.collision
@@ -268,9 +315,23 @@ class ProjectAirSimAdapter:
                         count=old.count + 1,
                         impact_count=old.impact_count + (1 if resting is False else 0),
                     )
-            except Exception:
-                pass
+                    if resting is True and c.pose_window:
+                        c.contact_latch_z = c.pose_window[-1][3]
+            except Exception as err:
+                self._record_callback_failure(vid, "collision_info", err)
         return cb
+
+    @staticmethod
+    def _window_velocity(window: deque) -> tuple[float | None, float | None]:
+        """(ground speed, vertical speed +up) across the pose window, or (None, None)."""
+        if len(window) < 2:
+            return None, None
+        t0, x0, y0, z0 = window[0]
+        t1, x1, y1, z1 = window[-1]
+        dt = (t1 - t0) / 1e9
+        if dt < 0.05:
+            return None, None
+        return math.hypot(x1 - x0, y1 - y0) / dt, -(z1 - z0) / dt
 
     @staticmethod
     def _window_speed(window: deque) -> float | None:
@@ -325,6 +386,8 @@ class ProjectAirSimAdapter:
             c = self._cache[vehicle_id]
             pose_ts = c.pose_ts
             age_ms = (now - c.pose_received) * 1000.0 if c.pose_received is not None else None
+            progress_ms = (now - c.pose_advanced) * 1000.0 if c.pose_advanced is not None else None
+            by_contact = self._grounded_by_contact(c)
             collision = c.collision.model_copy()
             if c.bad_msg_count:
                 recent = (c.last_bad_msg_at is not None
@@ -337,6 +400,15 @@ class ProjectAirSimAdapter:
         if collision.sim_time_ns is not None and sim_time_ns > 0:
             delta = sim_time_ns - collision.sim_time_ns
             collision.recent_collision = 0 <= delta <= self.collision_window_ns
+
+        if landed == LandedState.LANDED:
+            ground, basis = GroundState.GROUNDED, "landed_state"
+        elif by_contact:
+            ground, basis = GroundState.GROUNDED, "resting_contact+still"
+        elif landed == LandedState.FLYING:
+            ground, basis = GroundState.AIRBORNE, "landed_state"
+        else:
+            ground, basis = GroundState.UNKNOWN, "landed_state unavailable"
 
         pose = kin.get("pose") if isinstance(kin.get("pose"), dict) else {}
         twist = kin.get("twist") if isinstance(kin.get("twist"), dict) else {}
@@ -364,8 +436,11 @@ class ProjectAirSimAdapter:
             ground_speed_mps=math.hypot(velocity.x, velocity.y),
             vertical_speed_mps=-velocity.z,
             landed_state=landed,
+            ground_state=ground,
+            ground_state_basis=basis,
             collision=collision,
             telemetry_age_ms=age_ms,
+            sim_progress_age_ms=progress_ms,
         )
         return validate_snapshot(snap, self.limits, extra_errors, extra_warnings)
 

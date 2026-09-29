@@ -43,6 +43,13 @@ class LandedState(str, Enum):
     UNKNOWN = "unknown"
 
 
+class GroundState(str, Enum):
+    """Operational on-ground decision (see TelemetrySnapshot.ground_state)."""
+    GROUNDED = "grounded"
+    AIRBORNE = "airborne"
+    UNKNOWN = "unknown"
+
+
 class CollisionState(BaseModel):
     has_collided: bool = False
     """True once any collision_info message has been received this session."""
@@ -98,11 +105,23 @@ class TelemetrySnapshot(BaseModel):
     """Positive = climbing (i.e. -velocity_ned_mps.z)."""
 
     landed_state: LandedState = LandedState.UNKNOWN
-    """From Project AirSim get_landed_state(); primary source for on-ground state."""
+    """Raw Project AirSim get_landed_state(), unmodified. Observed to stay FLYING
+    for ~12 s after physical touchdown, so don't use it alone for decisions."""
+    ground_state: GroundState = GroundState.UNKNOWN
+    """Operational on-ground state: GROUNDED if landed_state is LANDED, OR a
+    resting contact was observed and the vehicle has stayed still (ground speed
+    <= 0.25 m/s, |vertical speed| <= 0.15 m/s) for >= 1 s since. Use this, not
+    landed_state, for commands and shutdown decisions."""
+    ground_state_basis: str = ""
+    """Why ground_state has its value (e.g. "landed_state", "resting_contact+still")."""
     collision: CollisionState = Field(default_factory=CollisionState)
 
     telemetry_age_ms: float | None = None
-    """Host time since the last valid actual_pose message; None if none received."""
+    """Transport age: host time since the last valid actual_pose message arrived
+    (duplicates included). None if none received."""
+    sim_progress_age_ms: float | None = None
+    """Host time since the pose timestamp last ADVANCED. A frozen or replayed
+    stream keeps telemetry_age_ms low but lets this grow. None if none received."""
 
     validation_status: ValidationStatus = ValidationStatus.VALID
     validation_errors: list[str] = Field(default_factory=list)

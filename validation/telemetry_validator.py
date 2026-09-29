@@ -8,7 +8,8 @@ existing is not the same as it being trustworthy.
 Status policy
 - INVALID: any data-quality error (bad timestamp, non-finite value, out of
   bounds, implausible physics, pose/kinematics skew, adapter errors).
-- STALE: data is well-formed but the pose stream stopped updating.
+- STALE: data is well-formed but the pose stream stopped arriving, or its
+  sim timestamp stopped advancing (paused, frozen or replayed stream).
 - VALID: no errors. Only VALID telemetry should ever justify a command.
 Warnings never change the status; they carry safety-relevant observations
 (collision impacts, landed-state inconsistencies) for the risk gate to weigh.
@@ -63,8 +64,12 @@ def validate_snapshot(s: TelemetrySnapshot,
     if s.telemetry_age_ms is None:
         errors.append("actual_pose: no valid messages received")
     elif s.telemetry_age_ms > limits.max_telemetry_age_ms:
-        errors.append(f"{STALE_PREFIX}: {s.telemetry_age_ms:.0f} ms old "
+        errors.append(f"{STALE_PREFIX}: {s.telemetry_age_ms:.0f} ms since last message "
                       f"(limit {limits.max_telemetry_age_ms:.0f} ms)")
+    if (s.sim_progress_age_ms is not None
+            and s.sim_progress_age_ms > limits.max_telemetry_age_ms):
+        errors.append(f"{STALE_PREFIX}: pose time_stamp has not advanced for "
+                      f"{s.sim_progress_age_ms:.0f} ms (frozen or replayed stream?)")
     if s.pose_topic_sim_time_ns and s.pose_topic_sim_time_ns > 0 and s.sim_time_ns > 0:
         skew_ms = abs(s.sim_time_ns - s.pose_topic_sim_time_ns) / 1e6
         if skew_ms > limits.max_pose_skew_ms:
