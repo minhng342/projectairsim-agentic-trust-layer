@@ -327,7 +327,15 @@ def test_duplicate_timestamps_keep_transport_fresh_but_go_stale():
 
 
 # ------------------------------------------------------------ ground detector
-def descend_then_rest(a, t_end, rest_s, z_ground=-1.19, descend_mps=0.2, dt=3_000_000):
+STILL_KINEMATICS = dict(fake.GOOD_KINEMATICS,
+                        twist={"linear": {"x": 0.0, "y": 0.0, "z": 0.0},
+                               "angular": {"x": 0.0, "y": 0.0, "z": 0.0}})
+UP = {"x": 0.0, "y": 0.0, "z": -1.0}        # NED normal of level ground (observed live)
+WALL = {"x": -1.0, "y": 0.0, "z": 0.0}      # vertical surface
+
+
+def descend_then_rest(a, t_end, rest_s, z_ground=-1.19, descend_mps=0.2, dt=3_000_000,
+                      object_name="Ground", normal=UP):
     """Descend at 0.2 m/s for 0.3 s, touch (resting collision), then sit still."""
     rest_n = int(rest_s * 1e9 / dt)
     t_touch = t_end - rest_n * dt
@@ -335,7 +343,7 @@ def descend_then_rest(a, t_end, rest_s, z_ground=-1.19, descend_mps=0.2, dt=3_00
         t = t_touch - i * dt
         publish_pose(a, pose_msg(t, 10.4, 16.2, z_ground - descend_mps * (t_touch - t) / 1e9))
     publish_pose(a, pose_msg(t_touch, 10.4, 16.2, z_ground))
-    publish_collision(a, {"time_stamp": t_touch, "object_name": "Ground"})
+    publish_collision(a, {"time_stamp": t_touch, "object_name": object_name, "normal": normal})
     for i in range(1, rest_n + 1):
         publish_pose(a, pose_msg(t_touch + i * dt, 10.4, 16.2, z_ground))
 
@@ -386,12 +394,81 @@ def test_impact_collision_does_not_latch_ground():
     assert s.ground_state == GroundState.AIRBORNE
 
 
-def test_raw_landed_state_grounds_immediately():
+def test_raw_landed_state_grounds_immediately_when_still():
     a = make_adapter()
     fresh_pose(a)
-    a.drone("Drone1").landed = 0
+    d = a.drone("Drone1")
+    d.landed, d.kinematics = 0, STILL_KINEMATICS
     s = a.get_snapshot("Drone1")
     assert s.ground_state == GroundState.GROUNDED and s.ground_state_basis == "landed_state"
+
+
+def test_raw_landed_while_moving_is_not_grounded():
+    """Review finding 1: raw LANDED at 2.8 m/s must not make the drone 'grounded'."""
+    a = make_adapter()
+    fresh_pose(a)
+    a.drone("Drone1").landed = 0            # GOOD_KINEMATICS moves at ~2.8 m/s
+    s = a.get_snapshot("Drone1")
+    assert s.landed_state == LandedState.LANDED
+    assert s.ground_state == GroundState.UNKNOWN
+    assert "moving" in s.ground_state_basis
+
+
+def test_low_speed_wall_contact_does_not_ground():
+    """Review finding 2: a slow touch on a wall, then hovering still, is NOT grounded."""
+    a = make_adapter()
+    descend_then_rest(a, T0, rest_s=1.2, object_name="Wall", normal=WALL)
+    s = a.get_snapshot("Drone1")
+    assert s.collision.is_resting_contact is True
+    assert s.collision.is_supporting_surface is False
+    assert s.ground_state == GroundState.AIRBORNE, s.ground_state_basis
+
+
+def test_contact_without_normal_does_not_ground():
+    a = make_adapter()
+    descend_then_rest(a, T0, rest_s=1.2, normal=None)
+    assert a.get_snapshot("Drone1").ground_state == GroundState.AIRBORNE
+
+
+def test_upward_facing_platform_contact_can_ground():
+    """Supporting surfaces are recognized by the normal, not the object name."""
+    a = make_adapter()
+    descend_then_rest(a, T0, rest_s=1.2, z_ground=-6.0, object_name="Roof_Platform_3",
+                      normal={"x": 0.1, "y": 0.2, "z": -0.97})
+    s = a.get_snapshot("Drone1")
+    assert s.collision.is_supporting_surface is True
+    assert s.ground_state == GroundState.GROUNDED and s.ground_state_basis == "resting_contact+still"
+
+
+def test_moving_away_from_contact_releases_latch():
+    """Slide 1 m sideways at the same height after touching down, then stop."""
+    a = make_adapter()
+    descend_then_rest(a, T0 - 1_800_000_000, rest_s=0.3)
+    t = T0 - 1_800_000_000
+    for i in range(1, 168):                         # 1 m east over 0.5 s
+        t += 3_000_000
+        publish_pose(a, pose_msg(t, 10.4, 16.2 + 2.0 * i * 0.003, -1.19))
+    while t < T0:                                   # then still for ~1.3 s
+        t += 3_000_000
+        publish_pose(a, pose_msg(t, 10.4, 16.2 + 2.0 * 167 * 0.003, -1.19))
+    s = a.get_snapshot("Drone1")
+    assert s.ground_state == GroundState.AIRBORNE, s.ground_state_basis
+
+
+def test_clock_reset_clears_ground_latch_and_collision():
+    """Review finding 3: an old-timeline collision can't ground the new timeline."""
+    a = make_adapter()
+    descend_then_rest(a, T0 + 5_000_000_000, rest_s=1.2)   # old timeline, later timestamps
+    assert a._cache["Drone1"].contact_latch is not None
+    t = 1_000_000_000                                       # clock restarts
+    for i in range(500):                                    # still for 1.5 s on new timeline
+        publish_pose(a, pose_msg(t + i * 3_000_000, 10.4, 16.2, -1.19))
+    a.drone("Drone1").kinematics = dict(STILL_KINEMATICS, time_stamp=t + 499 * 3_000_000)
+    s = a.get_snapshot("Drone1")
+    assert a.topic_stats()["Drone1"]["clock_resets"] == 1
+    assert a._cache["Drone1"].contact_latch is None
+    assert s.collision.has_collided is False
+    assert s.ground_state == GroundState.AIRBORNE, s.ground_state_basis
 
 
 if __name__ == "__main__":

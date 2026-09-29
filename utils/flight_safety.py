@@ -11,9 +11,11 @@ is attempted independently, so one failure never skips the rest:
 
 Pass the adapter when you have one: its operational ground_state recognizes a
 drone that has already touched down, even while Project AirSim's raw
-landed_state still reports FLYING (observed for ~12 s after touchdown). Without
-an adapter, the raw landed_state is used and an already-landed drone may be
-hovered and landed a second time (harmless, but slow).
+landed_state still reports FLYING (in the Pass 4.2 run it only changed on
+disarm). Hover/land is skipped ONLY for a VALID snapshot that says GROUNDED;
+anything uncertain is treated as airborne. Without an adapter, the raw
+landed_state is used and an already-landed drone may be hovered and landed a
+second time (harmless, but slow).
 
 The caller still disconnects afterwards.
 """
@@ -32,15 +34,25 @@ async def _run_task(name, start, timeout_s, log):
 
 
 def is_grounded(drone, adapter=None, vehicle_id: str | None = None) -> bool | None:
-    """True / False, or None if it can't be determined."""
+    """True only when we're confident the vehicle is on the ground.
+
+    With an adapter: trusted only if the snapshot is VALID and ground_state is
+    GROUNDED/AIRBORNE. Stale, invalid or UNKNOWN returns None (treated as
+    airborne by safe_shutdown). It does NOT fall back to the raw landed_state,
+    because that can be wrong exactly when the adapter is unsure.
+    Without an adapter: raw landed_state (may lag after touchdown).
+    """
     if adapter is not None and vehicle_id is not None:
         try:
-            from models.telemetry import GroundState
-            state = adapter.get_snapshot(vehicle_id).ground_state
-            if state != GroundState.UNKNOWN:
-                return state == GroundState.GROUNDED
+            from models.telemetry import GroundState, ValidationStatus
+            snap = adapter.get_snapshot(vehicle_id)
+            if snap.validation_status != ValidationStatus.VALID:
+                return None
+            if snap.ground_state == GroundState.UNKNOWN:
+                return None
+            return snap.ground_state == GroundState.GROUNDED
         except Exception:
-            pass
+            return None
     try:
         return int(drone.get_landed_state()) == 0  # LandedState.LANDED
     except Exception:

@@ -23,6 +23,8 @@ Check = tuple[bool, str]
 class HeadingTolerance:
     max_error_deg: float = 3.0
     max_drift_m: float = 0.5
+    max_total_speed_mps: float = 0.3
+    max_yaw_rate_dps: float = 5.0
     dwell_s: float = 0.5
 
 
@@ -30,6 +32,7 @@ class HeadingTolerance:
 class AltitudeTolerance:
     max_error_m: float = 0.3
     max_vertical_speed_mps: float = 0.2
+    max_drift_m: float = 0.5
     dwell_s: float = 0.75
 
 
@@ -84,19 +87,27 @@ def heading_settled(s: TelemetrySnapshot, target_deg: float, hold_north_m: float
         return ok, why
     err = heading_error_deg(target_deg, s.heading_deg)
     drift = horizontal_distance_m(s, hold_north_m, hold_east_m)
-    detail = f"heading error {err:+.1f} deg, drift {drift:.2f} m"
-    return abs(err) <= tol.max_error_deg and drift <= tol.max_drift_m, detail
+    speed = total_speed_mps(s)
+    yaw_rate = math.degrees(s.angular_velocity_rad_s.z)
+    detail = (f"heading error {err:+.1f} deg, drift {drift:.2f} m, speed {speed:.2f} m/s, "
+              f"yaw rate {yaw_rate:+.1f} deg/s")
+    return (abs(err) <= tol.max_error_deg and drift <= tol.max_drift_m
+            and speed <= tol.max_total_speed_mps
+            and abs(yaw_rate) <= tol.max_yaw_rate_dps), detail
 
 
-def altitude_settled(s: TelemetrySnapshot, target_alt_m: float,
-                     tol: AltitudeTolerance = AltitudeTolerance()) -> Check:
+def altitude_settled(s: TelemetrySnapshot, target_alt_m: float, hold_north_m: float,
+                     hold_east_m: float, tol: AltitudeTolerance = AltitudeTolerance()) -> Check:
+    """CHANGE_ALTITUDE promises to hold N/E, so horizontal drift is checked too."""
     ok, why = _valid(s)
     if not ok:
         return ok, why
     err = s.altitude_local_m - target_alt_m
-    detail = f"altitude error {err:+.2f} m, vs {s.vertical_speed_mps:+.2f} m/s"
+    drift = horizontal_distance_m(s, hold_north_m, hold_east_m)
+    detail = f"altitude error {err:+.2f} m, vs {s.vertical_speed_mps:+.2f} m/s, drift {drift:.2f} m"
     return (abs(err) <= tol.max_error_m
-            and abs(s.vertical_speed_mps) <= tol.max_vertical_speed_mps), detail
+            and abs(s.vertical_speed_mps) <= tol.max_vertical_speed_mps
+            and drift <= tol.max_drift_m), detail
 
 
 def position_settled(s: TelemetrySnapshot, north_m: float, east_m: float, alt_m: float,

@@ -40,10 +40,19 @@ def test_heading_settled_checks_error_and_drift():
     assert heading_settled(snap(heading=359), 1, 0, 0)[0]              # wraps through north
 
 
-def test_altitude_settled_needs_error_and_vertical_speed():
-    assert altitude_settled(snap(alt=9.9), 10)[0]
-    assert not altitude_settled(snap(alt=9.6), 10)[0]
-    assert not altitude_settled(snap(alt=10.0, vs=0.5), 10)[0]         # passing through
+def test_altitude_settled_needs_error_vertical_speed_and_no_drift():
+    assert altitude_settled(snap(alt=9.9), 10, 0, 0)[0]
+    assert not altitude_settled(snap(alt=9.6), 10, 0, 0)[0]
+    assert not altitude_settled(snap(alt=10.0, vs=0.5), 10, 0, 0)[0]   # passing through
+    assert not altitude_settled(snap(alt=10.0, n=0.7), 10, 0, 0)[0]    # drifted off N/E
+
+
+def test_heading_settled_rejects_motion_and_yaw_rate():
+    assert not heading_settled(snap(heading=90, vn=0.5), 90, 0, 0)[0]  # sliding
+    spinning = snap(heading=90)
+    spinning.angular_velocity_rad_s.z = 0.2                            # ~11.5 deg/s
+    ok, detail = heading_settled(spinning, 90, 0, 0)
+    assert not ok and "yaw rate" in detail
 
 
 def test_position_settled_rejects_the_pass_4_1_early_return():
@@ -70,7 +79,7 @@ def test_grounded_uses_operational_ground_state():
 
 @pytest.mark.parametrize("check", [
     lambda s: heading_settled(s, 90, 0, 0),
-    lambda s: altitude_settled(s, 10),
+    lambda s: altitude_settled(s, 10, 0, 0),
     lambda s: position_settled(s, 0, 0, 10),
     lambda s: grounded(s),
 ])

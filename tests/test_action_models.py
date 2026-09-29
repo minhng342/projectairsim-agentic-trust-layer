@@ -47,6 +47,17 @@ def test_invalid_actions(action_type, params, message):
     assert message in str(exc.value)
 
 
+def test_unknown_fields_are_rejected():
+    """Trust boundary: an agent can't smuggle in fields the executor would ignore."""
+    with pytest.raises(ValidationError) as exc:
+        ProposedAction(vehicle_id="Drone1", action_type=ActionType.LAND, reason="x",
+                       override_safety=True)
+    assert "extra" in str(exc.value).lower()
+    with pytest.raises(ValidationError):
+        ProposedAction.model_validate_json(
+            '{"vehicle_id": "Drone1", "action_type": "land", "reason": "x", "heading": 90}')
+
+
 def test_reason_is_required():
     with pytest.raises(ValidationError):
         ProposedAction(vehicle_id="Drone1", action_type=ActionType.LAND, reason="")

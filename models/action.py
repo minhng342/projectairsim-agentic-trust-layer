@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from models.telemetry import TelemetrySnapshot
 
@@ -51,6 +51,9 @@ OPTIONAL: dict[ActionType, set[str]] = {
 
 
 class ProposedAction(BaseModel):
+    # Trust boundary: unknown fields from an agent are rejected, never ignored.
+    model_config = ConfigDict(extra="forbid")
+
     request_id: str = Field(default_factory=lambda: uuid4().hex)
     vehicle_id: str = Field(min_length=1)
     action_type: ActionType

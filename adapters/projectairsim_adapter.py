@@ -115,7 +115,7 @@ class _VehicleCache:
     pose_advanced: float | None = None          # host perf_counter when time_stamp last increased
     collision: CollisionState = field(default_factory=CollisionState)
     # Ground detector (updated on the pose thread so it runs at ~330 Hz, not at snapshot rate)
-    contact_latch_z: float | None = None        # NED z at the last resting contact; None = no latch
+    contact_latch: tuple[float, float, float] | None = None  # NED xyz at the last supporting contact
     still_since_ts: int | None = None           # sim ts when the vehicle became still
 
 
@@ -138,6 +138,8 @@ class ProjectAirSimAdapter:
         ground_still_max_vs_mps: float = 0.15,
         ground_still_dwell_s: float = 1.0,
         ground_latch_release_climb_m: float = 0.3,
+        ground_latch_release_horizontal_m: float = 0.5,
+        support_normal_max_z: float = -0.7,
     ):
         self.vehicle_ids = list(vehicle_ids)
         self.scene = scene
@@ -154,6 +156,8 @@ class ProjectAirSimAdapter:
         self.ground_still_max_vs_mps = ground_still_max_vs_mps
         self.ground_still_dwell_ns = int(ground_still_dwell_s * 1e9)
         self.ground_latch_release_climb_m = ground_latch_release_climb_m
+        self.ground_latch_release_horizontal_m = ground_latch_release_horizontal_m
+        self.support_normal_max_z = support_normal_max_z
 
         self._client: ProjectAirSimClient | None = None
         self._world: World | None = None
@@ -253,6 +257,10 @@ class ProjectAirSimAdapter:
                         # Sim clock went backwards (scene reload / restart): start a new window.
                         c.clock_resets += 1
                         c.pose_window.clear()
+                        # A new timeline: nothing observed on the old one may ground the vehicle.
+                        c.contact_latch = None
+                        c.still_since_ts = None
+                        c.collision = CollisionState()
                         self._record_bad_msg(
                             c, f"actual_pose: time_stamp went backwards ({c.pose_ts} -> {ts})")
                     if c.pose_ts is None or ts != c.pose_ts:
@@ -270,8 +278,12 @@ class ProjectAirSimAdapter:
 
     def _update_ground_detector(self, c: _VehicleCache, ts: int, z: float) -> None:
         """Called with the lock held on every advancing pose."""
-        if c.contact_latch_z is not None and (c.contact_latch_z - z) > self.ground_latch_release_climb_m:
-            c.contact_latch_z = None  # climbed away from the contact point: release
+        if c.contact_latch is not None:
+            lx, ly, lz = c.contact_latch
+            x, y = c.pose_window[-1][1], c.pose_window[-1][2]
+            if (abs(lz - z) > self.ground_latch_release_climb_m
+                    or math.hypot(x - lx, y - ly) > self.ground_latch_release_horizontal_m):
+                c.contact_latch = None  # moved away from the supporting contact: release
         gs, vs = self._window_velocity(c.pose_window)
         still = (gs is not None and gs <= self.ground_still_max_gs_mps
                  and abs(vs) <= self.ground_still_max_vs_mps)
@@ -282,7 +294,7 @@ class ProjectAirSimAdapter:
             c.still_since_ts = None
 
     def _grounded_by_contact(self, c: _VehicleCache) -> bool:
-        return (c.contact_latch_z is not None and c.still_since_ts is not None
+        return (c.contact_latch is not None and c.still_since_ts is not None
                 and c.pose_ts is not None
                 and c.pose_ts - c.still_since_ts >= self.ground_still_dwell_ns)
 
@@ -303,6 +315,12 @@ class ProjectAirSimAdapter:
                         ts = None
                     else:
                         ts = int(ts)
+                    normal = msg.get("normal")
+                    normal_z = None
+                    if isinstance(normal, dict):
+                        nz = normal.get("z")
+                        if isinstance(nz, (int, float)) and not isinstance(nz, bool) and math.isfinite(nz):
+                            normal_z = float(nz)
                     speed = self._window_speed(c.pose_window)
                     resting = None if speed is None else speed < self.impact_speed_threshold_mps
                     old = c.collision
@@ -312,11 +330,17 @@ class ProjectAirSimAdapter:
                         sim_time_ns=ts,
                         impact_speed_mps=speed,
                         is_resting_contact=resting,
+                        normal_z=normal_z,
+                        is_supporting_surface=(normal_z is not None
+                                               and normal_z <= self.support_normal_max_z),
                         count=old.count + 1,
                         impact_count=old.impact_count + (1 if resting is False else 0),
                     )
-                    if resting is True and c.pose_window:
-                        c.contact_latch_z = c.pose_window[-1][3]
+                    # Only a slow touch on an upward-facing surface can support the vehicle.
+                    # A wall (normal ~horizontal) or missing normal never latches.
+                    if resting is True and c.collision.is_supporting_surface and c.pose_window:
+                        _, lx, ly, lz = c.pose_window[-1]
+                        c.contact_latch = (lx, ly, lz)
             except Exception as err:
                 self._record_callback_failure(vid, "collision_info", err)
         return cb
@@ -401,8 +425,14 @@ class ProjectAirSimAdapter:
             delta = sim_time_ns - collision.sim_time_ns
             collision.recent_collision = 0 <= delta <= self.collision_window_ns
 
-        if landed == LandedState.LANDED:
+        vel = _vec(kin.get("twist", {}).get("linear") if isinstance(kin.get("twist"), dict) else None)
+        kin_still = (math.isfinite(vel.x) and math.isfinite(vel.y) and math.isfinite(vel.z)
+                     and math.hypot(vel.x, vel.y) <= self.ground_still_max_gs_mps
+                     and abs(vel.z) <= self.ground_still_max_vs_mps)
+        if landed == LandedState.LANDED and kin_still:
             ground, basis = GroundState.GROUNDED, "landed_state"
+        elif landed == LandedState.LANDED:
+            ground, basis = GroundState.UNKNOWN, "landed_state LANDED but vehicle moving"
         elif by_contact:
             ground, basis = GroundState.GROUNDED, "resting_contact+still"
         elif landed == LandedState.FLYING:

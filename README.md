@@ -19,6 +19,7 @@ Agent proposal -> Action risk gate -> Executor -> Project AirSim adapter -> Simu
 | 4 | Telemetry adapter, snapshot model, validation | done |
 | 4.1 | Review fixes: robust callbacks, reconnect reset, landed state, request lock, vendored config | done |
 | 4.2 | Client pin 1.0.2, operational ground state, sim-progress staleness, action/result contract, completion predicates | done |
+| 4.3 | Ground-state hardening: raw LANDED must be still, support-surface normals only, latch release on movement, reset on clock reset; strict action fields | done |
 | 5 | Deterministic command primitives with telemetry settle checks (no agent) | next |
 
 ## Setup (Windows)
@@ -62,8 +63,10 @@ in a `finally` block (hover, land, disarm, release API control).
   `track_deg` is where the drone moves. A multirotor can differ by any angle.
 - **Ground state:** `landed_state` is Project AirSim's raw value and can stay
   `flying` for ~12 s after touchdown. `ground_state` is the operational
-  decision: grounded if `landed_state` is landed, or after a resting contact
-  followed by >= 1 s of stillness. Decisions use `ground_state`.
+  decision. It requires the drone to be still, plus either raw `landed` or a
+  slow contact with an upward-facing surface (collision normal z <= -0.7, so
+  walls don't count) followed by >= 1 s of stillness near that contact.
+  Decisions use `ground_state`, and only from a `valid` snapshot.
 - **Freshness:** `telemetry_age_ms` is time since the last pose message;
   `sim_progress_age_ms` is time since the pose timestamp last advanced. Both
   must be under the limit for `valid`, so a frozen or replayed stream goes stale.

@@ -1,7 +1,7 @@
 """safe_shutdown tests with a fake async drone (no simulator)."""
 import asyncio
 
-from models.telemetry import GroundState
+from models.telemetry import GroundState, ValidationStatus
 from utils.flight_safety import safe_shutdown
 
 
@@ -40,11 +40,14 @@ class FakeFlyingDrone:
 
 
 class FakeAdapter:
-    def __init__(self, ground_state):
-        self.ground_state = ground_state
+    def __init__(self, ground_state, status=ValidationStatus.VALID, raises=False):
+        self.ground_state, self.status, self.raises = ground_state, status, raises
 
     def get_snapshot(self, _vid):
-        return type("S", (), {"ground_state": self.ground_state})()
+        if self.raises:
+            raise RuntimeError("not connected")
+        return type("S", (), {"ground_state": self.ground_state,
+                              "validation_status": self.status})()
 
 
 def run(coro):
@@ -64,11 +67,17 @@ def test_grounded_per_adapter_skips_hover_and_land_even_if_raw_says_flying():
     assert d.calls == ["disarm", "disable_api_control"]
 
 
-def test_unknown_adapter_state_falls_back_to_raw_landed_state():
-    d = FakeFlyingDrone(landed_raw=0)
-    run(safe_shutdown(d, log=lambda *_: None, adapter=FakeAdapter(GroundState.UNKNOWN),
-                      vehicle_id="Drone1"))
-    assert d.calls == ["disarm", "disable_api_control"]
+def test_uncertain_adapter_state_is_treated_as_airborne_even_if_raw_says_landed():
+    """Unknown ground state, or a non-VALID snapshot, must not skip hover/land,
+    and must not fall back to the raw landed_state."""
+    cases = [FakeAdapter(GroundState.UNKNOWN),
+             FakeAdapter(GroundState.GROUNDED, status=ValidationStatus.STALE),
+             FakeAdapter(GroundState.GROUNDED, status=ValidationStatus.INVALID),
+             FakeAdapter(GroundState.GROUNDED, raises=True)]
+    for adapter in cases:
+        d = FakeFlyingDrone(landed_raw=0)
+        run(safe_shutdown(d, log=lambda *_: None, adapter=adapter, vehicle_id="Drone1"))
+        assert d.calls == ["hover", "land", "disarm", "disable_api_control"], adapter.__dict__
 
 
 def test_each_step_is_attempted_even_after_failures():

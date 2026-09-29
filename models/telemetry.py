@@ -65,6 +65,12 @@ class CollisionState(BaseModel):
     is_resting_contact: bool | None = None
     """Latest collision was a low-speed touch (landing, resting on a surface).
     None = speed unknown (e.g. collision reported before any pose arrived)."""
+    normal_z: float | None = None
+    """z of the contact normal (NED). Ground observed at -1 (upward-facing);
+    walls are near 0. None if the message had no usable normal."""
+    is_supporting_surface: bool = False
+    """normal_z <= -0.7: an upward-facing surface that can hold the vehicle up.
+    Only these contacts can make ground_state GROUNDED via contact+stillness."""
     count: int = 0
     impact_count: int = 0
     """Collisions above the impact speed threshold (not resting contact)."""
@@ -108,10 +114,15 @@ class TelemetrySnapshot(BaseModel):
     """Raw Project AirSim get_landed_state(), unmodified. Observed to stay FLYING
     for ~12 s after physical touchdown, so don't use it alone for decisions."""
     ground_state: GroundState = GroundState.UNKNOWN
-    """Operational on-ground state: GROUNDED if landed_state is LANDED, OR a
-    resting contact was observed and the vehicle has stayed still (ground speed
-    <= 0.25 m/s, |vertical speed| <= 0.15 m/s) for >= 1 s since. Use this, not
-    landed_state, for commands and shutdown decisions."""
+    """Operational on-ground state. GROUNDED only if the vehicle is still
+    (ground speed <= 0.25 m/s, |vertical speed| <= 0.15 m/s) AND either
+      - raw landed_state is LANDED, or
+      - a slow contact with an upward-facing surface (normal_z <= -0.7) was
+        observed, the vehicle hasn't moved > 0.5 m horizontally or > 0.3 m
+        vertically from it, and it has stayed still for >= 1 s.
+    Raw LANDED while moving gives UNKNOWN. A sim clock reset clears everything.
+    Use this, not landed_state, for commands and shutdown decisions, and only
+    when validation_status is VALID."""
     ground_state_basis: str = ""
     """Why ground_state has its value (e.g. "landed_state", "resting_contact+still")."""
     collision: CollisionState = Field(default_factory=CollisionState)
