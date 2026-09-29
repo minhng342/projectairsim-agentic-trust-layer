@@ -1,77 +1,30 @@
 """
-Offline tests: no simulator needed. A fake `projectairsim` module replays the
-values recorded in Pass 3 (telemetry_dump.json) so the adapter's math,
-caching, collision logic and validation can be checked anywhere.
+Offline tests: no simulator needed. tests/fake_projectairsim.py replays values
+recorded in Pass 3 so the adapter's math, caching, collision logic, callback
+robustness and validation can be checked anywhere.
 
-    python -m tests.test_adapter_offline        (from the repo root)
-    python -m pytest tests                      (if pytest is installed)
+    python -m pytest tests                      (from the repo root)
+    python -m tests.test_adapter_offline        (no pytest needed)
 """
 import math
 import sys
+import threading
 import time
-import types
 
-# ------------------------------------------------------------ fake simulator
-GOOD_KINEMATICS = {  # get_ground_truth_kinematics() sample from Pass 3
-    "time_stamp": 9711000000,
-    "pose": {"position": {"x": 10.3007, "y": 16.5129, "z": -9.0487},
-             "orientation": {"w": 0.92265, "x": -0.00293, "y": 0.07677, "z": -0.37790}},
-    "twist": {"linear": {"x": 0.98658, "y": 2.64307, "z": -0.14708},
-              "angular": {"x": 0.08641, "y": -0.19053, "z": 0.00215}},
-    "accels": {"linear": {"x": -1.37573, "y": 0.47591, "z": 0.49863},
-               "angular": {"x": -0.08733, "y": 0.21280, "z": -0.00286}},
-}
-GOOD_GEO = {"latitude": 47.641560559, "longitude": -122.139944731, "altitude": 131.049}
+from tests import fake_projectairsim as fake
 
-
-class FakeClient:
-    def __init__(self, address="127.0.0.1", **_):
-        self.subs = {}
-
-    def connect(self):
-        pass
-
-    def disconnect(self):
-        pass
-
-    def subscribe(self, topic, cb):
-        self.subs[topic] = cb
-
-    def publish(self, topic, msg):
-        self.subs[topic](topic, msg)
-
-
-class FakeWorld:
-    def __init__(self, client, scene, delay_after_load_sec=0, sim_config_path=""):
-        self.scene = scene
-
-
-class FakeDrone:
-    kinematics = GOOD_KINEMATICS
-    geo = GOOD_GEO
-
-    def __init__(self, client, world, name):
-        base = f"/Sim/Scene/robots/{name}"
-        self.robot_info = {"actual_pose": f"{base}/actual_pose",
-                           "collision_info": f"{base}/collision_info"}
-
-    def get_ground_truth_kinematics(self):
-        return self.kinematics
-
-    def get_ground_truth_geo_location(self):
-        return self.geo
-
-
-fake = types.ModuleType("projectairsim")
-fake.ProjectAirSimClient, fake.World, fake.Drone = FakeClient, FakeWorld, FakeDrone
-sys.modules["projectairsim"] = fake
+fake.install()
 
 from adapters.projectairsim_adapter import ProjectAirSimAdapter, yaw_deg_from_quaternion  # noqa: E402
-from models.telemetry import Quaternion, ValidationStatus  # noqa: E402
+from models.telemetry import LandedState, Quaternion, ValidationStatus  # noqa: E402
+from validation.telemetry_validator import ValidationLimits  # noqa: E402
+
+T0 = 9_711_000_000  # kinematics time_stamp in GOOD_KINEMATICS
 
 
-def make_adapter():
-    a = ProjectAirSimAdapter(vehicle_ids=["Drone1"])
+# ------------------------------------------------------------ helpers
+def make_adapter(**kw):
+    a = ProjectAirSimAdapter(vehicle_ids=["Drone1"], **kw)
     a.connect()
     return a
 
@@ -81,61 +34,86 @@ def pose_msg(ts_ns, x, y, z):
             "orientation": {"w": 0.92388, "x": 0, "y": 0, "z": -0.38268}}
 
 
-def feed_pose(a, *msgs):
+def publish_pose(a, *msgs):
     topic = a.drone("Drone1").robot_info["actual_pose"]
     for m in msgs:
         a._client.publish(topic, m)
 
 
-# ------------------------------------------------------------ tests
+def publish_collision(a, msg):
+    a._client.publish(a.drone("Drone1").robot_info["collision_info"], msg)
+
+
+def fresh_pose(a, ts=T0):
+    publish_pose(a, pose_msg(ts - 3_000_000, 10.30, 16.51, -9.05), pose_msg(ts, 10.30, 16.51, -9.05))
+
+
+def straight_line(t_end_ns, speed_mps, n=40, dt_ns=3_000_000, z=-1.19):
+    """n poses ending at t_end_ns, moving north at speed_mps."""
+    out = []
+    for i in range(n):
+        t = t_end_ns - (n - 1 - i) * dt_ns
+        out.append(pose_msg(t, 10.0 + speed_mps * (t - t_end_ns) / 1e9, 16.5, z))
+    return out
+
+
+# ------------------------------------------------------------ derived values
 def test_heading_from_spawn_quaternion():
-    # Pass 3 spawn orientation: w=0.9239, z=-0.3827 -> yaw -45 deg -> 315
     h = yaw_deg_from_quaternion(Quaternion(w=0.9238795, x=0, y=0, z=-0.3826834))
     assert abs(h - 315.0) < 0.01, h
 
 
 def test_valid_snapshot_and_derived_fields():
     a = make_adapter()
-    feed_pose(a, pose_msg(9_708_000_000, 10.29, 16.50, -9.05), pose_msg(9_711_000_000, 10.30, 16.51, -9.05))
+    fresh_pose(a)
     s = a.get_snapshot("Drone1")
     assert s.validation_status == ValidationStatus.VALID, s.validation_errors
     assert abs(s.ground_speed_mps - math.hypot(0.98658, 2.64307)) < 1e-6
     assert abs(s.vertical_speed_mps - 0.14708) < 1e-6          # NED z<0 = climbing
     assert abs(s.altitude_local_m - 9.0487) < 1e-6
     assert abs(s.track_deg - math.degrees(math.atan2(2.64307, 0.98658))) < 1e-6
+    assert s.landed_state == LandedState.FLYING
     assert s.sim_time_s == 9.711
-    assert s.telemetry_age_ms is not None and s.telemetry_age_ms < 100
 
 
+# ------------------------------------------------------------ freshness / timestamps
 def test_no_pose_messages_is_invalid():
     a = make_adapter()
     s = a.get_snapshot("Drone1")
     assert s.validation_status == ValidationStatus.INVALID
-    assert any("no messages" in e for e in s.validation_errors)
+    assert s.telemetry_age_ms is None
 
 
 def test_stale_pose_is_stale():
-    a = make_adapter()
-    a.limits = type(a.limits)(max_telemetry_age_ms=50)
-    feed_pose(a, pose_msg(9_711_000_000, 10.30, 16.51, -9.05))
+    a = make_adapter(limits=ValidationLimits(max_telemetry_age_ms=50))
+    fresh_pose(a)
     time.sleep(0.1)
     s = a.get_snapshot("Drone1")
     assert s.validation_status == ValidationStatus.STALE, s.validation_errors
 
 
+def test_pose_kinematics_skew_is_invalid_not_warning():
+    a = make_adapter()
+    fresh_pose(a, ts=T0 - 250_000_000)  # pose topic 250 ms behind kinematics
+    s = a.get_snapshot("Drone1")
+    assert s.validation_status == ValidationStatus.INVALID
+    assert any("differ by 250 ms" in e for e in s.validation_errors), s.validation_errors
+
+
+# ------------------------------------------------------------ bad data
 def test_disabled_sensor_style_values_are_invalid():
     """Values modeled on the disabled GPS / magnetometer output from Pass 3."""
     a = make_adapter()
-    feed_pose(a, pose_msg(1, 0, 0, 0))
-    bad = {"time_stamp": 0,
-           "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.0},
-                    "orientation": {"w": 1, "x": 0, "y": 0, "z": 0}},
-           "twist": {"linear": {"x": 1.875, "y": -6.691897e29, "z": 1.875},
-                     "angular": {"x": 0, "y": 0, "z": 0}},
-           "accels": {"linear": {"x": float("nan"), "y": float("nan"), "z": 0.0},
-                      "angular": {"x": 0, "y": 0, "z": 0}}}
-    a.drone("Drone1").kinematics = bad
-    a.drone("Drone1").geo = {"latitude": 0.0, "longitude": 0.0, "altitude": 0.0}
+    fresh_pose(a)
+    d = a.drone("Drone1")
+    d.kinematics = {"time_stamp": 0,
+                    "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.0},
+                             "orientation": {"w": 1, "x": 0, "y": 0, "z": 0}},
+                    "twist": {"linear": {"x": 1.875, "y": -6.691897e29, "z": 1.875},
+                              "angular": {"x": 0, "y": 0, "z": 0}},
+                    "accels": {"linear": {"x": float("nan"), "y": float("nan"), "z": 0.0},
+                               "angular": {"x": 0, "y": 0, "z": 0}}}
+    d.geo = {"latitude": 0.0, "longitude": 0.0, "altitude": 0.0}
     s = a.get_snapshot("Drone1")
     errs = " | ".join(s.validation_errors)
     assert s.validation_status == ValidationStatus.INVALID
@@ -143,28 +121,80 @@ def test_disabled_sensor_style_values_are_invalid():
         assert expected in errs, (expected, errs)
 
 
-def test_missing_fields_do_not_crash():
+def test_missing_and_non_dict_responses_do_not_crash():
     a = make_adapter()
-    feed_pose(a, pose_msg(9_711_000_000, 0, 0, 0))
-    a.drone("Drone1").kinematics = {}
-    a.drone("Drone1").geo = {}
+    fresh_pose(a)
+    d = a.drone("Drone1")
+    for kin, geo in (({}, {}), (None, None), ("garbage", 42), ({"pose": "x", "twist": 3}, {"latitude": "n/a"})):
+        d.kinematics, d.geo = kin, geo
+        s = a.get_snapshot("Drone1")
+        assert s.validation_status == ValidationStatus.INVALID, (kin, geo)
+
+
+def test_malformed_pose_messages_never_raise_and_make_snapshot_invalid():
+    bad_messages = [
+        None,
+        "not a dict",
+        {"position": {"x": 1, "y": 2, "z": 3}},                      # missing time_stamp
+        {"time_stamp": T0},                                          # missing position
+        {"time_stamp": T0, "position": {"x": "a", "y": 2, "z": 3}},  # non-numeric
+        {"time_stamp": T0, "position": {"x": 1, "y": None, "z": 3}},
+        {"time_stamp": 0, "position": {"x": 1, "y": 2, "z": 3}},     # zero timestamp
+        {"time_stamp": "soon", "position": {"x": 1, "y": 2, "z": 3}},
+    ]
+    for bad in bad_messages:
+        a = make_adapter()
+        fresh_pose(a)
+        publish_pose(a, bad)  # would raise into the receive thread if unguarded
+        s = a.get_snapshot("Drone1")
+        assert s.validation_status == ValidationStatus.INVALID, bad
+        assert any("bad push message" in e for e in s.validation_errors), (bad, s.validation_errors)
+        assert s.pose_topic_sim_time_ns == T0, "last valid sample must be preserved"
+        assert a.topic_stats()["Drone1"]["bad_msgs"] == 1
+
+
+def test_bad_message_error_expires_to_warning():
+    a = make_adapter(bad_msg_error_window_s=0.05)
+    fresh_pose(a, ts=T0 - 6_000_000)
+    publish_pose(a, None)
+    time.sleep(0.1)
+    fresh_pose(a)
     s = a.get_snapshot("Drone1")
-    assert s.validation_status == ValidationStatus.INVALID
+    assert s.validation_status == ValidationStatus.VALID, s.validation_errors
+    assert any("bad push message" in w for w in s.validation_warnings)
 
 
-def test_resting_contact_vs_impact():
+def test_reversed_pose_timestamp_is_flagged_and_window_reset():
     a = make_adapter()
-    coll_topic = a.drone("Drone1").robot_info["collision_info"]
-    # landing: 3 mm moved in 3 ms = 1 m/s? keep it slower: 0.3 mm in 3 ms = 0.1 m/s
-    feed_pose(a, pose_msg(9_700_000_000, 10.3, 16.5, -1.1920), pose_msg(9_703_000_000, 10.3, 16.5, -1.1917))
-    a._client.publish(coll_topic, {"time_stamp": 9_703_000_000, "object_name": "Ground"})
+    publish_pose(a, *straight_line(T0, 5.0))
+    publish_pose(a, pose_msg(1_000_000_000, 0, 0, -1))  # clock went backwards
     s = a.get_snapshot("Drone1")
-    assert s.collision.in_contact and s.collision.is_resting_contact is True
-    assert s.collision.impact_count == 0 and not s.validation_warnings
+    assert a.topic_stats()["Drone1"]["clock_resets"] == 1
+    assert any("went backwards" in e for e in s.validation_errors)
+    assert len(a._cache["Drone1"].pose_window) == 1
 
-    # impact: 30 mm in 3 ms = 10 m/s
-    feed_pose(a, pose_msg(9_706_000_000, 10.3, 16.5, -1.19), pose_msg(9_709_000_000, 10.33, 16.5, -1.19))
-    a._client.publish(coll_topic, {"time_stamp": 9_709_000_000, "object_name": "TemplateCube_Rounded_1"})
+
+def test_malformed_collision_message_never_raises():
+    a = make_adapter()
+    fresh_pose(a)
+    publish_collision(a, None)
+    publish_collision(a, {"object_name": None, "time_stamp": "x"})
+    s = a.get_snapshot("Drone1")
+    assert s.collision.count == 1 and s.collision.recent_collision is False
+
+
+# ------------------------------------------------------------ collisions
+def test_resting_contact_vs_impact_using_pose_window():
+    a = make_adapter()
+    publish_pose(a, *straight_line(T0 - 200_000_000, 0.2))
+    publish_collision(a, {"time_stamp": T0 - 200_000_000, "object_name": "Ground"})
+    s = a.get_snapshot("Drone1")
+    assert s.collision.recent_collision and s.collision.is_resting_contact is True
+    assert abs(s.collision.impact_speed_mps - 0.2) < 0.01
+    assert all("impact" not in w for w in s.validation_warnings)
+
+    publish_pose(a, *straight_line(T0, 10.0))
+    publish_collision(a, {"time_stamp": T0, "object_name": "TemplateCube_Rounded_1"})
     s = a.get_snapshot("Drone1")
     assert s.collision.is_resting_contact is False and s.collision.impact_count == 1
     assert abs(s.collision.impact_speed_mps - 10.0) < 0.01
@@ -174,12 +204,79 @@ def test_resting_contact_vs_impact():
 
 def test_collision_before_any_pose_is_unknown_not_impact():
     a = make_adapter()
-    coll_topic = a.drone("Drone1").robot_info["collision_info"]
-    a._client.publish(coll_topic, {"time_stamp": 528_000_000, "object_name": "TemplateCube_Rounded_1"})
-    feed_pose(a, pose_msg(9_711_000_000, 10.3, 16.5, -9.05))
+    publish_collision(a, {"time_stamp": 528_000_000, "object_name": "TemplateCube_Rounded_1"})
+    fresh_pose(a)
     s = a.get_snapshot("Drone1")
     assert s.collision.is_resting_contact is None and s.collision.impact_count == 0
-    assert s.collision.in_contact is False  # 9.2 s ago in sim time
+    assert s.collision.recent_collision is False  # 9.2 s ago in sim time
+
+
+def test_collision_from_the_future_is_not_recent():
+    """Sim clock reset: an old collision timestamp can exceed the new clock."""
+    a = make_adapter()
+    fresh_pose(a)
+    publish_collision(a, {"time_stamp": T0 + 500_000_000, "object_name": "Ground"})
+    s = a.get_snapshot("Drone1")
+    assert s.collision.recent_collision is False
+
+
+# ------------------------------------------------------------ lifecycle
+def test_reconnect_discards_previous_session_state():
+    a = make_adapter()
+    fresh_pose(a)
+    publish_collision(a, {"time_stamp": T0, "object_name": "Ground"})
+    publish_pose(a, None)
+    a.connect()  # reconnect
+    stats = a.topic_stats()["Drone1"]
+    assert stats == {"actual_pose_msgs": 0, "bad_msgs": 0, "clock_resets": 0, "collisions": 0}
+    fresh_pose(a)
+    assert a.get_snapshot("Drone1").collision.has_collided is False
+
+
+def test_failed_connect_cleans_up():
+    fake.FakeWorld.fail_next = True
+    a = ProjectAirSimAdapter(vehicle_ids=["Drone1"])
+    try:
+        a.connect()
+        raise AssertionError("connect should have raised")
+    except RuntimeError as err:
+        assert "scene load failed" in str(err)
+    assert not a.connected
+    assert fake.FakeClient.instances[-1].disconnect_calls == 1
+    try:
+        a.get_snapshot("Drone1")
+        raise AssertionError("snapshot on a disconnected adapter should raise")
+    except RuntimeError:
+        pass
+
+
+# ------------------------------------------------------------ landed state
+def test_landed_state_mapping_and_consistency_warning():
+    a = make_adapter()
+    fresh_pose(a)
+    d = a.drone("Drone1")
+    d.landed = 0
+    s = a.get_snapshot("Drone1")
+    assert s.landed_state == LandedState.LANDED
+    assert any("LANDED but vehicle is moving" in w for w in s.validation_warnings)  # gs ~2.8 m/s
+
+    d.landed_raises = True
+    s = a.get_snapshot("Drone1")
+    assert s.landed_state == LandedState.UNKNOWN
+    assert s.validation_status == ValidationStatus.INVALID
+
+
+# ------------------------------------------------------------ threading
+def test_concurrent_snapshots_do_not_overlap_requests():
+    a = make_adapter()
+    fresh_pose(a)
+    threads = [threading.Thread(target=lambda: [a.get_snapshot("Drone1") for _ in range(5)])
+               for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert a.drone("Drone1").overlapping_requests == 0
 
 
 if __name__ == "__main__":
@@ -189,8 +286,8 @@ if __name__ == "__main__":
         try:
             fn()
             print(f"PASS {name}")
-        except AssertionError as err:
+        except Exception as err:
             failed += 1
-            print(f"FAIL {name}: {err}")
+            print(f"FAIL {name}: {type(err).__name__}: {err}")
     print(f"\n{len(tests) - failed}/{len(tests)} passed")
     sys.exit(1 if failed else 0)

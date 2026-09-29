@@ -4,8 +4,7 @@ Connects to a running Project AirSim sim, loads a scene, creates the drone(s)
 defined in it, and prints ground-truth telemetry (the AirSim equivalent of
 BlueSky's ACDATA stream in the reference repo).
 
-Run from client/python/example_user_scripts (so sim_config/ resolves), with the
-sim already running.
+Run from the repo root with Blocks.exe running.
 """
 import asyncio
 import math
@@ -15,10 +14,8 @@ import os
 from projectairsim import ProjectAirSimClient, Drone, World
 from projectairsim.utils import projectairsim_log
 
-# Sample scene/robot configs shipped with Project AirSim (resolved from this file's location)
-SIM_CONFIG = os.path.abspath(os.path.join(
-    os.path.dirname(__file__), "..", "ProjectAirSim-v1.0.1", "client", "python",
-    "example_user_scripts", "sim_config")) + os.sep
+# Scene/robot configs vendored in this repo (copied from Project AirSim v1.0.1 samples)
+SIM_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_config") + os.sep
 SCENE = "scene_basic_drone.jsonc"   # swap for your multi-drone scene
 DRONE_NAMES = ["Drone1"]            # must match actor names in the scene
 

@@ -20,9 +20,9 @@ import time
 
 from projectairsim import ProjectAirSimClient, Drone, World
 
-SIM_CONFIG = os.path.abspath(os.path.join(
-    os.path.dirname(__file__), "..", "ProjectAirSim-v1.0.1", "client", "python",
-    "example_user_scripts", "sim_config")) + os.sep
+from utils.flight_safety import safe_shutdown
+
+SIM_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_config") + os.sep
 SCENE = "scene_basic_drone.jsonc"
 NAME = "Drone1"
 OUT_FILE = os.path.join(os.path.dirname(__file__), "telemetry_dump.json")
@@ -84,6 +84,7 @@ def safe_call(fn, *args):
 async def main():
     client = ProjectAirSimClient()
     rec = TopicRecorder()
+    drone = None
     try:
         client.connect()
         world = World(client, SCENE, delay_after_load_sec=2, sim_config_path=SIM_CONFIG)
@@ -122,8 +123,8 @@ async def main():
         }
         await task
         await (await drone.land_async())
-        drone.disarm()
-        drone.disable_api_control()
+        await safe_shutdown(drone)
+        drone = None  # already shut down cleanly
 
         # ---- report ----
         print("\n################ SUBSCRIBED TOPICS (push) ################")
@@ -144,6 +145,7 @@ async def main():
             }, f, indent=2, default=str)
         print(f"\nSaved full samples to {OUT_FILE}")
     finally:
+        await safe_shutdown(drone)  # no-op if the flight already shut down cleanly
         client.disconnect()
 
 

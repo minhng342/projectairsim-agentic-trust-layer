@@ -1,0 +1,8 @@
+# Project AirSim client must match the simulator binary (Blocks v1.0.1)
+projectairsim==1.0.1
+pydantic>=2,<3
+pytest>=8
+
+# Enabled when observability / the agent are wired in (observability.py):
+# logfire
+# pydantic-ai

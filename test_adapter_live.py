@@ -12,6 +12,7 @@ import asyncio
 import json
 
 from adapters.projectairsim_adapter import ProjectAirSimAdapter
+from utils.flight_safety import safe_shutdown
 
 VEHICLE = "Drone1"
 
@@ -20,11 +21,12 @@ def line(s) -> str:
     trk = f"{s.track_deg:5.1f}" if s.track_deg is not None else "  -  "
     c = s.collision
     coll = (f"{c.object_name}({'rest' if c.is_resting_contact else 'IMPACT' if c.is_resting_contact is False else '?'})"
-            if c.in_contact else "-")
+            if c.recent_collision else "-")
+    age = "   -  " if s.telemetry_age_ms is None else f"{s.telemetry_age_ms:5.1f}ms"
     return (f"t={s.sim_time_s:7.2f}s  {s.validation_status.value:<7} "
             f"N={s.position_ned_m.x:6.1f} E={s.position_ned_m.y:6.1f} alt={s.altitude_local_m:5.1f}m "
             f"hdg={s.heading_deg:5.1f} trk={trk} gs={s.ground_speed_mps:4.1f} vs={s.vertical_speed_mps:+4.1f} "
-            f"age={s.telemetry_age_ms or 0:5.1f}ms coll={coll}")
+            f"{s.landed_state.value:<7} age={age} coll={coll}")
 
 
 async def sample(adapter, seconds: float, hz: float = 2.0):
@@ -45,8 +47,6 @@ async def fly(adapter):
     await (await d.takeoff_async())
     await (await d.move_by_velocity_async(v_north=3.0, v_east=2.0, v_down=-1.0, duration=4.0))
     await (await d.land_async())
-    d.disarm()
-    d.disable_api_control()
 
 
 async def main(do_fly: bool):
@@ -57,9 +57,14 @@ async def main(do_fly: bool):
         if do_fly:
             print("--- flying ---")
             flight = asyncio.create_task(fly(adapter))
-            while not flight.done():
-                await sample(adapter, 0.5)
-            await flight
+            try:
+                while not flight.done():
+                    await sample(adapter, 0.5)
+                await flight
+            finally:
+                if not flight.done():
+                    flight.cancel()
+                await safe_shutdown(adapter.drone(VEHICLE))
             print("--- after landing ---")
             await sample(adapter, 2)
         print("\n--- full snapshot (JSON) ---")

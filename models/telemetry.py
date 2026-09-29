@@ -1,16 +1,22 @@
 """
 Normalized telemetry contract shared by all simulator adapters.
 
-Unlike the BlueSky version, fields carry no pydantic range constraints: a
-snapshot is always constructed, even from bad data, and problems are reported
-in validation_status / validation_errors instead of raising. The trust layer
-needs to *see* invalid telemetry, not crash on it.
+Fields carry no pydantic range constraints: a snapshot is always constructed,
+even from bad data, and problems are reported in validation_status /
+validation_errors instead of raising. The trust layer needs to *see* invalid
+telemetry, not crash on it.
 
 Frames and units
 - NED: x = north, y = east, z = down (meters). Positive z / down-velocity
   means descending.
 - SI units throughout (m, m/s, m/s^2, rad/s). Convert to ft/kt only at the
   presentation layer (e.g. agent/telemetry_formatter.py).
+
+Heading vs. track
+- heading_deg: where the nose points (yaw from the orientation quaternion).
+- track_deg: where the vehicle is moving (from horizontal velocity).
+  A multirotor can hold one heading while moving along any track, so the two
+  must never be treated as the same quantity.
 """
 from datetime import datetime
 from enum import Enum
@@ -31,15 +37,24 @@ class Quaternion(BaseModel):
     z: float
 
 
+class LandedState(str, Enum):
+    LANDED = "landed"
+    FLYING = "flying"
+    UNKNOWN = "unknown"
+
+
 class CollisionState(BaseModel):
     has_collided: bool = False
-    """True once any collision_info message has been received."""
-    in_contact: bool = False
-    """Latest collision happened within the adapter's recent-contact window."""
+    """True once any collision_info message has been received this session."""
+    recent_collision: bool = False
+    """The latest collision message arrived within the adapter's recent window
+    (sim time). This is temporal: it does NOT mean the vehicle is touching
+    something now. Use TelemetrySnapshot.landed_state for that."""
     object_name: str | None = None
     sim_time_ns: int | None = None
     impact_speed_mps: float | None = None
-    """Speed estimated from actual_pose just before the collision message."""
+    """Approximate speed just before the collision, from a ~100 ms window of
+    actual_pose samples. Indicative only, not authoritative impact severity."""
     is_resting_contact: bool | None = None
     """Latest collision was a low-speed touch (landing, resting on a surface).
     None = speed unknown (e.g. collision reported before any pose arrived)."""
@@ -72,7 +87,7 @@ class TelemetrySnapshot(BaseModel):
     longitude_deg: float
     altitude_msl_m: float
     altitude_local_m: float
-    """-position_ned_m.z: height relative to the NED origin."""
+    """-position_ned_m.z: height relative to the NED origin (not above ground)."""
 
     heading_deg: float
     """Yaw from the orientation quaternion, 0-360, 0 = north."""
@@ -82,10 +97,12 @@ class TelemetrySnapshot(BaseModel):
     vertical_speed_mps: float
     """Positive = climbing (i.e. -velocity_ned_mps.z)."""
 
+    landed_state: LandedState = LandedState.UNKNOWN
+    """From Project AirSim get_landed_state(); primary source for on-ground state."""
     collision: CollisionState = Field(default_factory=CollisionState)
 
     telemetry_age_ms: float | None = None
-    """Host time since the last actual_pose message arrived; None if none received."""
+    """Host time since the last valid actual_pose message; None if none received."""
 
     validation_status: ValidationStatus = ValidationStatus.VALID
     validation_errors: list[str] = Field(default_factory=list)

@@ -4,11 +4,19 @@ Deterministic telemetry checks. Adapter-agnostic: works on any TelemetrySnapshot
 Rules come from what Pass 3 actually observed: disabled sensors returned
 timestamp 0, NaN fields, lat/lon 0,0 and a -6.7e29 velocity. A numeric field
 existing is not the same as it being trustworthy.
+
+Status policy
+- INVALID: any data-quality error (bad timestamp, non-finite value, out of
+  bounds, implausible physics, pose/kinematics skew, adapter errors).
+- STALE: data is well-formed but the pose stream stopped updating.
+- VALID: no errors. Only VALID telemetry should ever justify a command.
+Warnings never change the status; they carry safety-relevant observations
+(collision impacts, landed-state inconsistencies) for the risk gate to weigh.
 """
 import math
 from dataclasses import dataclass
 
-from models.telemetry import TelemetrySnapshot, ValidationStatus
+from models.telemetry import LandedState, TelemetrySnapshot, ValidationStatus
 
 
 @dataclass(frozen=True)
@@ -19,6 +27,10 @@ class ValidationLimits:
     max_acceleration_mps2: float = 100.0
     max_quaternion_norm_error: float = 0.01
     max_pose_skew_ms: float = 100.0
+    landed_max_speed_mps: float = 1.0
+
+
+STALE_PREFIX = "actual_pose stale"
 
 
 def _numeric_fields(s: TelemetrySnapshot):
@@ -32,25 +44,32 @@ def _numeric_fields(s: TelemetrySnapshot):
 
 
 def validate_snapshot(s: TelemetrySnapshot,
-                      limits: ValidationLimits = ValidationLimits()) -> TelemetrySnapshot:
-    """Fill in validation_status / errors / warnings on the snapshot and return it."""
-    errors: list[str] = []
-    warnings: list[str] = []
+                      limits: ValidationLimits = ValidationLimits(),
+                      extra_errors: list[str] | None = None,
+                      extra_warnings: list[str] | None = None) -> TelemetrySnapshot:
+    """Fill in validation_status / errors / warnings on the snapshot and return it.
+
+    extra_errors / extra_warnings let the adapter add source-specific problems
+    (failed requests, malformed push messages) that force the same policy.
+    """
+    errors: list[str] = list(extra_errors or [])
+    warnings: list[str] = list(extra_warnings or [])
 
     # --- timestamps / freshness ---
     if s.sim_time_ns <= 0:
         errors.append(f"sim_time_ns={s.sim_time_ns}: no valid simulation timestamp")
-    stale = False
+    if s.pose_topic_sim_time_ns is not None and s.pose_topic_sim_time_ns <= 0:
+        errors.append(f"pose_topic_sim_time_ns={s.pose_topic_sim_time_ns}: invalid pose timestamp")
     if s.telemetry_age_ms is None:
-        errors.append("actual_pose: no messages received")
+        errors.append("actual_pose: no valid messages received")
     elif s.telemetry_age_ms > limits.max_telemetry_age_ms:
-        stale = True
-        errors.append(f"actual_pose stale: {s.telemetry_age_ms:.0f} ms old "
+        errors.append(f"{STALE_PREFIX}: {s.telemetry_age_ms:.0f} ms old "
                       f"(limit {limits.max_telemetry_age_ms:.0f} ms)")
-    if s.pose_topic_sim_time_ns and s.sim_time_ns > 0:
+    if s.pose_topic_sim_time_ns and s.pose_topic_sim_time_ns > 0 and s.sim_time_ns > 0:
         skew_ms = abs(s.sim_time_ns - s.pose_topic_sim_time_ns) / 1e6
         if skew_ms > limits.max_pose_skew_ms:
-            warnings.append(f"pose topic and kinematics differ by {skew_ms:.0f} ms sim time")
+            errors.append(f"pose topic and kinematics differ by {skew_ms:.0f} ms sim time "
+                          f"(limit {limits.max_pose_skew_ms:.0f} ms)")
 
     # --- NaN / infinity ---
     for name, value in _numeric_fields(s):
@@ -81,15 +100,22 @@ def validate_snapshot(s: TelemetrySnapshot,
     if math.isfinite(acc) and acc > limits.max_acceleration_mps2:
         errors.append(f"acceleration implausible: {acc:.3g} m/s^2")
 
-    # --- safety-relevant state (reported, not a data-quality failure) ---
-    if s.collision.in_contact and s.collision.is_resting_contact is False:
-        warnings.append(f"collision impact with {s.collision.object_name} "
-                        f"at ~{s.collision.impact_speed_mps:.1f} m/s")
+    # --- safety-relevant observations (warnings, not data-quality failures) ---
+    if s.collision.recent_collision and s.collision.is_resting_contact is False:
+        speed = s.collision.impact_speed_mps
+        warnings.append(f"collision impact with {s.collision.object_name}"
+                        + (f" at ~{speed:.1f} m/s" if speed is not None else ""))
+    if s.landed_state == LandedState.LANDED:
+        moving = math.hypot(s.ground_speed_mps, s.vertical_speed_mps)
+        if math.isfinite(moving) and moving > limits.landed_max_speed_mps:
+            warnings.append(f"landed_state is LANDED but vehicle is moving at {moving:.1f} m/s")
+    if s.landed_state == LandedState.UNKNOWN:
+        warnings.append("landed_state unknown")
 
-    non_stale_errors = [e for e in errors if not e.startswith("actual_pose stale")]
-    if non_stale_errors:
+    non_stale = [e for e in errors if not e.startswith(STALE_PREFIX)]
+    if non_stale:
         status = ValidationStatus.INVALID
-    elif stale:
+    elif errors:
         status = ValidationStatus.STALE
     else:
         status = ValidationStatus.VALID
