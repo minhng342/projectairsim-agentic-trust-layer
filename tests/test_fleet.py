@@ -93,3 +93,72 @@ def test_real_executor_missions_stop_commanding_drones_once_one_mission_crashes(
         assert calls_at_return[vid] == ["move_to_position", "hover"]
         assert adapter.drones[vid].calls == calls_at_return[vid]   # nothing afterwards
     assert adapter.drones["Drone1"].calls == []
+
+
+def test_repeated_caller_cancellation_still_waits_for_full_cleanup():
+    """Review finding: a second cancel used to let the helper return mid-cleanup."""
+    events = []
+
+    async def mission(name):
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.15)          # slow cleanup (executor hover)
+            events.append(f"{name} cleaned")
+            raise
+
+    async def main():
+        task = asyncio.ensure_future(run_all_or_cancel([mission("A"), mission("B")]))
+        await asyncio.sleep(0.02)
+        task.cancel()                          # e.g. Ctrl+C
+        await asyncio.sleep(0.05)
+        task.cancel()                          # Ctrl+C again, during cleanup
+        await asyncio.sleep(0.02)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        events.append("helper returned")
+    run(main())
+    assert events == ["A cleaned", "B cleaned", "helper returned"]
+
+
+def test_each_child_is_cancelled_exactly_once():
+    """A second cancel would interrupt cleanup a child has already started."""
+    cancels = {"A": 0, "B": 0}
+
+    async def mission(name):
+        while True:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                cancels[name] += 1
+                if cancels[name] == 1:
+                    try:
+                        await asyncio.sleep(0.05)      # cleanup
+                    except asyncio.CancelledError:
+                        cancels[name] += 1             # interrupted by a second cancel
+                raise
+
+    async def crash():
+        await asyncio.sleep(0.01)
+        raise RuntimeError("boom")
+
+    async def main():
+        task = asyncio.ensure_future(run_all_or_cancel([crash(), mission("A"), mission("B")]))
+        await asyncio.sleep(0.03)
+        task.cancel()                          # caller also cancelled during cleanup
+        with pytest.raises((asyncio.CancelledError, RuntimeError)):
+            await task
+    run(main())
+    assert cancels == {"A": 1, "B": 1}
+
+
+def test_first_failure_is_the_error_raised():
+    async def ok():
+        await asyncio.sleep(0.05)
+        return 1
+
+    async def bad():
+        raise ValueError("first")
+    with pytest.raises(ValueError, match="first"):
+        run(run_all_or_cancel([ok(), bad()]))

@@ -22,9 +22,14 @@ Separation between every pair of drones is sampled at 20 Hz from the adapter's
 pose cache (ground truth, evaluation only) for the whole run, and every
 collision reported by the simulator is logged.
 
+Separation only counts a sample when both drones' sim timestamps advanced and
+are within 50 ms of each other. If telemetry was too incomplete (a pair never
+sampled, under 90% usable samples, or a gap over 0.5 s, including at the end of
+the run), the separation verdict is INCONCLUSIVE, which is not a PASS.
+
 Exit code 0 only if every command for every drone SUCCEEDED, every drone landed
-and disarmed, no pair came closer than MIN_SEPARATION_M, and there were no
-drone-to-drone collisions or impacts.
+and disarmed, the separation verdict is PASS (no pair closer than
+MIN_SEPARATION_M, no drone-to-drone collisions or impacts, adequate coverage).
 """
 import asyncio
 import sys
@@ -92,7 +97,8 @@ async def takeoff_all(adapter):
         d.enable_api_control()
         d.arm()
         await (await d.takeoff_async())
-    await asyncio.gather(*(one(v) for v in VEHICLES))
+    # coordinated: if one takeoff raises, the others are cancelled + awaited before shutdown
+    await run_all_or_cancel(one(v) for v in VEHICLES)
     deadline = time.monotonic() + 10.0
     pending = set(VEHICLES)
     while pending and time.monotonic() < deadline:
@@ -162,6 +168,7 @@ async def main() -> int:
             stop.set()
             await mon
             await sep
+            tracker.finish()          # counts a gap at the end (pose stream died before shutdown)
             collisions = {v: adapter.collision_log(v) for v in VEHICLES}
 
     print("\n================ RESULTS ================")

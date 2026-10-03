@@ -8,11 +8,18 @@ from utils.separation import SeparationTracker, assess, format_report
 
 IDS = ["Drone1", "Drone2", "Drone3"]
 T = 10_000_000_000
+_clock = {"t": T}
 
 
-def poses(**xyz):
-    """poses(Drone1=(n, e, alt), ...) -> adapter.latest_poses() format (NED down = -alt)."""
-    return {v: (T, n, e, -alt) for v, (n, e, alt) in xyz.items()}
+def poses(ts=None, **xyz):
+    """poses(Drone1=(n, e, alt), ...) -> adapter.latest_poses() format (NED down = -alt).
+
+    Each call advances the sim timestamp by 50 ms (like a live stream) unless ts is given.
+    """
+    if ts is None:
+        _clock["t"] += 50_000_000
+        ts = _clock["t"]
+    return {v: (ts, n, e, -alt) for v, (n, e, alt) in xyz.items()}
 
 
 def test_three_drones_make_three_pairs():
@@ -45,13 +52,15 @@ def test_minimum_is_kept_not_overwritten_by_later_larger_distances():
 def test_samples_from_different_moments_are_not_compared():
     t = SeparationTracker(IDS)
     t.update({"Drone1": (T, 0, 0, -5), "Drone2": (T + 200_000_000, 0, 0.1, -5)})
-    assert t.pairs[("Drone1", "Drone2")].samples == 0 and t.skipped_samples == 1
+    r = t.pairs[("Drone1", "Drone2")]
+    assert r.samples == 0 and r.skewed == 1 and r.attempts == 1
 
 
 def test_missing_vehicle_is_skipped():
     t = SeparationTracker(IDS)
     t.update(poses(Drone1=(0, 0, 5), Drone2=(0, 3, 5)))
     assert t.pairs[("Drone1", "Drone3")].samples == 0
+    assert t.pairs[("Drone1", "Drone3")].missing == 1
 
 
 # ------------------------------------------------------------ assessment
@@ -98,11 +107,13 @@ def test_impact_with_scenery_fails_but_resting_contact_does_not():
     assert not rep.passed
 
 
-def test_unsampled_pair_fails_rather_than_passing_silently():
+def test_unsampled_pair_is_inconclusive_not_pass():
     t = SeparationTracker(IDS)
     t.update(poses(Drone1=(0, 0, 5), Drone2=(0, 3, 5)))      # Drone3 never reported
     rep = assess(t, {}, IDS)
-    assert not rep.passed and any("never sampled" in v for v in rep.violations)
+    assert not rep.passed and rep.status == "inconclusive"
+    assert any("never sampled" in c for c in rep.coverage_problems)
+    assert rep.violations == []                               # nothing unsafe was SEEN
 
 
 def test_live_pass_5_2_final_positions_are_safe():
@@ -114,3 +125,105 @@ def test_live_pass_5_2_final_positions_are_safe():
     closest = rep.pairs[0]                                    # Drone2-Drone3
     assert closest.pair == ("Drone2", "Drone3")
     assert closest.min_3d_m == pytest.approx(math.hypot(0.3, 3.3), abs=0.01)
+
+
+# ------------------------------------------------------------ coverage (Pass 5.4)
+SAFE = dict(Drone1=(0, -3, 6), Drone2=(0, 0, 8), Drone3=(0, 3, 10))
+
+
+def run(tracker, frames):
+    """frames: [(host_time, poses_dict), ...]"""
+    for host, p in frames:
+        tracker.update(p, phase="x", host_time=host)
+
+
+def test_healthy_20hz_stream_passes_with_full_coverage():
+    t = SeparationTracker(IDS)
+    run(t, [(i * 0.05, poses(**SAFE)) for i in range(200)])
+    t.finish(host_time=200 * 0.05)
+    rep = assess(t, {}, IDS)
+    assert rep.status == "pass", rep.coverage_problems
+    assert all(r.samples == 200 and r.coverage == 1.0 for r in rep.pairs)
+    assert all(r.max_gap_s <= 0.051 for r in rep.pairs)
+
+
+def test_frozen_stream_does_not_inflate_samples_and_is_inconclusive():
+    """Pose callbacks stop: latest_poses() keeps returning the same timestamp."""
+    t = SeparationTracker(IDS)
+    run(t, [(i * 0.05, poses(**SAFE)) for i in range(10)])
+    stuck = poses(**SAFE)
+    run(t, [(0.5 + i * 0.05, stuck) for i in range(100)])     # same ts every time
+    t.finish(host_time=5.5)
+    rep = assess(t, {}, IDS)
+    r = rep.pairs[0]
+    assert r.samples == 11 and r.frozen == 99 and r.attempts == 110
+    assert rep.status == "inconclusive"
+    assert any("usable" in c for c in rep.coverage_problems)
+    assert any("without a usable sample" in c for c in rep.coverage_problems)
+
+
+def test_replayed_older_timestamp_is_rejected():
+    t = SeparationTracker(IDS)
+    new = poses(**SAFE)
+    old = poses(ts=T, **SAFE)                                 # earlier than `new`
+    run(t, [(0.0, new), (0.05, old)])
+    assert t.pairs[("Drone1", "Drone2")].samples == 1
+    assert t.pairs[("Drone1", "Drone2")].frozen == 1
+
+
+def test_mostly_out_of_sync_samples_are_inconclusive():
+    t = SeparationTracker(IDS)
+    frames = []
+    for i in range(100):
+        p = poses(**SAFE)
+        if i % 2:                                             # half the time Drone3 lags 200 ms
+            ts, n, e, d = p["Drone3"]
+            p["Drone3"] = (ts - 200_000_000, n, e, d)
+        frames.append((i * 0.05, p))
+    run(t, frames)
+    t.finish(host_time=5.0)
+    rep = assess(t, {}, IDS)
+    assert rep.status == "inconclusive"
+    assert any("Drone1-Drone3" in c and "out of sync" in c for c in rep.coverage_problems)
+    assert not any(c.startswith("Drone1-Drone2") for c in rep.coverage_problems)
+
+
+def test_gap_in_the_middle_is_inconclusive_even_with_high_coverage():
+    """Sampler stalled for 2 s (e.g. event loop blocked): no attempts, so % looks fine."""
+    t = SeparationTracker(IDS)
+    run(t, [(i * 0.05, poses(**SAFE)) for i in range(100)])
+    run(t, [(7.0 + i * 0.05, poses(**SAFE)) for i in range(100)])   # 4.95 -> 7.0 gap
+    t.finish(host_time=12.0)
+    rep = assess(t, {}, IDS)
+    assert all(r.coverage == 1.0 for r in rep.pairs)
+    assert rep.status == "inconclusive"
+    assert all(r.max_gap_s == pytest.approx(2.05) for r in rep.pairs)
+
+
+def test_gap_at_the_end_is_caught_by_finish():
+    """Stream dies near the end; without finish() the tail would be invisible."""
+    t = SeparationTracker(IDS)
+    run(t, [(i * 0.05, poses(**SAFE)) for i in range(100)])          # last counted at 4.95
+    rep_before = assess(t, {}, IDS)
+    assert rep_before.status == "pass"
+    t.finish(host_time=8.0)
+    rep = assess(t, {}, IDS)
+    assert rep.status == "inconclusive"
+    assert "INSUFFICIENT" in format_report(rep) and "INCONCLUSIVE" in format_report(rep)
+
+
+def test_fail_outranks_inconclusive():
+    t = SeparationTracker(IDS)
+    run(t, [(0.0, poses(Drone1=(0, 0, 5), Drone2=(0, 0.5, 5)))])     # too close, Drone3 missing
+    rep = assess(t, {}, IDS)
+    assert rep.coverage_problems and rep.violations
+    assert rep.status == "fail"
+    assert "Separation verdict: FAIL" in format_report(rep)
+
+
+def test_counted_sample_after_frozen_period_uses_new_timestamps():
+    t = SeparationTracker(IDS)
+    a = poses(**SAFE)
+    run(t, [(0.0, a), (0.05, a), (0.10, poses(**SAFE))])
+    r = t.pairs[("Drone1", "Drone2")]
+    assert r.samples == 2 and r.frozen == 1 and r.max_gap_s == pytest.approx(0.10)

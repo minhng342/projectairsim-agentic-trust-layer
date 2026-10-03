@@ -22,7 +22,9 @@ Agent proposal -> Action risk gate -> Executor -> Project AirSim adapter -> Simu
 | 4.3 | Ground-state hardening: raw LANDED must be still, support-surface normals only, latch release on movement, reset on clock reset; strict action fields | done |
 | 5.1 | Executor: `rotate_to_heading`, `change_altitude` (preflight, bounded task + settle waits, hover fallback, per-vehicle lock, cancellation) | done |
 | 5.2 | `move_to_position` with bounded corrections (1.0 m tolerance: Simple Flight stops within ~0.5-0.75 m by design); three-drone scene and concurrent multi-drone flight | done |
-| 5.3+ | `move_along_track`, `takeoff`, `land`; observation channel | next |
+| 5.3 | Pairwise separation + collision assessment; executor catch-all after dispatch; missions cancelled and awaited before shutdown | done |
+| 5.4 | Cancellation survives repeated Ctrl+C and cancels each drone's task once (takeoff included); separation counts only fresh, in-sync samples and reports INCONCLUSIVE on poor coverage | done |
+| 5.5+ | Observation feed, vehicle-bound action port, evaluation recorder; `move_along_track`, `takeoff`, `land` | next |
 
 ## Setup (Windows)
 
@@ -53,7 +55,7 @@ All commands from the repo root.
 | `python test_navigation.py` | yes | Takeoff, rotate nose, move along tracks, return, land |
 | `python test_adapter_live.py [--fly]` | yes | Snapshots at 2 Hz, optionally during a flight |
 | `python test_executor_live.py` | yes | Executor: takeoff (setup), rotate +90 deg, climb 2 m, safe shutdown |
-| `python test_multi_drone_live.py` | yes | Three drones (scene_three_drones.jsonc): climb to separate layers, fan out, turn, return, land, all concurrently; PASS also requires >= 2 m separation between every pair and no drone-to-drone collisions or impacts |
+| `python test_multi_drone_live.py` | yes | Three drones (scene_three_drones.jsonc): climb to separate layers, fan out, turn, return, land, all concurrently; PASS also requires >= 2 m separation between every pair, no drone-to-drone collisions or impacts, and adequate telemetry coverage (otherwise the separation verdict is INCONCLUSIVE, which fails the run) |
 | `python telemetry_explorer.py` | yes | Dumps every non-camera topic to `telemetry_dump.json` |
 
 Every script that arms the drone calls `utils.flight_safety.safe_shutdown()`
@@ -92,7 +94,7 @@ executor/completion.py              pure settle predicates, dwell tracker, deadl
 executor/projectairsim_executor.py  command lifecycle: preflight -> dispatch -> task wait -> settle -> result
 validation/telemetry_validator.py   deterministic data-quality checks
 utils/flight_safety.py              fail-safe shutdown for armed-flight scripts
-utils/separation.py                 pairwise separation + collision assessment (evaluation side, ground truth)
+utils/separation.py                 pairwise separation + collision assessment (evaluation side, ground truth); PASS / FAIL / INCONCLUSIVE
 utils/fleet.py                      run one coroutine per drone; on any failure cancel + await the rest before shutdown
 sim_config/                         scene + robot configs
 tests/                              offline tests with a fake projectairsim module
