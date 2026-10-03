@@ -20,7 +20,8 @@ Agent proposal -> Action risk gate -> Executor -> Project AirSim adapter -> Simu
 | 4.1 | Review fixes: robust callbacks, reconnect reset, landed state, request lock, vendored config | done |
 | 4.2 | Client pin 1.0.2, operational ground state, sim-progress staleness, action/result contract, completion predicates | done |
 | 4.3 | Ground-state hardening: raw LANDED must be still, support-surface normals only, latch release on movement, reset on clock reset; strict action fields | done |
-| 5 | Deterministic command primitives with telemetry settle checks (no agent) | next |
+| 5.1 | Executor: `rotate_to_heading`, `change_altitude` (preflight, bounded task + settle waits, hover fallback, per-vehicle lock, cancellation) | done |
+| 5.2+ | `move_along_track`, `move_to_position`, `takeoff`, `land` | next |
 
 ## Setup (Windows)
 
@@ -50,10 +51,14 @@ All commands from the repo root.
 | `python test_drone_creation.py` | yes | Scene load, drone creation, one telemetry read |
 | `python test_navigation.py` | yes | Takeoff, rotate nose, move along tracks, return, land |
 | `python test_adapter_live.py [--fly]` | yes | Snapshots at 2 Hz, optionally during a flight |
+| `python test_executor_live.py` | yes | Executor: takeoff (setup), rotate +90 deg, climb 2 m, safe shutdown |
 | `python telemetry_explorer.py` | yes | Dumps every non-camera topic to `telemetry_dump.json` |
 
 Every script that arms the drone calls `utils.flight_safety.safe_shutdown()`
-in a `finally` block (hover, land, disarm, release API control).
+in a `finally` block: hover, land, and disarm only once the drone is confirmed
+on the ground. If landing fails, times out or can't be confirmed, it does NOT
+disarm (that would drop the drone); it reports UNRESOLVED and leaves the drone
+armed and hovering. Every step is time-bounded end to end.
 
 ## Conventions
 
@@ -82,6 +87,7 @@ adapters/projectairsim_adapter.py   connect, cache push topics, pull kinematics/
 models/telemetry.py                 TelemetrySnapshot contract
 models/action.py                    ProposedAction (per-type parameters) and CommandResult
 executor/completion.py              pure settle predicates, dwell tracker, deadline
+executor/projectairsim_executor.py  command lifecycle: preflight -> dispatch -> task wait -> settle -> result
 validation/telemetry_validator.py   deterministic data-quality checks
 utils/flight_safety.py              fail-safe shutdown for armed-flight scripts
 sim_config/                         scene + robot configs
