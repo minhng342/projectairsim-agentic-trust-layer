@@ -110,6 +110,7 @@ class CommandResult(BaseModel):
     reason: str = ""
     sent_to_simulator: bool = False
     fallback_applied: str | None = None     # e.g. "hover", "land"
+    corrections: int = 0                    # bounded re-sends of a position target
     start_snapshot: TelemetrySnapshot | None = None
     final_snapshot: TelemetrySnapshot | None = None
     started_at_utc: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

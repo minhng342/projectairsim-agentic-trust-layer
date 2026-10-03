@@ -7,8 +7,9 @@ Call safe_shutdown() from a `finally:` block BEFORE disconnecting:
     otherwise          -> hover, land, then CONFIRM grounded
         confirmed      -> disarm, release API control
         not confirmed  -> do NOT disarm; leave the vehicle armed under API
-                          control (the flight controller keeps it hovering)
-                          and report UNRESOLVED
+                          control and report its state as UNRESOLVED. It is
+                          only holding position if the hover command took
+                          effect; if communication failed, its state is unknown.
 
 Disarming an airborne multirotor drops it. A forced fall during cleanup must
 never be confused with an agent-caused failure in experiment results, so a
@@ -136,8 +137,11 @@ async def safe_shutdown(drone, log=print, adapter=None, vehicle_id: str | None =
     if report.grounded_confirmed:
         _release(drone, log, report)
     else:
+        hovered = "hover: ok" in report.steps
         msg = ("UNRESOLVED: vehicle not confirmed on the ground; NOT disarming. "
-               "It stays armed under API control; check the simulator.")
+               + ("Hover was accepted, so it should be holding position"
+                  if hovered else "Hover was NOT confirmed, so its state is unknown")
+               + "; check the simulator.")
         report.steps.append(msg)
         log(f"[safe_shutdown] {msg}")
     return report

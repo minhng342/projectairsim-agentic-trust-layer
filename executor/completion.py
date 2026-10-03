@@ -38,7 +38,14 @@ class AltitudeTolerance:
 
 @dataclass(frozen=True)
 class PositionTolerance:
-    max_error_m: float = 0.5
+    # 1.0 m, not 0.5 m: Simple Flight's move_to_position is built to stop
+    # within ~0.5-0.75 m of the target. In the Project AirSim source,
+    # SimpleFlightApi::GetDistanceAccuracy() returns 0.5 m and the automatic
+    # lookahead is >= 1.5x that (0.75 m); the move counts as done once the end
+    # of the path is within lookahead, then the controller holds wherever it
+    # is. Live Pass 5.2: three drones stopped 0.55-0.69 m off even after slow
+    # corrections. A tighter tolerance would need our own final-approach control.
+    max_error_m: float = 1.0
     max_total_speed_mps: float = 0.35
     dwell_s: float = 1.0
 

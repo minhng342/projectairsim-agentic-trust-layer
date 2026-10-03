@@ -115,3 +115,19 @@ def test_deadline_uses_injected_clock():
     assert not dl.expired and dl.remaining_s == pytest.approx(2.0)
     now[0] = 102.0
     assert dl.expired and dl.remaining_s == 0.0
+
+
+@pytest.mark.parametrize("final,target", [
+    ((0.5, -3.1, 6.5), (0.0, -3.0, 6.0)),     # Drone1 after corrections, live Pass 5.2
+    ((-0.2, 0.0, 8.5), (0.0, 0.0, 8.0)),      # Drone2
+    ((0.5, 3.1, 10.5), (0.0, 3.0, 10.0)),     # Drone3
+])
+def test_position_tolerance_accepts_simple_flight_stopping_accuracy(final, target):
+    """Simple Flight stops within ~0.5-0.75 m by design (GetDistanceAccuracy = 0.5 m)."""
+    n, e, alt = final
+    assert position_settled(snap(n=n, e=e, alt=alt), *target)[0]
+
+
+def test_position_tolerance_still_rejects_the_overshoot():
+    # live Pass 5.2 before corrections: ~2.3 m past the launch point
+    assert not position_settled(snap(n=-1.8, e=-1.6, alt=6.5), 0.0, -3.0, 6.0)[0]

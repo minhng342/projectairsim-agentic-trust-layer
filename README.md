@@ -21,7 +21,8 @@ Agent proposal -> Action risk gate -> Executor -> Project AirSim adapter -> Simu
 | 4.2 | Client pin 1.0.2, operational ground state, sim-progress staleness, action/result contract, completion predicates | done |
 | 4.3 | Ground-state hardening: raw LANDED must be still, support-surface normals only, latch release on movement, reset on clock reset; strict action fields | done |
 | 5.1 | Executor: `rotate_to_heading`, `change_altitude` (preflight, bounded task + settle waits, hover fallback, per-vehicle lock, cancellation) | done |
-| 5.2+ | `move_along_track`, `move_to_position`, `takeoff`, `land` | next |
+| 5.2 | `move_to_position` with bounded corrections (1.0 m tolerance: Simple Flight stops within ~0.5-0.75 m by design); three-drone scene and concurrent multi-drone flight | done |
+| 5.3+ | `move_along_track`, `takeoff`, `land`; observation channel | next |
 
 ## Setup (Windows)
 
@@ -52,6 +53,7 @@ All commands from the repo root.
 | `python test_navigation.py` | yes | Takeoff, rotate nose, move along tracks, return, land |
 | `python test_adapter_live.py [--fly]` | yes | Snapshots at 2 Hz, optionally during a flight |
 | `python test_executor_live.py` | yes | Executor: takeoff (setup), rotate +90 deg, climb 2 m, safe shutdown |
+| `python test_multi_drone_live.py` | yes | Three drones (scene_three_drones.jsonc): climb to separate layers, fan out, turn, return, land, all concurrently |
 | `python telemetry_explorer.py` | yes | Dumps every non-camera topic to `telemetry_dump.json` |
 
 Every script that arms the drone calls `utils.flight_safety.safe_shutdown()`

@@ -1,0 +1,54 @@
+// Three quadrotors for multi-drone tests (Blocks environment).
+// Spawn points extend the official scene_two_drones.jsonc layout (x=0, y=0 and
+// y=2) to a 3 m spacing along east. Each drone spawns 4 m up (z=-4, NED) and
+// settles onto the ground. All use the same robot config; names must match the
+// vehicle_ids passed to ProjectAirSimAdapter.
+{
+  "id": "SceneThreeDrones",
+  "actors": [
+    {
+      "type": "robot",
+      "name": "Drone1",
+      "origin": {
+        "xyz": "0.0 -3.0 -4.0",
+        "rpy-deg": "0 0 0"
+      },
+      "robot-config": "robot_quadrotor_fastphysics.jsonc"
+    },
+    {
+      "type": "robot",
+      "name": "Drone2",
+      "origin": {
+        "xyz": "0.0 0.0 -4.0",
+        "rpy-deg": "0 0 0"
+      },
+      "robot-config": "robot_quadrotor_fastphysics.jsonc"
+    },
+    {
+      "type": "robot",
+      "name": "Drone3",
+      "origin": {
+        "xyz": "0.0 3.0 -4.0",
+        "rpy-deg": "0 0 0"
+      },
+      "robot-config": "robot_quadrotor_fastphysics.jsonc"
+    }
+  ],
+  "clock": {
+    "type": "steppable",
+    "step-ns": 3000000,
+    "real-time-update-rate": 3000000,
+    "pause-on-start": false
+  },
+  "home-geo-point": {
+    "latitude": 47.641468,
+    "longitude": -122.140165,
+    "altitude": 122.0
+  },
+  "segmentation": {
+    "initialize-ids": true,
+    "ignore-existing": false,
+    "use-owner-name": true
+  },
+  "scene-type": "UnrealNative"
+}

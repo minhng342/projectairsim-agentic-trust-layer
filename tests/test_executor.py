@@ -28,6 +28,8 @@ class FakeWorld:
         self.vn = self.ve = self.vs = 0.0
         self.target_heading = None
         self.target_alt = None
+        self.target_ne = None
+        self.misses = []                   # per move call: (dn, de, dalt) the drone ends up off by
         self.stuck = False                 # state never reaches the target
         self.status = ValidationStatus.VALID
         self.ground = GroundState.AIRBORNE
@@ -43,6 +45,8 @@ class FakeWorld:
             self.heading = self.target_heading
         if self.target_alt is not None:
             self.alt = self.target_alt
+        if self.target_ne is not None:
+            self.n, self.e = self.target_ne
 
 
 class FakeDrone:
@@ -57,6 +61,8 @@ class FakeDrone:
 
     async def _command(self, name, apply):
         self.calls.append(name)
+        if name == "move_to_position":
+            self.move_speeds = getattr(self, "move_speeds", []) + [self.last_move[3]]
         if name in self.invoke_raises:
             raise RuntimeError(f"{name} rejected")
 
@@ -81,8 +87,11 @@ class FakeDrone:
 
     async def move_to_position_async(self, north, east, down, velocity, timeout_sec=None):
         self.last_move = (north, east, down, velocity)
-        return await self._command("move_to_position",
-                                   lambda: setattr(self.world, "target_alt", -down))
+        def apply():
+            dn, de, da = self.world.misses.pop(0) if self.world.misses else (0.0, 0.0, 0.0)
+            self.world.target_alt = -down + da
+            self.world.target_ne = (north + dn, east + de)
+        return await self._command("move_to_position", apply)
 
     async def hover_async(self):
         return await self._command("hover", lambda: None)
@@ -341,3 +350,183 @@ def test_cancellation_before_dispatch_sends_nothing():
         lock.release()
     run(cancel_while_waiting_for_lock())
     assert drone.calls == []
+
+
+# ------------------------------------------------------------ move_to_position
+def move(n=12.0, e=-3.0, alt=6.0, speed=None):
+    return ProposedAction(vehicle_id="Drone1", action_type=ActionType.MOVE_TO_POSITION,
+                          north_m=n, east_m=e, altitude_m=alt, speed_mps=speed, reason="test")
+
+
+def test_move_to_position_succeeds_and_sends_target():
+    world, drone, ex = setup()
+    r = run(ex.execute(move(12.0, -3.0, 6.0, speed=4.0)))
+    assert r.status == CommandStatus.SUCCEEDED, r.reason
+    assert drone.last_move == (12.0, -3.0, -6.0, 4.0)
+    f = r.final_snapshot
+    assert (f.position_ned_m.x, f.position_ned_m.y, f.altitude_local_m) == (12.0, -3.0, 6.0)
+
+
+def test_move_to_position_default_speed():
+    world, drone, ex = setup()
+    run(ex.move_to_position("Drone1", 0.0, 0.0, 5.0))
+    assert drone.last_move[3] == FAST.move_default_speed_mps
+
+
+def test_move_not_settled_while_still_moving():
+    """Pass 4.1 live finding: the task can finish while the drone still moves at 2.6 m/s."""
+    world, drone, ex = setup()
+    world.vn = 2.6                         # keeps reporting motion after arrival
+    r = run(ex.execute(move()))
+    assert r.status == CommandStatus.TIMED_OUT and "speed 2.60" in r.reason
+    assert r.fallback_applied == "hover"
+
+
+def test_move_task_timeout_scales_with_distance():
+    world, drone, ex = setup()
+    start = run_snapshot(ex)
+    near = ex._move_task_timeout(move(start.position_ned_m.x + 3, start.position_ned_m.y, 5.0, 3.0), start)
+    far = ex._move_task_timeout(move(start.position_ned_m.x + 30, start.position_ned_m.y, 5.0, 3.0), start)
+    assert far - near == pytest.approx(9.0)
+
+
+def test_move_refused_when_grounded():
+    world, drone, ex = setup()
+    world.ground = GroundState.GROUNDED
+    r = run(ex.execute(move()))
+    assert r.status == CommandStatus.REFUSED and drone.calls == []
+
+
+def run_snapshot(ex):
+    return ex.adapter.get_snapshot("Drone1")
+
+
+# ------------------------------------------------------------ multiple vehicles
+class MultiAdapter:
+    """Several independent fake vehicles behind one adapter (one scene, many drones)."""
+
+    def __init__(self, ids):
+        self.vehicle_ids = list(ids)
+        self.worlds = {v: FakeWorld() for v in ids}
+        self.drones = {v: FakeDrone(self.worlds[v]) for v in ids}
+        self._single = {v: FakeAdapter(self.worlds[v], self.drones[v]) for v in ids}
+
+    def drone(self, vid):
+        return self.drones[vid]
+
+    def get_snapshot(self, vid):
+        return self._single[vid].get_snapshot(vid)
+
+
+def test_different_vehicles_run_concurrently_but_each_is_serialized():
+    ids = ["Drone1", "Drone2", "Drone3"]
+    adapter = MultiAdapter(ids)
+    ex = ProjectAirSimExecutor(adapter, config=FAST, log=lambda *_: None)
+    running = {"now": 0, "max": 0}
+    for d in adapter.drones.values():
+        original = d._command
+
+        async def tracked(name, apply, _orig=original):
+            task = await _orig(name, apply)
+            running["now"] += 1
+            running["max"] = max(running["max"], running["now"])
+
+            def done(_):
+                running["now"] -= 1
+            task.add_done_callback(done)
+            return task
+        d._command = tracked
+
+    async def fleet():
+        jobs = []
+        for i, vid in enumerate(ids):
+            jobs.append(ex.execute(ProposedAction(
+                vehicle_id=vid, action_type=ActionType.MOVE_TO_POSITION,
+                north_m=10.0 * i, east_m=5.0, altitude_m=5.0 + 2 * i, reason="fleet")))
+            jobs.append(ex.execute(ProposedAction(
+                vehicle_id=vid, action_type=ActionType.ROTATE_TO_HEADING,
+                heading_deg=90.0, reason="fleet")))
+        return await asyncio.gather(*jobs)
+    results = run(fleet())
+    assert all(r.status == CommandStatus.SUCCEEDED for r in results), [r.reason for r in results]
+    assert running["max"] >= 2                         # vehicles overlapped
+    for d in adapter.drones.values():
+        assert d.max_active == 1                       # but never two commands on one vehicle
+        assert d.calls == ["move_to_position", "rotate_to_yaw"]
+    for i, vid in enumerate(ids):                      # each vehicle got only its own command
+        w = adapter.worlds[vid]
+        assert (w.n, w.e, w.alt) == (10.0 * i, 5.0, 5.0 + 2 * i)
+
+
+def test_command_for_one_vehicle_never_touches_another():
+    adapter = MultiAdapter(["Drone1", "Drone2"])
+    ex = ProjectAirSimExecutor(adapter, config=FAST, log=lambda *_: None)
+    run(ex.execute(ProposedAction(vehicle_id="Drone2", action_type=ActionType.ROTATE_TO_HEADING,
+                                  heading_deg=45.0, reason="x")))
+    assert adapter.drones["Drone1"].calls == [] and adapter.drones["Drone2"].calls == ["rotate_to_yaw"]
+
+
+# ------------------------------------------------------------ corrections (live Pass 5.2 finding)
+def test_overshoot_then_stopped_is_corrected_once():
+    """Live run: the move task finished, the drone coasted ~2.3 m past and held there."""
+    world, drone, ex = setup()
+    world.misses = [(-1.8, 1.4, 0.0)]          # first attempt ends 2.3 m off, then stops
+    r = run(ex.execute(move(0.0, -3.0, 6.0, speed=3.0)))
+    assert r.status == CommandStatus.SUCCEEDED, r.reason
+    assert r.corrections == 1 and "after 1 correction" in r.reason
+    assert drone.calls == ["move_to_position", "move_to_position"]
+    assert drone.move_speeds == [3.0, FAST.correction_speed_mps]   # correction is slow
+    assert drone.last_move[:3] == (0.0, -3.0, -6.0)                # same target re-sent
+
+
+def test_altitude_error_after_stop_is_corrected_at_original_hold_point():
+    """Live run: Drone2 stopped 0.5 m high."""
+    world, drone, ex = setup()
+    world.misses = [(0.0, 0.0, 0.5)]
+    r = run(ex.change_altitude("Drone1", 8.0))
+    assert r.status == CommandStatus.SUCCEEDED and r.corrections == 1
+    assert drone.last_move[:3] == (-1.0, 8.0, -8.0)
+
+
+def test_corrections_are_bounded_then_time_out_and_hover():
+    world, drone, ex = setup()
+    world.misses = [(2.0, 0.0, 0.0)] * 10     # never gets there
+    r = run(ex.execute(move()))
+    assert r.status == CommandStatus.TIMED_OUT
+    assert r.corrections == FAST.max_corrections == 2
+    assert "after 2 corrections" in r.reason
+    assert drone.calls == ["move_to_position"] * 3 + ["hover"]
+
+
+def test_no_correction_while_still_moving():
+    world, drone, ex = setup()
+    world.vn = 2.6                             # off target but NOT stopped
+    r = run(ex.execute(move()))
+    assert r.status == CommandStatus.TIMED_OUT and r.corrections == 0
+    assert drone.calls == ["move_to_position", "hover"]
+
+
+def test_rotate_never_issues_corrections():
+    world, drone, ex = setup()
+    world.stuck = True
+    r = run(ex.execute(rotate(45.0)))
+    assert r.status == CommandStatus.TIMED_OUT and r.corrections == 0
+    assert drone.calls == ["rotate_to_yaw", "hover"]
+
+
+def test_correction_command_failure_fails_and_hovers():
+    world, drone, ex = setup()
+    world.misses = [(2.0, 0.0, 0.0)]
+    original = drone._command
+    count = {"n": 0}
+
+    async def second_move_fails(name, apply):
+        if name == "move_to_position":
+            count["n"] += 1
+            if count["n"] == 2:
+                drone.task_raises.add("move_to_position")
+        return await original(name, apply)
+    drone._command = second_move_fails
+    r = run(ex.execute(move()))
+    assert r.status == CommandStatus.FAILED and "correction task failed" in r.reason
+    assert r.corrections == 1 and r.fallback_applied == "hover"
