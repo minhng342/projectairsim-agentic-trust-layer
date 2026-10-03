@@ -530,3 +530,36 @@ def test_correction_command_failure_fails_and_hovers():
     r = run(ex.execute(move()))
     assert r.status == CommandStatus.FAILED and "correction task failed" in r.reason
     assert r.corrections == 1 and r.fallback_applied == "hover"
+
+
+# ------------------------------------------------------------ unexpected errors after dispatch
+def test_unexpected_error_in_settle_check_fails_and_hovers():
+    """Gap found reviewing Pass 5: a bug after dispatch used to escape with no hover/result."""
+    world, drone, ex = setup()
+
+    def broken_settle(snap, action, start):
+        raise ZeroDivisionError("bug in a completion check")
+    ex._settle_rotate = broken_settle
+    r = run(ex.execute(rotate()))
+    assert r.status == CommandStatus.FAILED and r.sent_to_simulator
+    assert r.reason == "unexpected executor error: ZeroDivisionError: bug in a completion check"
+    assert r.fallback_applied == "hover"
+    assert drone.calls == ["rotate_to_yaw", "hover"]
+
+
+def test_unexpected_error_while_waiting_for_task_fails_and_hovers():
+    world, drone, ex = setup(rotate_task_timeout_s=5.0)
+    drone.task_hangs.add("rotate_to_yaw")
+    calls = {"n": 0}
+    original = ex._check_telemetry
+
+    def flaky(action, state, when):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyError("pose")             # not one of the executor's expected failures
+        return original(action, state, when)
+    ex._check_telemetry = flaky
+    r = run(ex.execute(rotate()))
+    assert r.status == CommandStatus.FAILED and "KeyError" in r.reason
+    assert drone.calls == ["rotate_to_yaw", "hover"]
+    assert r.elapsed_s < 1.0

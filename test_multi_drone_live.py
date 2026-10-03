@@ -34,6 +34,7 @@ from adapters.projectairsim_adapter import ProjectAirSimAdapter
 from executor.projectairsim_executor import ProjectAirSimExecutor
 from models.action import CommandStatus
 from models.telemetry import GroundState, ValidationStatus
+from utils.fleet import run_all_or_cancel
 from utils.flight_safety import safe_shutdown
 from utils.separation import SeparationTracker, assess, format_report
 
@@ -147,7 +148,9 @@ async def main() -> int:
             phase["name"] = "takeoff (all)"
             await takeoff_all(adapter)
             phase["name"] = "missions (climb -> fan out -> turn -> return -> descend)"
-            await asyncio.gather(*(fly_mission(executor, v, homes[v], results, phase) for v in VEHICLES))
+            # If one mission crashes, the others are cancelled (each executor command
+            # hovers on cancel) and awaited BEFORE shutdown starts commanding the drones.
+            await run_all_or_cancel(fly_mission(executor, v, homes[v], results, phase) for v in VEHICLES)
         finally:
             phase["name"] = "safe_shutdown (all)"
             phase["steps"] = {}

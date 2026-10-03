@@ -22,6 +22,7 @@ Outcome mapping
     telemetry invalid, stale or unavailable mid-command -> FAILED    (sent=True), hover
     task or settle deadline exceeded                   -> TIMED_OUT (sent=True), hover
     asyncio.CancelledError after dispatch              -> shielded, bounded hover, re-raise
+    any other unexpected exception after dispatch      -> FAILED (sent=True), hover
 
 Project AirSim detail that matters here: cancelling the client-side asyncio Task
 does NOT stop the command inside the simulator. The fallback therefore always
@@ -35,6 +36,7 @@ risk gate's job. Takeoff is NOT implicit in any command.
 import asyncio
 import math
 import time
+import traceback
 from dataclasses import dataclass, field
 
 from executor.completion import (AltitudeTolerance, Deadline, DwellTracker, HeadingTolerance,
@@ -250,6 +252,19 @@ class ProjectAirSimExecutor:
                     return self._result(action, abort.status, abort.reason, started,
                                         sent_to_simulator=state["sent"], fallback_applied=fallback,
                                         corrections=state["corrections"],
+                                        start_snapshot=start, final_snapshot=state["last"])
+                except Exception as err:
+                    # Anything unexpected after dispatch (a bug in a settle check, a malformed
+                    # snapshot, a model error building the result) must still end in the
+                    # fallback and a structured result, never a drone left on its last command.
+                    self._cancel_task(state)
+                    self._log(f"[executor] {action.vehicle_id} {action.action_type.value}: "
+                              f"unexpected {type(err).__name__}: {err}\n{traceback.format_exc()}")
+                    fallback = await self._fallback(drone, state["last"])
+                    return self._result(action, CommandStatus.FAILED,
+                                        f"unexpected executor error: {type(err).__name__}: {err}",
+                                        started, sent_to_simulator=state["sent"],
+                                        fallback_applied=fallback, corrections=state["corrections"],
                                         start_snapshot=start, final_snapshot=state["last"])
             except asyncio.CancelledError:
                 self._cancel_task(state)

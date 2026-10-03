@@ -93,6 +93,7 @@ executor/projectairsim_executor.py  command lifecycle: preflight -> dispatch -> 
 validation/telemetry_validator.py   deterministic data-quality checks
 utils/flight_safety.py              fail-safe shutdown for armed-flight scripts
 utils/separation.py                 pairwise separation + collision assessment (evaluation side, ground truth)
+utils/fleet.py                      run one coroutine per drone; on any failure cancel + await the rest before shutdown
 sim_config/                         scene + robot configs
 tests/                              offline tests with a fake projectairsim module
 ```
