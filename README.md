@@ -53,7 +53,7 @@ All commands from the repo root.
 | `python test_navigation.py` | yes | Takeoff, rotate nose, move along tracks, return, land |
 | `python test_adapter_live.py [--fly]` | yes | Snapshots at 2 Hz, optionally during a flight |
 | `python test_executor_live.py` | yes | Executor: takeoff (setup), rotate +90 deg, climb 2 m, safe shutdown |
-| `python test_multi_drone_live.py` | yes | Three drones (scene_three_drones.jsonc): climb to separate layers, fan out, turn, return, land, all concurrently |
+| `python test_multi_drone_live.py` | yes | Three drones (scene_three_drones.jsonc): climb to separate layers, fan out, turn, return, land, all concurrently; PASS also requires >= 2 m separation between every pair and no drone-to-drone collisions or impacts |
 | `python telemetry_explorer.py` | yes | Dumps every non-camera topic to `telemetry_dump.json` |
 
 Every script that arms the drone calls `utils.flight_safety.safe_shutdown()`
@@ -92,6 +92,7 @@ executor/completion.py              pure settle predicates, dwell tracker, deadl
 executor/projectairsim_executor.py  command lifecycle: preflight -> dispatch -> task wait -> settle -> result
 validation/telemetry_validator.py   deterministic data-quality checks
 utils/flight_safety.py              fail-safe shutdown for armed-flight scripts
+utils/separation.py                 pairwise separation + collision assessment (evaluation side, ground truth)
 sim_config/                         scene + robot configs
 tests/                              offline tests with a fake projectairsim module
 ```

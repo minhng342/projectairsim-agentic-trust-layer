@@ -471,6 +471,41 @@ def test_clock_reset_clears_ground_latch_and_collision():
     assert s.ground_state == GroundState.AIRBORNE, s.ground_state_basis
 
 
+
+# ------------------------------------------------------------ evaluation read-outs
+def test_latest_poses_returns_newest_cached_pose_per_vehicle():
+    a = make_adapter()
+    assert a.latest_poses() == {}
+    publish_pose(a, pose_msg(T0 - 3_000_000, 1.0, 2.0, -3.0), pose_msg(T0, 1.5, 2.5, -3.5))
+    assert a.latest_poses() == {"Drone1": (T0, 1.5, 2.5, -3.5)}
+
+
+def test_collision_log_keeps_every_collision_not_just_the_latest():
+    a = make_adapter()
+    fresh_pose(a)
+    publish_collision(a, {"time_stamp": T0 - 2_000_000_000, "object_name": "TemplateCube_1"})
+    publish_collision(a, {"time_stamp": T0, "object_name": "Ground", "normal": UP})
+    log = a.collision_log("Drone1")
+    assert [c.object_name for c in log] == ["TemplateCube_1", "Ground"]
+    assert a.get_snapshot("Drone1").collision.object_name == "Ground"   # snapshot: latest only
+
+
+def test_clock_reset_clears_collision_log():
+    a = make_adapter()
+    fresh_pose(a)
+    publish_collision(a, {"time_stamp": T0, "object_name": "Ground", "normal": UP})
+    publish_pose(a, pose_msg(1_000_000_000, 0, 0, -1))      # clock went backwards
+    assert a.collision_log("Drone1") == []
+
+
+def test_reconnect_clears_collision_log():
+    a = make_adapter()
+    fresh_pose(a)
+    publish_collision(a, {"time_stamp": T0, "object_name": "Ground", "normal": UP})
+    a.connect()
+    assert a.collision_log("Drone1") == []
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in dict(globals()).items() if n.startswith("test_") and callable(f)]
     failed = 0

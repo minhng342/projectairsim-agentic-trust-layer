@@ -18,7 +18,13 @@ Flight plan (each drone keeps its own altitude layer, so paths can't meet):
     land     safe_shutdown for all three, concurrently
 
 A status table for all drones prints every second while they fly.
-Exit code 0 only if every command for every drone SUCCEEDED.
+Separation between every pair of drones is sampled at 20 Hz from the adapter's
+pose cache (ground truth, evaluation only) for the whole run, and every
+collision reported by the simulator is logged.
+
+Exit code 0 only if every command for every drone SUCCEEDED, every drone landed
+and disarmed, no pair came closer than MIN_SEPARATION_M, and there were no
+drone-to-drone collisions or impacts.
 """
 import asyncio
 import sys
@@ -29,6 +35,7 @@ from executor.projectairsim_executor import ProjectAirSimExecutor
 from models.action import CommandStatus
 from models.telemetry import GroundState, ValidationStatus
 from utils.flight_safety import safe_shutdown
+from utils.separation import SeparationTracker, assess, format_report
 
 SCENE = "scene_three_drones.jsonc"
 VEHICLES = ["Drone1", "Drone2", "Drone3"]
@@ -37,6 +44,8 @@ ALTITUDE = {"Drone1": 6.0, "Drone2": 8.0, "Drone3": 10.0}
 FAN_OUT = {"Drone1": (12.0, -10.0), "Drone2": (15.0, 0.0), "Drone3": (12.0, 10.0)}
 TURN_TO = {"Drone1": 90.0, "Drone2": 180.0, "Drone3": 270.0}
 SPEED = 3.0
+MIN_SEPARATION_M = 2.0       # 3D; the 1.0 m position tolerance leaves margin at 3 m spacing
+SEPARATION_SAMPLE_HZ = 20
 DESCEND_ABOVE_LAUNCH = 1.5   # descend to launch altitude + this before landing
 # (the spawn area in Blocks is ~2.7 m local, not 1.2, so this must be relative)
 
@@ -64,6 +73,17 @@ async def monitor(adapter, stop: asyncio.Event, phase: dict):
             pass
 
 
+async def sample_separation(adapter, tracker, stop: asyncio.Event, phase: dict):
+    while not stop.is_set():
+        steps = phase.get("steps") or {}
+        label = phase["name"] if not steps else ", ".join(f"{v}:{steps[v]}" for v in VEHICLES if v in steps)
+        tracker.update(adapter.latest_poses(), phase=label)
+        try:
+            await asyncio.wait_for(stop.wait(), 1.0 / SEPARATION_SAMPLE_HZ)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def takeoff_all(adapter):
     """SETUP ONLY: direct Project AirSim calls, all three at once."""
     async def one(vid):
@@ -84,7 +104,7 @@ async def takeoff_all(adapter):
         raise RuntimeError(f"not airborne after takeoff: {sorted(pending)}")
 
 
-async def fly_mission(executor, vid, home, results):
+async def fly_mission(executor, vid, home, results, phase):
     """One drone's mission: runs its steps in order, stops at the first failure."""
     n0, e0, launch_alt = home
     dn, de = FAN_OUT[vid]
@@ -99,10 +119,14 @@ async def fly_mission(executor, vid, home, results):
                                                      speed_mps=2.0, reason="descend")),
     ]
     for name, step in steps:
+        phase.setdefault("steps", {})[vid] = name
         r = await step()
         results[vid].append((name, r))
         if r.status != CommandStatus.SUCCEEDED:
+            phase["steps"][vid] = f"{name} FAILED"
             break
+    else:
+        phase["steps"][vid] = "done"
 
 
 async def main() -> int:
@@ -112,7 +136,9 @@ async def main() -> int:
         await asyncio.sleep(0.5)
         executor = ProjectAirSimExecutor(adapter)
         stop = asyncio.Event()
+        tracker = SeparationTracker(VEHICLES)
         mon = asyncio.create_task(monitor(adapter, stop, phase))
+        sep = asyncio.create_task(sample_separation(adapter, tracker, stop, phase))
         try:
             homes = {}
             for vid in VEHICLES:
@@ -121,9 +147,10 @@ async def main() -> int:
             phase["name"] = "takeoff (all)"
             await takeoff_all(adapter)
             phase["name"] = "missions (climb -> fan out -> turn -> return -> descend)"
-            await asyncio.gather(*(fly_mission(executor, v, homes[v], results) for v in VEHICLES))
+            await asyncio.gather(*(fly_mission(executor, v, homes[v], results, phase) for v in VEHICLES))
         finally:
             phase["name"] = "safe_shutdown (all)"
+            phase["steps"] = {}
             reports = await asyncio.gather(
                 *(safe_shutdown(adapter.drone(v), adapter=adapter, vehicle_id=v,
                                 log=lambda m, v=v: print(f"[{v}] {m}"))
@@ -131,6 +158,8 @@ async def main() -> int:
                 return_exceptions=True)
             stop.set()
             await mon
+            await sep
+            collisions = {v: adapter.collision_log(v) for v in VEHICLES}
 
     print("\n================ RESULTS ================")
     ok = True
@@ -146,6 +175,10 @@ async def main() -> int:
         state = rep if isinstance(rep, Exception) else ("landed+disarmed" if rep.disarmed else "UNRESOLVED")
         print(f"  shutdown {vid}: {state}")
         ok = ok and not isinstance(rep, Exception) and rep.disarmed
+    separation = assess(tracker, collisions, VEHICLES, MIN_SEPARATION_M)
+    print()
+    print(format_report(separation))
+    ok = ok and separation.passed
     print("\nRESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 

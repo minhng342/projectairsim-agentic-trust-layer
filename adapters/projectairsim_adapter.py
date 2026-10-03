@@ -117,6 +117,8 @@ class _VehicleCache:
     # Ground detector (updated on the pose thread so it runs at ~330 Hz, not at snapshot rate)
     contact_latch: tuple[float, float, float] | None = None  # NED xyz at the last supporting contact
     still_since_ts: int | None = None           # sim ts when the vehicle became still
+    # Every collision this session (CollisionState only keeps the latest one).
+    collision_log: deque = field(default_factory=lambda: deque(maxlen=1000))
 
 
 # ---------------------------------------------------------------- adapter
@@ -261,6 +263,7 @@ class ProjectAirSimAdapter:
                         c.contact_latch = None
                         c.still_since_ts = None
                         c.collision = CollisionState()
+                        c.collision_log.clear()
                         self._record_bad_msg(
                             c, f"actual_pose: time_stamp went backwards ({c.pose_ts} -> {ts})")
                     if c.pose_ts is None or ts != c.pose_ts:
@@ -336,6 +339,7 @@ class ProjectAirSimAdapter:
                         count=old.count + 1,
                         impact_count=old.impact_count + (1 if resting is False else 0),
                     )
+                    c.collision_log.append(c.collision.model_copy())
                     # Only a slow touch on an upward-facing surface can support the vehicle.
                     # A wall (normal ~horizontal) or missing normal never latches.
                     if resting is True and c.collision.is_supporting_surface and c.pose_window:
@@ -476,6 +480,21 @@ class ProjectAirSimAdapter:
 
     def get_all_snapshots(self) -> list[TelemetrySnapshot]:
         return [self.get_snapshot(v) for v in self.vehicle_ids]
+
+    def latest_poses(self) -> dict[str, tuple[int, float, float, float]]:
+        """{vehicle_id: (sim_time_ns, north, east, down)} from the push cache.
+
+        No simulator requests, so it is cheap enough to sample at 20+ Hz for
+        separation monitoring. Vehicles with no valid pose yet are omitted.
+        This is simulator ground truth: evaluation only, never agent input.
+        """
+        with self._lock:
+            return {v: c.pose_window[-1] for v, c in self._cache.items() if c.pose_window}
+
+    def collision_log(self, vehicle_id: str) -> list[CollisionState]:
+        """Every collision reported for this vehicle this session, oldest first."""
+        with self._lock:
+            return list(self._cache[vehicle_id].collision_log)
 
     def topic_stats(self) -> dict:
         with self._lock:
