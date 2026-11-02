@@ -460,6 +460,13 @@ async def prepare_llm(args) -> dict:
         # Pydantic AI does not translate `thinking` for Ollama; Ollama's OpenAI-compatible
         # endpoint takes reasoning_effort "none" (and its native API `think: false`).
         settings["extra_body"] = {"reasoning_effort": "none", "think": False}
+    if spec == "test":
+        # Pydantic AI's TestModel: no LLM, answers with schema-valid but meaningless actions
+        # (sector "a"), so every decision exercises the guard's refusal and the fallback.
+        from pydantic_ai.models.test import TestModel
+        model = TestModel()
+        return {"model": model, "label": "test", "settings": {},
+                "config": {"model": "test", "harness": "pydantic-ai"}}
     if spec == "scripted" or spec.startswith("scripted:"):
         from agent.sar_scripted_model import scripted_search_model
         policy = spec.split(":", 1)[1] if ":" in spec else "nearest"
@@ -484,8 +491,8 @@ def parse_args(argv=None):
     ap.add_argument("--min-coverage", type=float, default=FULL_SWEEP_MIN_COVERAGE,
                     help="measured footprint coverage a --full-sweep run must reach")
     ap.add_argument("--model", default=None, help="LLM (Pydantic AI model string, default "
-                    "LLM_MODEL from .env); 'scripted[:nearest|prior|stubborn|broken]' needs no "
-                    "model server")
+                    "LLM_MODEL from .env); 'scripted[:nearest|prior|stubborn|broken]' or 'test' "
+                    "(Pydantic AI TestModel) need no model server")
     ap.add_argument("--thinking", choices=("default", "on", "off"), default="default",
                     help="model thinking/reasoning (off is much faster on qwen3.5)")
     ap.add_argument("--decision-timeout", type=float, default=60.0,

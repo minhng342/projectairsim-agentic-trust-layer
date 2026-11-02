@@ -183,3 +183,28 @@ def test_scripted_model_rejects_unknown_policy():
 def test_typed_actions_are_the_agent_output(mission):
     assert SweepSector(sector_id="A1", reason="r").to_proposed("D").sector_id == "A1"
     assert ReturnHome(reason="r").to_proposed("D").action_type == ActionType.RETURN_HOME
+
+
+# ------------------------------------------------------------------ TestModel (deck slide 9)
+def test_testmodel_plumbing_no_invalid_action_reaches_the_simulator(tmp_path):
+    """TestModel answers with schema-shaped nonsense (sector "a"): the action schema refuses
+    every answer (sector id pattern), the planner falls back each time, and the mission still
+    completes. Nothing the model proposed reaches the executor."""
+    code, batch, summary = llm_run(tmp_path, "test")
+    m = summary["runs"][0]
+    assert code == 0 and m["victim_found"] and m["landed"] and not m["fail_reasons"]
+    assert m["fallbacks"] == m["llm_decisions"] >= 1 and m["gate_rejections"] == 0
+    log = read_run(batch / "run_00.jsonl")
+    sent = [e["feedback"] for e in log.of_kind("feedback")
+            if e["feedback"]["action_type"] == "sweep_sector"]
+    assert sent and all(f["code"] == "sector_swept" or f["stage"] not in ("port", "gate")
+                        for f in sent)
+    decisions = log.of_kind("llm_decision")
+    assert all("output retries" in (e["error"] or "") for e in decisions)
+    assert all(e["choice"].startswith("sweep_sector") and "fallback" in e["reason"]
+               for e in decisions)
+
+
+def test_model_requests_are_blocked_in_tests():
+    from pydantic_ai import models
+    assert models.ALLOW_MODEL_REQUESTS is False
