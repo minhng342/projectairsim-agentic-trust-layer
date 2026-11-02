@@ -204,6 +204,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
         f"({victim.x_m:g}, {victim.y_m:g}) in {victim_sector}; log {recorder.path}")
     outcome, planner_result, shutdown = "aborted", None, None
     bg_errors: list[str] = []
+    run_error: str | None = None
+    descend_status: str | None = None
 
     if args.offline:
         from adapters.kinematic_sim import KinematicSim
@@ -240,12 +242,12 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
             sector_ex = SectorExecutor(adapter, vid, mission, home_xy, flight,
                                        follower_config=timing.follower(),
                                        on_event=recorder.recorder_for(source="mission"))
-            guard = None
-            if gate_mode(args) == "invariants":
-                guard = SarGuard(mission, belief, home_xy)
-                gate = SarInvariantGate(guard)
-            else:
-                gate = BypassGate()
+            # The planner-side guard (the LLM's output validator; the fixed planner's choice
+            # under the guard) and the execution-side gate are separate switches: --gate
+            # none bypasses only the gate. The LLM planner always validates its own output.
+            guard = SarGuard(mission, belief, home_xy) if (
+                llm or gate_mode(args) == "invariants") else None
+            gate = SarInvariantGate(guard) if gate_mode(args) == "invariants" else BypassGate()
             port = ActionPort(vid, sector_ex, feed, gate=gate, recorder=recorder,
                               max_observation_age_s=MAX_OBSERVATION_AGE_S)
             if llm:
@@ -286,6 +288,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
                 r = await flight.change_altitude(vid, round(launch_alt + DESCEND_ABOVE_LAUNCH_M, 2),
                                                  reason="setup: descend before landing")
                 recorder.record("setup", step="descend", vehicle_id=vid, status=r.status.value)
+                descend_status = r.status.value
             finally:
                 shutdown = await safe_shutdown(adapter.drone(vid), adapter=adapter, vehicle_id=vid,
                                                log=lambda m: log(f"[{vid}] {m}"),
@@ -301,7 +304,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
                                         error=f"{type(res).__name__}: {res}")
         outcome = planner_result.outcome if planner_result else "aborted"
     except BaseException as err:
-        recorder.record("error", error=f"{type(err).__name__}: {err}")
+        run_error = f"{type(err).__name__}: {err}"
+        recorder.record("error", error=run_error)
         if not isinstance(err, Exception):
             raise
         log(f"  run {run_index} ERROR: {type(err).__name__}: {err}")
@@ -311,6 +315,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
     metrics["landed"] = bool(shutdown and shutdown.disarmed)
     metrics["planner_reason"] = planner_result.reason if planner_result else None
     metrics["background_errors"] = bg_errors
+    metrics["run_error"] = run_error
+    metrics["descend"] = descend_status
     stem.with_suffix(".summary.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
     try:
         metrics["plot"] = str(plot_run(recorder.path, stem.with_suffix(".svg")))
@@ -342,6 +348,12 @@ def run_failures(m: dict, full_sweep: bool,
         why.append(f"{m['impacts']} impacts")
     if not m.get("run_complete"):
         why.append("run log incomplete")
+    if "descend" in m and m["descend"] != "succeeded":
+        why.append(f"descend before landing: {m['descend']}")
+    if m.get("run_error"):
+        why.append(f"run error: {m['run_error']}")
+    if m.get("run_log_outcome") in (None, "aborted"):
+        why.append(f"run log ended {m.get('run_log_outcome')}")
     if m.get("background_errors"):
         why.append("background task failed")
     if full_sweep:
@@ -448,6 +460,13 @@ async def prepare_llm(args) -> dict:
         # Pydantic AI does not translate `thinking` for Ollama; Ollama's OpenAI-compatible
         # endpoint takes reasoning_effort "none" (and its native API `think: false`).
         settings["extra_body"] = {"reasoning_effort": "none", "think": False}
+    if spec == "test":
+        # Pydantic AI's TestModel: no LLM, answers with schema-valid but meaningless actions
+        # (sector "a"), so every decision exercises the guard's refusal and the fallback.
+        from pydantic_ai.models.test import TestModel
+        model = TestModel()
+        return {"model": model, "label": "test", "settings": {},
+                "config": {"model": "test", "harness": "pydantic-ai"}}
     if spec == "scripted" or spec.startswith("scripted:"):
         from agent.sar_scripted_model import scripted_search_model
         policy = spec.split(":", 1)[1] if ":" in spec else "nearest"
@@ -472,8 +491,8 @@ def parse_args(argv=None):
     ap.add_argument("--min-coverage", type=float, default=FULL_SWEEP_MIN_COVERAGE,
                     help="measured footprint coverage a --full-sweep run must reach")
     ap.add_argument("--model", default=None, help="LLM (Pydantic AI model string, default "
-                    "LLM_MODEL from .env); 'scripted[:nearest|prior|stubborn|broken]' needs no "
-                    "model server")
+                    "LLM_MODEL from .env); 'scripted[:nearest|prior|stubborn|broken]' or 'test' "
+                    "(Pydantic AI TestModel) need no model server")
     ap.add_argument("--thinking", choices=("default", "on", "off"), default="default",
                     help="model thinking/reasoning (off is much faster on qwen3.5)")
     ap.add_argument("--decision-timeout", type=float, default=60.0,

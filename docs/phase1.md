@@ -242,9 +242,13 @@ python -m evaluation.plot_tracks runs/sar/<batch>/run_00.jsonl
 PASS for a run: the victim was detected, the search did not end in a failure (`ended_by`
 is not failed / aborted; a find never hides a later failure), the return home reached home,
 the drone landed, stayed inside the geofence and had no impact, the run log is complete and
-no background task (feed, sensor, truth sampler, time watch) died. With `--full-sweep`, every
+did not end `aborted`, no exception reached the runner (a crash after a successful search
+still fails the run), the descend before landing succeeded and no background task (feed,
+sensor, truth sampler, time watch) died. With `--full-sweep`, every
 sector must also be swept AND the measured footprint coverage must reach `--min-coverage`
-(default 95%; truth gaps over 3 s are not interpolated). A failing run prints its reasons
+(default 95%; truth gaps over 3 s are not interpolated). The 95% is an engineering
+acceptance threshold on an approximate raster (cells of footprint / 10), not proof that every
+point was seen; the team should agree on the tolerance. A failing run prints its reasons
 and `batch_summary.json` lists them per run (`fail_reasons`). The table at the end shows each
 run's outcome, victim sector, time to find (sim seconds), sectors swept and area coverage.
 

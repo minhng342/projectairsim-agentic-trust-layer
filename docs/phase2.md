@@ -5,7 +5,9 @@ to search next. Everything else stays the same code: the climb, the action port,
 executor, the sensor, the memory, stop on detection or time limit, the return home, the run
 log and the metrics. One more thing differs by default: `--gate auto` puts the invariant
 guard in the gate slot for the LLM planner but keeps Phase 1's bypass for the fixed planner.
-**For a fair comparison run both with `--gate invariants`**: the fixed planner then takes the
+`--gate none` bypasses only the execution-side gate; the LLM planner's output validator
+always runs (it is part of the planner, not a defense switch). **For a fair comparison run
+both with `--gate invariants`**: the fixed planner then takes the
 next sector in its order that the guard allows, so both planners run under the same rules,
 limits and termination, and differ only in which sector comes next.
 
@@ -27,6 +29,7 @@ python run_sar_mission.py --planner llm --model scripted --offline \
 | LLM planner | `agent/sar_llm_planner.py` (`LLMSectorPlanner`) | Pydantic AI, any model (`agent/model_config.py`); overrides one method of `FixedSectorPlanner` |
 | Invariant guard | `gate/sar_guard.py` (`SarGuard`, `SarInvariantGate`) | the agent's output validator AND the port's gate slot |
 | Scripted model | `agent/sar_scripted_model.py` | Pydantic AI `FunctionModel`: offline runs and tests |
+| TestModel | `--model test` | Pydantic AI `TestModel`: schema-shaped nonsense, so every decision is refused and falls back (plumbing test) |
 | Planner loop | `agent/sector_planner.py` | the loop now asks `choose()` for each next action; Phase 1's `choose()` is "next in the fixed order" |
 | Runner | `run_sar_mission.py` | `--planner llm`, `--model`, `--thinking`, `--decision-timeout` |
 | Metrics | `evaluation/sar_metrics.py` | decisions, fallbacks, guard and gate refusals, decision latency |
@@ -140,6 +143,16 @@ Same 10 seeds (`mission_dev.yaml` at 150 m, random victim per run), speedup 100:
 | `--planner llm --model scripted` (greedy nearest) | 10 of 10 found and landed | 746 (210-1317) | 0 |
 | `--model scripted:stubborn` (proposes a swept sector first) | guard refusals sent back, model fixes them | | 0 |
 | `--model scripted:broken` (never answers) | found; every decision fell back to the Phase 1 order | | all |
+
+`python -m pytest` blocks real model requests for the whole suite
+(`tests/conftest.py`, `ALLOW_MODEL_REQUESTS = False`), so no test can call an LLM by accident.
+
+Two expected weaknesses of the greedy stand-in, not pipeline faults: with `--full-sweep` it
+ends at 62-63 of 64 sectors on `mission_dev.yaml` (the nearest-first path leaves stragglers,
+and the last ones no longer fit in 1800 s; the serpentine order sweeps all 64), and on the
+deck's `mission.yaml` (fixed victim in F5) it reaches F5 in 1 of 10 runs before 3600 s,
+against 10 of 10 for the serpentine order (~2790 s). Full-sweep acceptance is a Phase 1
+check; for the LLM planner, compare time to find on the same seeds.
 
 The scripted model is a greedy "nearest unsearched sector" policy, not an LLM: these rows
 check the pipeline (guard, retries, fallback, logs), not search quality. With no prior the

@@ -73,7 +73,8 @@ def good_metrics(**over):
     m = {"victim_found": True, "ended_by": "all_swept", "return_home": "home_reached",
          "landed": True, "geofence_breaches": 0, "impacts": 0, "run_complete": True,
          "background_errors": [], "sectors_swept": 16, "sector_count": 16,
-         "area_coverage": 0.99}
+         "area_coverage": 0.99, "run_log_outcome": "all_swept", "run_error": None,
+         "descend": "succeeded"}
     m.update(over)
     return m
 
@@ -112,3 +113,41 @@ def test_fixed_planner_under_the_guard_goes_home_when_time_runs_short(tmp_path):
     m = summary["runs"][0]
     assert m["outcome"] == "time_limit" and m["return_home"] == "home_reached"
     assert m["gate_rejections"] == 0 and m["landed"]
+
+
+def test_an_exception_after_a_successful_search_fails_the_run(tmp_path, monkeypatch):
+    from executor.projectairsim_executor import ProjectAirSimExecutor
+
+    async def boom(self, *a, **kw):
+        raise RuntimeError("injected descent failure")
+    monkeypatch.setattr(ProjectAirSimExecutor, "change_altitude", boom)
+    code, batch, summary = run(tmp_path)
+    m = summary["runs"][0]
+    assert m["ended_by"] == "victim_found" and m["return_home"] == "home_reached"
+    assert m["run_log_outcome"] == "aborted" and "injected" in m["run_error"]
+    assert code == 1 and not summary["all_passed"]
+    assert any("run error" in r for r in m["fail_reasons"])
+
+
+def test_predicate_rejects_an_aborted_log_or_failed_descend():
+    assert not run_passes(good_metrics(run_log_outcome="aborted"), full_sweep=False)
+    assert not run_passes(good_metrics(run_error="RuntimeError: x"), full_sweep=False)
+    assert not run_passes(good_metrics(descend="failed"), full_sweep=False)
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("planner,gate,expected_gate", [
+    ("fixed", "none", "none"), ("fixed", "invariants", "sar_invariants"),
+    ("llm", "none", "none"), ("llm", "invariants", "sar_invariants")])
+def test_every_planner_gate_combination_runs(tmp_path, planner, gate, expected_gate):
+    extra = ["--planner", planner, "--gate", gate] + (["--model", "scripted"] if planner == "llm"
+                                                      else [])
+    code, batch, summary = run(tmp_path, *extra)
+    m = summary["runs"][0]
+    assert code == 0 and m["victim_found"] and not m["fail_reasons"]
+    log = read_run(batch / "run_00.jsonl")
+    assert log.events[0]["config"]["pipeline"]["action_gate"] == expected_gate
+    if planner == "llm":
+        assert m["llm_decisions"] >= 1 and m["fallbacks"] == 0
