@@ -5,7 +5,9 @@ to search next. Everything else stays the same code: the climb, the action port,
 executor, the sensor, the memory, stop on detection or time limit, the return home, the run
 log and the metrics. One more thing differs by default: `--gate auto` puts the invariant
 guard in the gate slot for the LLM planner but keeps Phase 1's bypass for the fixed planner.
-**For a fair comparison run both with `--gate invariants`**: the fixed planner then takes the
+`--gate none` bypasses only the execution-side gate; the LLM planner's output validator
+always runs (it is part of the planner, not a defense switch). **For a fair comparison run
+both with `--gate invariants`**: the fixed planner then takes the
 next sector in its order that the guard allows, so both planners run under the same rules,
 limits and termination, and differ only in which sector comes next.
 
