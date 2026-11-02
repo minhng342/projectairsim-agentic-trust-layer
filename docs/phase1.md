@@ -275,8 +275,12 @@ mission would take 8-13 hours. Options, for the team to choose:
    scene's drones hit buildings at 30 m). Pick a clear spot, set the scene's `xyz` and the
    mission's `area.origin` and the scenario's `start` to match. The runner refuses to fly if
    the drone spawns more than 5 m from the scenario start.
-2. **Altitude.** 60 m should clear most CityEnviron buildings; check the tallest ones over the
-   area before the full 800 m mission.
+2. **Altitude.** 60 m does not clear CityEnviron: at the default spawn the dev grid's row 2
+   runs into the wall of `Apartment_Square_Tower3` (moving the grid 40 m west didn't help;
+   the tower spans the east side). `mission_dev.yaml` flies at 150 m, which swept cleanly
+   on zeus-g (2026-11-02: victim found at 699 s sim, 32 of 64 sectors, landed, PASS).
+   Detection is footprint geometry, so altitude does not change it in Phase 1. Check the
+   deck's 800 m mission (`mission.yaml`, still 60 m) the same way before running it live.
 3. Start with `mission_dev.yaml --runs 1`, then `--runs 10`.
 4. Open the run's `.svg` to check the track against the lanes.
 
