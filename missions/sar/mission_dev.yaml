@@ -7,7 +7,9 @@ area:
   size_m: {width: 160, height: 160}
   sectors: {x: 8, y: 8}
 flight:
-  altitude_m: 60
+  # 150 m: in CityEnviron the grid's east side runs into Apartment_Square_Tower3 (taller
+  # than 60 m) at row 2; above the rooftops the sweep is clear (live PASS 2026-11-02).
+  altitude_m: 150
   speed_m_s: 5.0
 sensor:
   footprint_m: 12
