@@ -23,4 +23,19 @@ def configure_observability(service_name: str = "atal-agentic-trust-layer") -> b
     logfire.configure(service_name=service_name, send_to_logfire="if-token-present",
                       console=False)
     logfire.instrument_pydantic_ai()
+    global _ENABLED
+    _ENABLED = True
     return True
+
+
+_ENABLED = False
+
+
+def span(name: str, **attributes):
+    """A Logfire span when tracing is on (configure_observability returned True), else a
+    no-op context manager. Model requests made inside it nest under it."""
+    if not _ENABLED:
+        import contextlib
+        return contextlib.nullcontext()
+    import logfire
+    return logfire.span(name, **attributes)

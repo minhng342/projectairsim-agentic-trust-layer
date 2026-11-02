@@ -33,7 +33,7 @@ from search.voronoi import coverage_order, voronoi_partition
 
 @dataclass
 class PlannerResult:
-    outcome: str                 # victim_found | all_swept | time_limit | failed | aborted
+    outcome: str                 # victim_found | all_swept | time_limit | returned | failed | aborted
     reason: str
     order: list[str]
     swept: list[str]
@@ -57,6 +57,9 @@ class FixedSectorPlanner:
         self.time_up = False
         self.order: list[str] = []
         self.actions: list[dict] = []
+        self.gate_refusals_in_row = 0
+        self.max_refusals_in_row = 3
+        self.return_outcome = "returned"     # outcome when choose() returns ReturnHome
 
     # ------------------------------------------------------------ events from outside
     def on_detection(self, d: Detection) -> None:
@@ -92,14 +95,17 @@ class FixedSectorPlanner:
             return await self._finish("failed", f"climb to mission altitude: "
                                                 f"{fb.code if fb else 'no observation'}")
 
-        for sid in self.order:
+        while True:
             stop = self._should_stop()
             if stop:
                 return await self._finish(*stop)
-            if self.belief.status(sid).value == "swept":
-                continue
-            action = SweepSector(sector_id=sid, reason=f"next sector in the fixed "
-                                                       f"{self.mission.search.sector_order} order")
+            remaining = [sid for sid in self.order if self.belief.status(sid).value != "swept"]
+            if not remaining:
+                return await self._finish("all_swept", "every sector swept")
+            action = await self.choose(remaining)
+            if isinstance(action, ReturnHome):
+                return await self._finish(self.return_outcome, action.reason)
+            sid = action.sector_id
             obs_sim = self._sim_now()
             fb = await self._submit(action.to_proposed(self.vehicle_id), before=lambda rid:
                                     self.belief.mark_started(sid, obs_sim, rid))
@@ -108,6 +114,15 @@ class FixedSectorPlanner:
                 return await self._finish("failed", f"{sid}: no observation to decide from")
             if fb.code == "sector_swept":
                 self.belief.mark_swept(sid, sim, fb.request_id)
+                self.gate_refusals_in_row = 0
+                continue
+            if fb.stage.value in ("port", "gate"):
+                # Refused before anything flew: the sector is untouched; decide again.
+                self.belief.mark_partial(sid, sim, 0.0, fb.request_id)
+                self.gate_refusals_in_row += 1
+                if self.gate_refusals_in_row >= self.max_refusals_in_row:
+                    return await self._finish("failed", f"{self.gate_refusals_in_row} refusals in "
+                                                        f"a row, last {sid}: {fb.code}")
                 continue
             progress = self._sweep_progress() if self._sweep_progress else 0.0
             self.belief.mark_partial(sid, sim, progress, fb.request_id)
@@ -115,7 +130,11 @@ class FixedSectorPlanner:
                 stop = self._should_stop()
                 return await self._finish(*(stop or ("aborted", f"{sid}: sweep stopped")))
             return await self._finish("failed", f"{sid}: {fb.code}: {fb.message}")
-        return await self._finish(*(self._should_stop() or ("all_swept", "every sector swept")))
+
+    async def choose(self, remaining: list[str]) -> SweepSector | ReturnHome:
+        """The decision Phase 2 hands to the LLM: here, the next sector in the fixed order."""
+        return SweepSector(sector_id=remaining[0], reason=f"next sector in the fixed "
+                                                          f"{self.mission.search.sector_order} order")
 
     # ------------------------------------------------------------ helpers
     def _should_stop(self):
