@@ -3,8 +3,11 @@
 Goal: the same single-drone search as [Phase 1](phase1.md), with an LLM choosing which sector
 to search next. Everything else stays the same code: the climb, the action port, the sector
 executor, the sensor, the memory, stop on detection or time limit, the return home, the run
-log and the metrics. So Phase 1 and Phase 2 runs differ only in the planner's choices and
-can be compared directly on time to find.
+log and the metrics. One more thing differs by default: `--gate auto` puts the invariant
+guard in the gate slot for the LLM planner but keeps Phase 1's bypass for the fixed planner.
+**For a fair comparison run both with `--gate invariants`**: the fixed planner then takes the
+next sector in its order that the guard allows, so both planners run under the same rules,
+limits and termination, and differ only in which sector comes next.
 
 ```bash
 # live (zeus-g): LLM_MODEL in .env, or --model
@@ -66,7 +69,14 @@ flowchart LR
   without a next step.
 - **Gate.** The same guard sits in the port's gate slot (`SarInvariantGate`, assessed: every
   decision is APPROVED or REJECTED, never BYPASSED). Nothing that breaks a rule reaches the
-  executor even if a planner skipped the validator. The gate always lets a drone go home.
+  executor even if a planner skipped the validator, with one deliberate exception: the gate
+  always lets a drone go home (a trusted-controller privilege, since home is the safe action
+  after a failure). So `premature_return` is a planner-level rule, enforced by the
+  validator only: a planner that skips it can end its search early, but never fly an
+  invalid sweep.
+- **Stop is durable.** A detection or the time limit that arrives while the model is still
+  deciding ends the search: the loop re-checks after every decision, and the guard refuses
+  any sweep once the victim is detected (`search_over`).
 
 ## Guard rules
 
@@ -76,6 +86,7 @@ flowchart LR
 | `not_assigned` | the sector is outside the drone's Voronoi cells (all 64 with one drone) |
 | `already_swept` | the drone's memory marks it swept |
 | `not_enough_time` | flying there, sweeping it and flying home would overrun `max_mission_time_s` |
+| `search_over` | a sweep after the victim was detected (stop on detection) |
 | `premature_return` | return home while sectors still fit in the time and the victim is not found |
 | `wrong_altitude` | change altitude to anything but the mission altitude |
 | `not_allowed` | any other action type |

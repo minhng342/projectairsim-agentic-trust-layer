@@ -38,8 +38,11 @@ Output, per batch: runs/sar/<batch>/
     run_NN.summary.json   metrics (evaluation/sar_metrics.py)
     run_NN.svg            top-down plot (evaluation/plot_tracks.py)
     batch_summary.json    all runs + the Phase 1 verdict
-PASS (deck slide 11) = every run detected the victim, landed, stayed inside the geofence and
-had no impact collision; with --full-sweep every run must also have swept every sector.
+PASS (deck slide 11, tightened after the 11/02 audit; run_failures() lists the reasons) =
+the victim was detected, the search did not end in a failure, the return home reached home,
+the drone landed inside the geofence with no impact, the run log is complete and no
+background task died; with --full-sweep every sector must also be swept and the measured
+footprint coverage must reach --min-coverage (default 95%).
 
 Live: the scene (--scene, default sim_config/scene_sar_one_drone.jsonc) must spawn the
 drone at the scenario's start and the area must be clear of buildings at the mission
@@ -191,7 +194,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
         "scene": None if args.offline else args.scene,
         "pipeline": {"planner": (LLMSectorPlanner if llm else FixedSectorPlanner).name,
                      "allocation": "voronoi", "trust_assessor": NoTrustAssessor.name,
-                     "action_gate": SarInvariantGate.name if llm else BypassGate.name,
+                     "action_gate": (SarInvariantGate.name if gate_mode(args) == "invariants"
+                                     else BypassGate.name),
                      "model": llm["config"] if llm else None,
                      "observation_hz": OBSERVATION_HZ, "sensor_hz": SENSOR_HZ,
                      "truth_hz": TRUTH_HZ, "detection": "footprint_geometry"},
@@ -199,6 +203,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
     log(f"\n=== run {run_index} (seed {scenario.run_seed(run_index)}): victim at "
         f"({victim.x_m:g}, {victim.y_m:g}) in {victim_sector}; log {recorder.path}")
     outcome, planner_result, shutdown = "aborted", None, None
+    bg_errors: list[str] = []
 
     if args.offline:
         from adapters.kinematic_sim import KinematicSim
@@ -235,7 +240,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
             sector_ex = SectorExecutor(adapter, vid, mission, home_xy, flight,
                                        follower_config=timing.follower(),
                                        on_event=recorder.recorder_for(source="mission"))
-            if llm:
+            guard = None
+            if gate_mode(args) == "invariants":
                 guard = SarGuard(mission, belief, home_xy)
                 gate = SarInvariantGate(guard)
             else:
@@ -253,7 +259,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
                                            sweep_progress=sector_ex.last_progress, log=log)
             else:
                 planner = FixedSectorPlanner(vid, mission, feed, port, belief, recorder=recorder,
-                                             sweep_progress=sector_ex.last_progress, log=log)
+                                             sweep_progress=sector_ex.last_progress, log=log,
+                                             guard=guard)
 
             def detected(d):
                 belief.add_detection(d)
@@ -285,7 +292,13 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
                                                confirm_poll_s=timing.poll(0.1))
                 recorder.record("shutdown", vehicle_id=vid, report=shutdown)
                 stop.set()
-                await asyncio.gather(*bg, return_exceptions=True)
+                for name, res in zip(("feed", "sensor", "truth", "time_watch"),
+                                     await asyncio.gather(*bg, return_exceptions=True)):
+                    if isinstance(res, BaseException) and not isinstance(
+                            res, asyncio.CancelledError):
+                        bg_errors.append(f"{name}: {type(res).__name__}: {res}")
+                        recorder.record("background_error", task=name,
+                                        error=f"{type(res).__name__}: {res}")
         outcome = planner_result.outcome if planner_result else "aborted"
     except BaseException as err:
         recorder.record("error", error=f"{type(err).__name__}: {err}")
@@ -297,6 +310,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
     metrics = sar_metrics(read_run(recorder.path), mission)
     metrics["landed"] = bool(shutdown and shutdown.disarmed)
     metrics["planner_reason"] = planner_result.reason if planner_result else None
+    metrics["background_errors"] = bg_errors
     stem.with_suffix(".summary.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
     try:
         metrics["plot"] = str(plot_run(recorder.path, stem.with_suffix(".svg")))
@@ -305,11 +319,49 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
     return metrics
 
 
-def run_passes(m: dict, full_sweep: bool) -> bool:
-    ok = m["victim_found"] and m["landed"] and m["geofence_breaches"] == 0 and m["impacts"] == 0
+FULL_SWEEP_MIN_COVERAGE = 0.95   # measured footprint coverage a full sweep must reach
+
+
+def run_failures(m: dict, full_sweep: bool,
+                 min_coverage: float = FULL_SWEEP_MIN_COVERAGE) -> list[str]:
+    """Why a run does not pass (empty = PASS). Finding the victim does not excuse a failure
+    later in the run: the search, the return home, the landing and the evidence must all be
+    sound."""
+    why = []
+    if not m["victim_found"]:
+        why.append("victim not found")
+    if m.get("ended_by") in ("failed", "aborted", None):
+        why.append(f"search ended by {m.get('ended_by')}")
+    if m.get("return_home") != "home_reached":
+        why.append(f"return home: {m.get('return_home')}")
+    if not m["landed"]:
+        why.append("not landed")
+    if m["geofence_breaches"]:
+        why.append(f"{m['geofence_breaches']} geofence breaches")
+    if m["impacts"]:
+        why.append(f"{m['impacts']} impacts")
+    if not m.get("run_complete"):
+        why.append("run log incomplete")
+    if m.get("background_errors"):
+        why.append("background task failed")
     if full_sweep:
-        ok = ok and m["sectors_swept"] == m["sector_count"]
-    return ok
+        if m["sectors_swept"] != m["sector_count"]:
+            why.append(f"{m['sectors_swept']}/{m['sector_count']} sectors swept")
+        if m["area_coverage"] < min_coverage:
+            why.append(f"measured coverage {m['area_coverage']:.1%} < {min_coverage:.0%}")
+    return why
+
+
+def run_passes(m: dict, full_sweep: bool, min_coverage: float = FULL_SWEEP_MIN_COVERAGE) -> bool:
+    return not run_failures(m, full_sweep, min_coverage)
+
+
+def gate_mode(args) -> str:
+    """--gate auto: the invariant guard with the LLM planner, none (Phase 1 baseline) with
+    the fixed planner. Comparisons of the two planners should pass --gate invariants."""
+    if args.gate != "auto":
+        return args.gate
+    return "invariants" if args.planner == "llm" else "none"
 
 
 async def main(args) -> int:
@@ -353,7 +405,9 @@ async def main(args) -> int:
               + (f"; {m['llm_decisions']} decisions (mean {m['decision_latency_mean_s']} s), "
                  f"{m['guard_rejections']} refused, {m['fallbacks']} fallbacks"
                  if m.get("llm_decisions") else ""))
-    passed = [run_passes(m, args.full_sweep) for m in results]
+    for m in results:
+        m["fail_reasons"] = run_failures(m, args.full_sweep, args.min_coverage)
+    passed = [not m["fail_reasons"] for m in results]
     streak = best = 0
     for p in passed:
         streak = streak + 1 if p else 0
@@ -362,7 +416,8 @@ async def main(args) -> int:
     summary = {"batch": batch, "mission_file": args.mission, "scenario_file": args.scenario,
                "planner": args.planner, "model": llm["label"] if llm else None,
                "mode": "offline" if args.offline else "live", "speedup": timing.k,
-               "full_sweep": args.full_sweep, "runs": results, "passed": passed,
+               "full_sweep": args.full_sweep, "min_coverage": args.min_coverage,
+               "gate": gate_mode(args), "runs": results, "passed": passed,
                "longest_pass_streak": best, "all_passed": all(passed),
                "time_to_find_s": {"mean": round(sum(found) / len(found), 2) if found else None,
                                   "min": min(found, default=None), "max": max(found, default=None)}}
@@ -374,7 +429,7 @@ async def main(args) -> int:
         print(f"{m['run_index']:>3} {m['outcome']:<13} {str(m['victim_found']):<5} "
               f"{str(m['victim_sector']):<6} {str(m['time_to_find_s']):>9} "
               f"{m['sectors_swept']:>3}/{m['sector_count']:<3} {m['area_coverage']:>8.1%} "
-              f"{str(m['landed']):<6} {'PASS' if p else 'FAIL'}")
+              f"{str(m['landed']):<6} {'PASS' if p else 'FAIL: ' + '; '.join(m['fail_reasons'])}")
     print(f"\nlongest streak of passing runs: {best} of {runs}"
           f"\nRESULT: {'PASS' if all(passed) else 'FAIL'}   ({out_dir / 'batch_summary.json'})")
     return 0 if all(passed) else 1
@@ -411,6 +466,11 @@ def parse_args(argv=None):
     ap = argparse.ArgumentParser(description="SAR runner: one drone; fixed planner (Phase 1) "
                                              "or LLM planner (Phase 2)")
     ap.add_argument("--planner", choices=("fixed", "llm"), default="fixed")
+    ap.add_argument("--gate", choices=("auto", "none", "invariants"), default="auto",
+                    help="auto: invariants with --planner llm, none with fixed; use invariants "
+                         "for both when comparing planners")
+    ap.add_argument("--min-coverage", type=float, default=FULL_SWEEP_MIN_COVERAGE,
+                    help="measured footprint coverage a --full-sweep run must reach")
     ap.add_argument("--model", default=None, help="LLM (Pydantic AI model string, default "
                     "LLM_MODEL from .env); 'scripted[:nearest|prior|stubborn|broken]' needs no "
                     "model server")

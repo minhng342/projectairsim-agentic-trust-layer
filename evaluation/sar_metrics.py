@@ -8,10 +8,13 @@ Search and rescue metrics for one run, from its run log (evaluation side, ground
     time_to_find_s     SIM seconds from the start of the search (the planner's plan) to the
                        detection; None if not found. The research question's metric.
     search_time_s      sim seconds from the plan to the end of the planner's last sweep
+    ended_by           what ended the search (failed / aborted stay visible after a find)
+    return_home        feedback code of the final return home (home_reached when it worked)
     sectors_swept      sectors the drone's memory marks swept (out of sector_count)
     area_coverage      share of the mission area that passed under the sensor footprint at
                        search altitude, from the ground-truth track (cells of
-                       footprint / 10); a sector-level claim is checked against this
+                       footprint / 10); a sector-level claim is checked against this;
+                       truth gaps over 3 s are not interpolated (truth_max_gap_s)
     distance_flown_m   horizontal track length at search altitude
     geofence_breaches  ground-truth samples outside area + limits.geofence_margin_m
     llm_decisions      Phase 2: LLM decisions (model runs), with fallbacks (the fixed-order
@@ -42,11 +45,16 @@ def _tracks(log: RunLog) -> dict[str, list[tuple[float, float, float, float]]]:
     return out
 
 
+MAX_INTERPOLATION_GAP_S = 3.0   # truth samples further apart are not joined (2 Hz nominal)
+
+
 def coverage_raster(mission: Mission, track, altitude_tolerance_m: float = 5.0,
-                    cells_per_footprint: int = 10):
+                    cells_per_footprint: int = 10,
+                    max_gap_s: float = MAX_INTERPOLATION_GAP_S):
     """(covered cells, total cells, cell size): cells whose center fell inside the square
     footprint around the track while at search altitude; segments between samples are
-    interpolated at half-cell steps."""
+    interpolated at half-cell steps, but only across gaps of at most max_gap_s (a longer
+    gap in the truth track is unobserved, so it covers nothing)."""
     a = mission.area
     f = mission.sensor.footprint_m
     cell = f / cells_per_footprint
@@ -66,20 +74,20 @@ def coverage_raster(mission: Mission, track, altitude_tolerance_m: float = 5.0,
             for j in range(j0, j1 + 1):
                 covered.add((i, j))
 
-    prev = None
-    for _, x, y, z in track:
+    prev, prev_t = None, None
+    for t, x, y, z in track:
         if abs(z - alt) > altitude_tolerance_m:
             prev = None
             continue
-        if prev is None:
+        if prev is None or t - prev_t > max_gap_s:
             mark(x, y)
         else:
             d = math.hypot(x - prev[0], y - prev[1])
             steps = max(1, math.ceil(d / (min(cx, cy) / 2)))
             for k in range(1, steps + 1):
-                t = k / steps
-                mark(prev[0] + t * (x - prev[0]), prev[1] + t * (y - prev[1]))
-        prev = (x, y)
+                f = k / steps
+                mark(prev[0] + f * (x - prev[0]), prev[1] + f * (y - prev[1]))
+        prev, prev_t = (x, y), t
     return covered, nx * ny, (cx, cy)
 
 
@@ -128,6 +136,7 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
                 swept.discard(s["sector_id"])
     cols = [e.get("collision") or {} for e in log.of_kind("collision")]
     impacts = [c for c in cols if _is_impact(c)]
+    gaps = [b[0] - a[0] for a, b in zip(track, track[1:])]
     decisions = [e for e in log.of_kind("llm_decision") if not e.get("skipped")]
     lat = [e["latency_s"] for e in decisions if e.get("latency_s") is not None]
     detection = det["detection"] if det else None
@@ -137,6 +146,8 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
     return {
         "run_index": cfg.get("run_index"), "seed": cfg.get("seed"),
         "outcome": end.get("outcome") if end else "incomplete",
+        "ended_by": end.get("ended_by", end.get("outcome")) if end else None,
+        "return_home": end.get("return_home") if end else None,
         "victim": cfg.get("victim"), "victim_sector": cfg.get("victim_sector"),
         "victim_found": det is not None,
         "detected_sector": detection.get("sector_id") if detection else None,
@@ -145,6 +156,7 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
         "search_time_s": round(t_end - t_plan, 2) if (t_end is not None and t_plan is not None) else None,
         "sectors_swept": len(swept), "sector_count": len(mission.grid.ids()),
         "area_coverage": round(len(covered) / total, 4) if total else 0.0,
+        "truth_max_gap_s": round(max(gaps), 2) if gaps else None,
         "distance_flown_m": round(dist, 1),
         "geofence_breaches": breaches,
         "collisions": len(cols), "impacts": len(impacts),
