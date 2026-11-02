@@ -138,6 +138,7 @@ def test_llm_planner_finds_the_victim_through_the_guarded_port(tmp_path):
     assert gates and all(g["decision"]["assessed"] for g in gates)
     d = log.of_kind("llm_decision")[0]
     assert d["choice"].startswith("sweep_sector") and d["model"] == "scripted:nearest"
+    assert d["reason"] == "scripted nearest choice" and "Memory map" in d["prompt"]
     assert summary["planner"] == "llm" and summary["model"] == "scripted:nearest"
 
 

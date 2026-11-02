@@ -385,9 +385,14 @@ async def prepare_llm(args) -> dict:
     observed = configure_observability()
     print(f"Logfire tracing {'on' if observed else 'off (no LOGFIRE_TOKEN)'}")
     settings = {}
+    spec = args.model or ""
     if args.thinking != "default":
         settings["thinking"] = args.thinking == "on"
-    spec = args.model or ""
+    from agent.model_config import model_specs
+    if args.thinking == "off" and model_specs(args.model)[0].startswith("ollama:"):
+        # Pydantic AI does not translate `thinking` for Ollama; Ollama's OpenAI-compatible
+        # endpoint takes reasoning_effort "none" (and its native API `think: false`).
+        settings["extra_body"] = {"reasoning_effort": "none", "think": False}
     if spec == "scripted" or spec.startswith("scripted:"):
         from agent.sar_scripted_model import scripted_search_model
         policy = spec.split(":", 1)[1] if ":" in spec else "nearest"
