@@ -37,10 +37,17 @@ class ActionType(str, Enum):
     MAINTAIN = "maintain"                      # no change: a recorded decision to carry on
     RESUME = "resume"                          # continue the corridor after a hold
     CHANGE_SPEED = "change_speed"              # new cruise speed along the corridor
+    # Search and rescue actions (executor/sector_executor.py), Phase 1 onward. Each runs to
+    # completion: a sector is swept (or the sweep is stopped by a detection), home is reached.
+    SWEEP_SECTOR = "sweep_sector"              # boustrophedon sweep of one grid sector
+    RETURN_HOME = "return_home"                # fly back over the launch point at mission altitude
 
 
 PARAMS = ("heading_deg", "track_deg", "speed_mps", "altitude_m",
-          "north_m", "east_m", "duration_s")
+          "north_m", "east_m", "duration_s", "sector_id")
+FLOAT_PARAMS = PARAMS[:-1]
+# Grid sector ids: column letter (along y / east) + row number (along x / north), e.g. "F5".
+SECTOR_ID_PATTERN = r"^[A-Z][1-9][0-9]?$"
 
 REQUIRED: dict[ActionType, set[str]] = {
     ActionType.HOLD: set(),
@@ -53,6 +60,8 @@ REQUIRED: dict[ActionType, set[str]] = {
     ActionType.MAINTAIN: set(),
     ActionType.RESUME: set(),
     ActionType.CHANGE_SPEED: {"speed_mps"},
+    ActionType.SWEEP_SECTOR: {"sector_id"},
+    ActionType.RETURN_HOME: set(),
 }
 OPTIONAL: dict[ActionType, set[str]] = {
     ActionType.HOLD: {"duration_s"},               # without it: hold until resume
@@ -77,6 +86,7 @@ class ProposedAction(BaseModel):
     north_m: float | None = None
     east_m: float | None = None
     duration_s: float | None = None
+    sector_id: str | None = Field(default=None, pattern=SECTOR_ID_PATTERN)
 
     @model_validator(mode="after")
     def _check_parameters(self):
@@ -90,7 +100,7 @@ class ProposedAction(BaseModel):
             problems.append(f"missing {sorted(missing)}")
         if extra:
             problems.append(f"not allowed for {self.action_type.value}: {sorted(extra)}")
-        for p in given:
+        for p in given & set(FLOAT_PARAMS):
             if not math.isfinite(getattr(self, p)):
                 problems.append(f"{p} must be finite")
         for p in ("heading_deg", "track_deg"):

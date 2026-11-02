@@ -1,0 +1,24 @@
+# Development-size mission: the same 8 x 8 grid shrunk to 160 x 160 m (20 m sectors), so a
+# full sweep is ~3.5 km (~12 min at 5 m/s), not ~27 km. Use it for live shakedowns and the
+# demo video. Derived: lane spacing 9.6 m, 3 passes per sector.
+mission_id: sar-phase1-dev
+area:
+  origin: {x_m: 0, y_m: 0}
+  size_m: {width: 160, height: 160}
+  sectors: {x: 8, y: 8}
+flight:
+  altitude_m: 60
+  speed_m_s: 5.0
+sensor:
+  footprint_m: 12
+  overlap: 0.2
+search:
+  pattern: boustrophedon
+  sector_order: serpentine
+  start_sector: A1
+termination:
+  stop_on_detection: true
+  max_mission_time_s: 1800
+limits:
+  min_battery_pct: 25
+  geofence_margin_m: 5

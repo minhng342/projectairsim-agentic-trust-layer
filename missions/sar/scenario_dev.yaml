@@ -1,0 +1,13 @@
+# Development scenario: 10 runs, a different victim each run (drawn from seed + run index),
+# so "detects the victim in 10 runs in a row" is tested across the grid, not on one spot.
+scenario_id: sc-dev-random
+seed: 42
+runs: 10
+randomize_victim: true
+victim_edge_margin_m: 1.0
+drones:
+  - id: A
+    vehicle: Drone1
+    start: {x_m: 0, y_m: 0}
+insider:
+  enabled: false

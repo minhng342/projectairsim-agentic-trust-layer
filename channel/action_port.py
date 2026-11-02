@@ -69,6 +69,15 @@ _EXECUTOR_FEEDBACK = {
                                  "changed."),
     "mission_finished": ("mission_finished", "Your corridor is complete; no more maneuvers are "
                                              "accepted."),
+    # sector executor (executor/sector_executor.py): search and rescue actions
+    "sector_swept": ("sector_swept", "Sector swept: every lane was flown."),
+    "sweep_stopped": ("sweep_stopped", "The sweep was stopped before it finished (victim "
+                                       "detected or mission time limit); the drone is hovering."),
+    "home_reached": ("home_reached", "The drone is over its launch point."),
+    "unknown_sector": ("unknown_sector", "That sector is not part of the mission grid; nothing "
+                                         "was sent."),
+    "path_failed": ("failed", "The flight controller could not complete the path; the drone "
+                              "was told to hover."),
 }
 _FAILED = ("failed", "The command failed in the flight controller.")
 

@@ -1,0 +1,158 @@
+"""
+Sector executor (Phase 1): runs one typed SAR action at a time, to completion. It is the
+action port's executor, so every action still goes proposal -> gate -> executor -> result
+-> feedback and is recorded.
+
+    executor = SectorExecutor(adapter, "Drone1", mission, home_xy, flight_executor)
+    port = ActionPort("Drone1", executor, feed, gate=...)
+
+    sweep_sector     boustrophedon lanes for the sector (search/boustrophedon.py), flown
+                     as one polyline by the velocity PathFollower at mission altitude and
+                     speed; the path starts at the drone's position, so the transit from
+                     the previous sector is part of it
+    return_home      straight back over the launch point at mission altitude
+    change_altitude  delegated to the flight executor (climb in place to mission altitude,
+                     the move the corridor missions proved live)
+
+interrupt(reason) stops the sweep in progress (the drone hovers where it is). The runner
+wires it to the victim sensor when termination.stop_on_detection is set, and to the
+mission-time watchdog.
+
+Result codes (CommandResult.reason_code, mapped to agent feedback by the port):
+    sector_swept      every lane flown
+    sweep_stopped     interrupted (victim detected, time limit); progress in the result reason
+    home_reached      over the launch point
+    unknown_sector    not a sector of this mission's grid; nothing sent
+    path_failed       the follower failed (telemetry, timeout, grounded); it hovered
+    unsupported_action, not_applicable
+Policy (which sector may be swept now, geofence) is not checked here: in Phase 2 that is
+the invariant guard's job, in the port's gate slot.
+"""
+import math
+import time
+
+from executor.path_follower import FollowerConfig, FollowMode, PathFollower
+from models.action import ActionType, CommandResult, CommandStatus, ProposedAction
+from models.sar import Mission
+from search.boustrophedon import sweep_path
+
+
+class SectorExecutor:
+    SUPPORTED = (ActionType.SWEEP_SECTOR, ActionType.RETURN_HOME, ActionType.CHANGE_ALTITUDE)
+
+    def __init__(self, adapter, vehicle_id: str, mission: Mission, home_xy: tuple[float, float],
+                 flight_executor, follower_config: FollowerConfig | None = None,
+                 timeout_factor: float = 3.0, timeout_margin_s: float = 60.0, on_event=None,
+                 sleep=None, clock=time.monotonic, log=print):
+        self.adapter, self.vehicle_id, self.mission = adapter, vehicle_id, mission
+        self.home_xy = home_xy
+        self._flight = flight_executor
+        speed = mission.flight.speed_m_s
+        cfg = follower_config or FollowerConfig()
+        if cfg.max_speed_mps < speed:            # the mission speed is the follower's cruise
+            cfg = FollowerConfig(**{**cfg.__dict__, "max_speed_mps": speed})
+        self.follower_config = cfg
+        self.timeout_factor, self.timeout_margin_s = timeout_factor, timeout_margin_s
+        self._on_event, self._sleep, self._clock, self._log = on_event, sleep, clock, log
+        self.follower: PathFollower | None = None
+        self._interrupt_reason: str | None = None
+        self.current_sector: str | None = None
+
+    def interrupt(self, reason: str) -> bool:
+        """Stop the sweep / return in progress. True if something was running."""
+        f = self.follower
+        if f is None or f.mode in (FollowMode.DONE, FollowMode.FAILED, FollowMode.STOPPED):
+            return False
+        self._interrupt_reason = reason
+        f.stop()
+        self._emit("sweep_interrupt", reason=reason, sector_id=self.current_sector)
+        return True
+
+    async def execute(self, action: ProposedAction) -> CommandResult:
+        started = self._clock()
+
+        def result(status, code, reason, sent=False):
+            return CommandResult(request_id=action.request_id, vehicle_id=action.vehicle_id,
+                                 action_type=action.action_type, status=status, reason=reason,
+                                 reason_code=code, sent_to_simulator=sent,
+                                 final_snapshot=self._truth(),
+                                 elapsed_s=round(self._clock() - started, 3))
+
+        if action.vehicle_id != self.vehicle_id:
+            return result(CommandStatus.REFUSED, "not_applicable",
+                          f"executor flies {self.vehicle_id} only")
+        t = action.action_type
+        if t == ActionType.CHANGE_ALTITUDE:
+            return await self._flight.execute(action)
+        if t not in self.SUPPORTED:
+            return result(CommandStatus.REFUSED, "unsupported_action",
+                          f"{t.value} is not a search action")
+        snap = self._truth()
+        if snap is None:
+            return result(CommandStatus.REFUSED, "path_failed", "no telemetry")
+        here = (snap.position_ned_m.x, snap.position_ned_m.y)
+
+        if t == ActionType.SWEEP_SECTOR:
+            sid = action.sector_id
+            if not self.mission.grid.has(sid):
+                return result(CommandStatus.REFUSED, "unknown_sector",
+                              f"{sid} is not a sector of {self.mission.mission_id}")
+            path = sweep_path(self.mission, sid, here)
+            waypoints = [here] + path.waypoints
+            self.current_sector = sid
+            self._emit("sector_started", sector_id=sid, lanes=path.lanes,
+                       sweep_length_m=round(path.length_m, 2), waypoints=path.waypoints,
+                       request_id=action.request_id)
+        else:
+            sid, path = None, None
+            waypoints = [here, self.home_xy]
+            self.current_sector = None
+            self._emit("return_home_started", home=self.home_xy, request_id=action.request_id)
+
+        length = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(waypoints, waypoints[1:]))
+        timeout = length / self.mission.flight.speed_m_s * self.timeout_factor + self.timeout_margin_s
+        kw = {"sleep": self._sleep} if self._sleep is not None else {}
+        self._interrupt_reason = None
+        self.follower = PathFollower(self.adapter, self.vehicle_id, waypoints,
+                                     self.mission.flight.altitude_m, self.mission.flight.speed_m_s,
+                                     config=self.follower_config, on_event=self._on_event,
+                                     log=self._log, **kw)
+        r = await self.follower.run(timeout_s=timeout)
+        progress = 1.0 if length <= 0 else min(1.0, r.progress_m / length)
+
+        if r.mode == FollowMode.DONE:
+            if sid is not None:
+                self._emit("sector_done", sector_id=sid, request_id=action.request_id,
+                           elapsed_s=r.elapsed_s, max_cross_track_m=r.max_cross_track_m)
+                return result(CommandStatus.SUCCEEDED, "sector_swept",
+                              f"{sid} swept ({path.lanes} lanes, {r.elapsed_s:.1f} s)", True)
+            return result(CommandStatus.SUCCEEDED, "home_reached", "over the launch point", True)
+        if r.mode == FollowMode.STOPPED and self._interrupt_reason:
+            self._emit("sector_stopped" if sid else "return_home_stopped", sector_id=sid,
+                       request_id=action.request_id, reason=self._interrupt_reason,
+                       progress=round(progress, 4))
+            return result(CommandStatus.SUCCEEDED, "sweep_stopped",
+                          f"stopped: {self._interrupt_reason} (progress {progress:.2f})", True)
+        self._emit("sector_failed" if sid else "return_home_failed", sector_id=sid,
+                   request_id=action.request_id, reason=r.reason, progress=round(progress, 4))
+        return result(CommandStatus.FAILED, "path_failed", f"{r.mode.value}: {r.reason}", True)
+
+    def last_progress(self) -> float:
+        f = self.follower
+        if f is None or f.path.length <= 0:
+            return 0.0
+        return min(1.0, f.progress_m / f.path.length)
+
+    def _truth(self):
+        try:
+            return self.adapter.get_snapshot(self.vehicle_id)
+        except Exception:
+            return None
+
+    def _emit(self, kind: str, **fields) -> None:
+        if self._on_event is None:
+            return
+        try:
+            self._on_event(kind, {"vehicle_id": self.vehicle_id, **fields})
+        except Exception as err:
+            self._log(f"[sector] on_event({kind}) failed: {type(err).__name__}: {err}")
