@@ -251,7 +251,7 @@ acceleration limit, no wind, no buildings.
 | Mission | Runs | Result | Time to find (sim) |
 |---|---|---|---|
 | `mission_dev` (160 m, random victim per run) | 10 | 10 of 10 found, landed, no geofence breach | 101-1020 s |
-| `mission_dev --full-sweep` | 10 | see the PR description | |
+| `mission_dev --full-sweep` | 10 | 10 of 10 found, all 64 sectors swept, 100% area coverage, landed | 144-1047 s |
 | `mission.yaml` (deck, victim F5) | 2 | 2 of 2 found | ~2805 s (37 of 64 sectors) |
 | `mission.yaml --full-sweep` | 1 | victim found, but only 48 of 64 sectors before `max_mission_time_s: 3600` | |
 
