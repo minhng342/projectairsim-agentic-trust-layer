@@ -1,0 +1,12 @@
+# Phase 1 scenario (deck slide 13): ground truth, read ONLY by the runner and the
+# simulated sensor. The planner never sees this file.
+scenario_id: sc-001
+seed: 42
+runs: 10
+victim: {x_m: 430, y_m: 560}      # sector F5
+drones:
+  - id: A
+    vehicle: Drone1               # robot name in the scene file
+    start: {x_m: 0, y_m: 0}
+insider:
+  enabled: false

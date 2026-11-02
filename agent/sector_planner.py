@@ -1,0 +1,186 @@
+"""
+Phase 1 planner: one drone, no LLM. Plain code decides the next sector from a fixed list.
+
+    planner = FixedSectorPlanner("Drone1", mission, feed, port, belief)
+    result = await planner.run()
+
+    1. observe; Voronoi partition of the grid over the fleet (one drone: all 64 sectors)
+       and the drone's coverage order (search/voronoi.py), recorded as `sar_plan`
+    2. change_altitude to the mission altitude (climb in place)
+    3. for each sector in order: SweepSector through the action port; update the local
+       belief (memory) from the feedback: swept, or partial if stopped / failed
+    4. stop when every sector is swept, the victim is detected (stop_on_detection), the
+       mission time (sim seconds) is used up, or a sweep fails
+    5. ReturnHome through the port
+
+Every action is a typed Pydantic action (models/sar.py) converted to a ProposedAction and
+submitted with the observation it was decided from, exactly like an LLM agent's would be,
+so Phase 2 only swaps step 3's "next in the list" for the agent's choice: the port, the
+executor and the log stay the same.
+
+The planner sees only its own observations, its belief and the frozen mission. It never
+sees the scenario (victim position): a detection reaches it as a Detection from its own
+sensor, via on_detection().
+"""
+import time
+from dataclasses import dataclass, field
+
+from models.action import ActionType, ProposedAction
+from models.belief import Detection, LocalBelief
+from models.sar import DroneState, Mission, ReturnHome, SweepSector
+from search.voronoi import coverage_order, voronoi_partition
+
+
+@dataclass
+class PlannerResult:
+    outcome: str                 # victim_found | all_swept | time_limit | failed | aborted
+    reason: str
+    order: list[str]
+    swept: list[str]
+    detection: Detection | None
+    actions: list[dict] = field(default_factory=list)   # (action, feedback code) per submission
+
+
+class FixedSectorPlanner:
+    name = "FixedSectorPlanner"
+
+    def __init__(self, vehicle_id: str, mission: Mission, feed, port, belief: LocalBelief,
+                 fleet_positions=None, sweep_progress=None, recorder=None,
+                 observe_timeout_s: float = 5.0, log=print):
+        self.vehicle_id, self.mission = vehicle_id, mission
+        self.feed, self.port, self.belief = feed, port, belief
+        self._fleet_positions = fleet_positions          # Phase 3: peers' positions
+        self._sweep_progress = sweep_progress            # share of the last sweep flown
+        self._recorder, self._observe_timeout_s, self._log = recorder, observe_timeout_s, log
+        self.start_sim_s: float | None = None
+        self.detection: Detection | None = None
+        self.time_up = False
+        self.order: list[str] = []
+        self.actions: list[dict] = []
+
+    # ------------------------------------------------------------ events from outside
+    def on_detection(self, d: Detection) -> None:
+        """The drone's own sensor saw the victim."""
+        if self.detection is None:
+            self.detection = d
+
+    def on_time_up(self) -> None:
+        self.time_up = True
+
+    # ------------------------------------------------------------ run
+    async def run(self) -> PlannerResult:
+        obs, state = await self._observe()
+        if state is None:
+            return self._done("failed", "no observation before planning")
+        self.start_sim_s = state.sim_time_s
+        positions = {self.vehicle_id: (state.x_m, state.y_m)}
+        if self._fleet_positions:
+            positions.update(self._fleet_positions())
+        grid = self.mission.grid
+        cells = voronoi_partition(grid, positions)
+        self.order = coverage_order(grid, cells[self.vehicle_id], (state.x_m, state.y_m),
+                                    self.mission.search.start_sector)
+        self._record("sar_plan", allocation="voronoi", fleet=sorted(positions),
+                     cells=cells[self.vehicle_id], order=self.order,
+                     start={"x_m": state.x_m, "y_m": state.y_m}, derived=self.mission.derived())
+
+        fb = await self._submit(ProposedAction(
+            vehicle_id=self.vehicle_id, action_type=ActionType.CHANGE_ALTITUDE,
+            altitude_m=self.mission.flight.altitude_m,
+            reason="climb in place to mission altitude"))
+        if fb is None or fb.code != "completed":
+            return await self._finish("failed", f"climb to mission altitude: "
+                                                f"{fb.code if fb else 'no observation'}")
+
+        for sid in self.order:
+            stop = self._should_stop()
+            if stop:
+                return await self._finish(*stop)
+            if self.belief.status(sid).value == "swept":
+                continue
+            action = SweepSector(sector_id=sid, reason=f"next sector in the fixed "
+                                                       f"{self.mission.search.sector_order} order")
+            obs_sim = self._sim_now()
+            fb = await self._submit(action.to_proposed(self.vehicle_id), before=lambda rid:
+                                    self.belief.mark_started(sid, obs_sim, rid))
+            sim = self._sim_now()
+            if fb is None:
+                return await self._finish("failed", f"{sid}: no observation to decide from")
+            if fb.code == "sector_swept":
+                self.belief.mark_swept(sid, sim, fb.request_id)
+                continue
+            progress = self._sweep_progress() if self._sweep_progress else 0.0
+            self.belief.mark_partial(sid, sim, progress, fb.request_id)
+            if fb.code == "sweep_stopped":
+                stop = self._should_stop()
+                return await self._finish(*(stop or ("aborted", f"{sid}: sweep stopped")))
+            return await self._finish("failed", f"{sid}: {fb.code}: {fb.message}")
+        return await self._finish(*(self._should_stop() or ("all_swept", "every sector swept")))
+
+    # ------------------------------------------------------------ helpers
+    def _should_stop(self):
+        if self.detection is not None and self.mission.termination.stop_on_detection:
+            return "victim_found", f"victim detected in {self.detection.sector_id}"
+        if self.time_up or self._elapsed_sim() > self.mission.termination.max_mission_time_s:
+            return "time_limit", (f"max_mission_time_s "
+                                  f"{self.mission.termination.max_mission_time_s:g} used up")
+        return None
+
+    async def _finish(self, outcome: str, reason: str) -> PlannerResult:
+        fb = await self._submit(ReturnHome(reason=f"mission over: {outcome}").to_proposed(
+            self.vehicle_id))
+        self._record("return_home", code=fb.code if fb else None)
+        return self._done(outcome, reason)
+
+    def _done(self, outcome, reason) -> PlannerResult:
+        if self.detection is not None and outcome != "victim_found":
+            outcome, reason = "victim_found", f"victim detected; then {reason}"
+        r = PlannerResult(outcome=outcome, reason=reason, order=self.order,
+                          swept=self.belief.swept(), detection=self.detection,
+                          actions=self.actions)
+        self._record("planner_end", outcome=outcome, reason=reason, swept=len(r.swept),
+                     sectors=len(self.belief.sectors))
+        return r
+
+    async def _observe(self):
+        obs = await self.feed.current(after_sequence=self.port.last_command_ended_sequence,
+                                      timeout_s=self._observe_timeout_s)
+        if obs is None:
+            return None, None
+        sim_ns = obs.source_sim_time_ns
+        x, y = obs.north_m, obs.east_m
+        state = DroneState(vehicle_id=self.vehicle_id,
+                           sim_time_s=(sim_ns or 0) / 1e9, x_m=x, y_m=y,
+                           altitude_m=obs.altitude_m, sector_id=self.mission.grid.sector_at(x, y),
+                           airborne=obs.ground_state != "grounded")
+        self._last_state = state
+        return obs, state
+
+    async def _submit(self, action: ProposedAction, before=None):
+        obs, _ = await self._observe()
+        if obs is None:
+            return None
+        if before is not None:
+            before(action.request_id)
+        fb = await self.port.submit(action, based_on=obs.observation_id)
+        entry = {"action": action.action_type.value, "sector_id": action.sector_id,
+                 "code": fb.code, "request_id": fb.request_id}
+        self.actions.append(entry)
+        self._log(f"  [{time.strftime('%H:%M:%S')}] {self.vehicle_id}: {entry['action']}"
+                  + (f" {action.sector_id}" if action.sector_id else "") + f" -> {fb.code}")
+        return fb
+
+    def _sim_now(self) -> float | None:
+        latest = self.feed.latest()
+        ns = latest.source_sim_time_ns if latest is not None else None
+        return None if ns is None else round(ns / 1e9, 3)
+
+    def _elapsed_sim(self) -> float:
+        now = self._sim_now()
+        if now is None or self.start_sim_s is None:
+            return 0.0
+        return now - self.start_sim_s
+
+    def _record(self, kind, **fields):
+        if self._recorder is not None:
+            self._recorder.record(kind, vehicle_id=self.vehicle_id, source="planner", **fields)

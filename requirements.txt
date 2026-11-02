@@ -2,6 +2,7 @@
 projectairsim==1.0.2
 pydantic>=2,<3
 pytest>=8
+pyyaml>=6                  # SAR mission and scenario files (missions/sar/*.yaml)
 
 # LLM pilot agents
 # Pydantic AI (any model: Ollama / OpenAI-compatible via the openai extra, Gemini via google)

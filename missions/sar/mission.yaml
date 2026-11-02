@@ -1,0 +1,34 @@
+# Phase 1 mission plan (deck slide 13): what the drones know at launch.
+# Frame: simulator local NED. x_m = north, y_m = east, meters. The grid starts at `origin`
+# (its minimum-x, minimum-y corner). Sector ids read like a chess board on a north-up map:
+# letter = column along y (east), number = row along x (north). A1 is the origin corner,
+# B1 lies east of it, A2 north of it, H8 is the far corner.
+# Derived in code: sector size 100 m, lane spacing 48 m, 3 passes per sector.
+# Never put the victim here: it belongs in scenario.yaml, which only the runner reads.
+mission_id: sar-phase1-001
+area:
+  origin: {x_m: 0, y_m: 0}
+  size_m: {width: 800, height: 800}
+  sectors: {x: 8, y: 8}
+flight:
+  altitude_m: 60
+  speed_m_s: 5.0
+sensor:
+  footprint_m: 60
+  overlap: 0.2
+search:
+  pattern: boustrophedon
+  sector_order: serpentine
+  start_sector: A1
+prior:
+  enabled: false
+  center: {x_m: 450, y_m: 520}
+  sigma_m: {x: 150, y: 150}
+termination:
+  stop_on_detection: true
+  # A full sweep is ~19 km of track, ~80 min at 5 m/s: it does not fit in 3600 s at this
+  # speed (offline run 2026-11-02 stopped after 48 of 64 sectors; docs/phase1.md, "Run length").
+  max_mission_time_s: 3600
+limits:
+  min_battery_pct: 25
+  geofence_margin_m: 10
