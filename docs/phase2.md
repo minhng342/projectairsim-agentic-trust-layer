@@ -89,7 +89,8 @@ frozen mission. Trust checks on peers' claims and human approval belong to Phase
 
 ## What the run log adds
 
-Every decision is an `llm_decision` event: model, latency, the choice, the guard's refusals
+Every decision is an `llm_decision` event: model, latency, the choice and the model's
+reason, the exact prompt it was given, the guard's refusals
 (choice, code, message), whether the fallback was used and why, token usage, sim time, how
 many sectors were open, and what the Phase 1 planner would have chosen
 (`serpentine_choice`). Model-level retries and rate waits are logged as before
@@ -108,6 +109,12 @@ settings). The runner then prints `Logfire tracing on` and traces:
 - `sar run N`: one span per run (mission, planner, model);
 - `sar decision N`: one span per decision (unsearched count, sim time), with the model
   request(s) and output validation nested under it by Pydantic AI's instrumentation.
+
+To read a decision in Logfire, expand `sar run N` (the number badge on the row is how
+many spans are nested under it), then `sar decision N` → `agent run` → `chat <model>`. The
+chat span shows the system instructions, the situation prompt and the model's reply,
+including its `reason`. With `--thinking off` there is no separate reasoning text; with
+thinking on, qwen's reasoning appears in the reply if the model returns it.
 
 Without a token nothing is sent and runs are unaffected. The JSONL run log stays the
 experiment's source of truth; Logfire is for watching runs live and browsing prompts.

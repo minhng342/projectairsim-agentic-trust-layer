@@ -242,14 +242,15 @@ class LLMSectorPlanner(FixedSectorPlanner):
         else:
             self.last_sector = out.sector_id
         self._record("llm_decision", decision=self.decisions, model=self.model_label,
-                     latency_s=latency, choice=_describe(out), fallback=fallback, error=error,
-                     guard_rejections=self._rejections, usage=usage,
+                     latency_s=latency, choice=_describe(out), reason=out.reason,
+                     fallback=fallback, error=error, prompt=prompt, guard_rejections=self._rejections, usage=usage,
                      sim_s=state.sim_time_s, unsearched=len(remaining),
                      serpentine_choice=remaining[0])
         self._log(f"  [{time.strftime('%H:%M:%S')}] {self.vehicle_id}: decision "
                   f"{self.decisions} -> {_describe(out)} ({latency:.1f} s"
                   + (f", {len(self._rejections)} refused" if self._rejections else "")
-                  + (f", FALLBACK: {error}" if fallback else "") + ")")
+                  + (f", FALLBACK: {error}" if fallback else "") + ")"
+                  + (f"\n      reason: {out.reason}" if not fallback else ""))
         return out
 
     def _fallback(self, remaining, state):
