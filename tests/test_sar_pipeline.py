@@ -172,10 +172,26 @@ def test_unknown_sector_and_foreign_actions_are_refused_without_flying():
 
 def test_impact_collisions_are_logged_and_fail_the_run(tmp_path, monkeypatch):
     from models.telemetry import CollisionState
+    spawn = CollisionState(has_collided=True, object_name="Landscape_1", sim_time_ns=3_000_000_000,
+                           impact_speed_mps=None, is_resting_contact=None, normal_z=-1.0,
+                           is_supporting_surface=True, count=1)
     hit = CollisionState(has_collided=True, object_name="BG_Building_B10", sim_time_ns=10_500_000_000,
-                         impact_speed_mps=4.0, is_resting_contact=False, count=1, impact_count=1)
-    monkeypatch.setattr(KinematicSim, "collision_log", lambda self, vid: [hit])
+                         impact_speed_mps=4.0, is_resting_contact=False, normal_z=0.0,
+                         is_supporting_surface=False, count=2, impact_count=1)
+    monkeypatch.setattr(KinematicSim, "collision_log", lambda self, vid: [spawn, hit])
     code, batch, summary = run(tmp_path)
     m = summary["runs"][0]
     assert code == 1 and m["impacts"] == 1 and m["impact_objects"] == ["BG_Building_B10"]
-    assert len(read_run(batch / "run_00.jsonl").of_kind("collision")) == 1
+    assert m["collisions"] == 2
+    assert len(read_run(batch / "run_00.jsonl").of_kind("collision")) == 2
+
+
+def test_spawn_ground_contact_is_not_an_impact(tmp_path, monkeypatch):
+    from models.telemetry import CollisionState
+    spawn = CollisionState(has_collided=True, object_name="Landscape_1", sim_time_ns=3_000_000_000,
+                           impact_speed_mps=None, is_resting_contact=None, normal_z=-1.0,
+                           is_supporting_surface=True, count=1)
+    monkeypatch.setattr(KinematicSim, "collision_log", lambda self, vid: [spawn])
+    code, batch, summary = run(tmp_path)
+    m = summary["runs"][0]
+    assert m["collisions"] == 1 and m["impacts"] == 0

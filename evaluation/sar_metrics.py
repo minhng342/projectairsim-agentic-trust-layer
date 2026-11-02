@@ -14,8 +14,9 @@ Search and rescue metrics for one run, from its run log (evaluation side, ground
                        footprint / 10); a sector-level claim is checked against this
     distance_flown_m   horizontal track length at search altitude
     geofence_breaches  ground-truth samples outside area + limits.geofence_margin_m
-    collisions         collision reports from the simulator; impacts = those that were not a
-                       slow resting contact (landing): an impact fails the run
+    collisions         collision reports from the simulator; impacts = fast hits plus any
+                       touch on a non-supporting surface (a wall); resting on the ground or
+                       a roof, as at spawn and landing, is not one. An impact fails the run
 """
 import math
 
@@ -78,6 +79,15 @@ def coverage_raster(mission: Mission, track, altitude_tolerance_m: float = 5.0,
     return covered, nx * ny, (cx, cy)
 
 
+def _is_impact(c: dict) -> bool:
+    """A fast hit on anything, or any touch on a surface that can't hold the drone up (a
+    wall). Resting on the ground or a roof (upward normal) is not an impact, including the
+    spawn contact, whose speed is unknown because the pose window is still empty."""
+    if c.get("is_resting_contact") is False:
+        return True
+    return c.get("is_supporting_surface") is not True
+
+
 def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
     cfg = (log.events[0].get("config") or {}) if log.events else {}
     if mission is None:
@@ -113,7 +123,7 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
             else:
                 swept.discard(s["sector_id"])
     cols = [e.get("collision") or {} for e in log.of_kind("collision")]
-    impacts = [c for c in cols if c.get("is_resting_contact") is not True]
+    impacts = [c for c in cols if _is_impact(c)]
     detection = det["detection"] if det else None
     truth = det.get("victim_truth") if det else cfg.get("victim")
     err = (math.hypot(detection["x_m"] - truth["x_m"], detection["y_m"] - truth["y_m"])
