@@ -14,6 +14,8 @@ Search and rescue metrics for one run, from its run log (evaluation side, ground
                        footprint / 10); a sector-level claim is checked against this
     distance_flown_m   horizontal track length at search altitude
     geofence_breaches  ground-truth samples outside area + limits.geofence_margin_m
+    collisions         collision reports from the simulator; impacts = those that were not a
+                       slow resting contact (landing): an impact fails the run
 """
 import math
 
@@ -110,6 +112,8 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
                 swept.add(s["sector_id"])
             else:
                 swept.discard(s["sector_id"])
+    cols = [e.get("collision") or {} for e in log.of_kind("collision")]
+    impacts = [c for c in cols if c.get("is_resting_contact") is not True]
     detection = det["detection"] if det else None
     truth = det.get("victim_truth") if det else cfg.get("victim")
     err = (math.hypot(detection["x_m"] - truth["x_m"], detection["y_m"] - truth["y_m"])
@@ -127,6 +131,8 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
         "area_coverage": round(len(covered) / total, 4) if total else 0.0,
         "distance_flown_m": round(dist, 1),
         "geofence_breaches": breaches,
+        "collisions": len(cols), "impacts": len(impacts),
+        "impact_objects": sorted({str(c.get("object_name")) for c in impacts})[:10],
         "run_complete": log.complete,
         "run_log_outcome": log.outcome,
     }

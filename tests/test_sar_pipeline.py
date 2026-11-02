@@ -168,3 +168,14 @@ def test_unknown_sector_and_foreign_actions_are_refused_without_flying():
     r1, r2 = asyncio.run(go())
     assert r1.reason_code == "unknown_sector" and not r1.sent_to_simulator
     assert r2.reason_code == "unsupported_action"
+
+
+def test_impact_collisions_are_logged_and_fail_the_run(tmp_path, monkeypatch):
+    from models.telemetry import CollisionState
+    hit = CollisionState(has_collided=True, object_name="BG_Building_B10", sim_time_ns=10_500_000_000,
+                         impact_speed_mps=4.0, is_resting_contact=False, count=1, impact_count=1)
+    monkeypatch.setattr(KinematicSim, "collision_log", lambda self, vid: [hit])
+    code, batch, summary = run(tmp_path)
+    m = summary["runs"][0]
+    assert code == 1 and m["impacts"] == 1 and m["impact_objects"] == ["BG_Building_B10"]
+    assert len(read_run(batch / "run_00.jsonl").of_kind("collision")) == 1

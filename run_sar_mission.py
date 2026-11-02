@@ -27,8 +27,8 @@ Output, per batch: runs/sar/<batch>/
     run_NN.summary.json   metrics (evaluation/sar_metrics.py)
     run_NN.svg            top-down plot (evaluation/plot_tracks.py)
     batch_summary.json    all runs + the Phase 1 verdict
-PASS (deck slide 11) = every run detected the victim; with --full-sweep every run must
-also have swept every sector.
+PASS (deck slide 11) = every run detected the victim, landed, stayed inside the geofence and
+had no impact collision; with --full-sweep every run must also have swept every sector.
 
 Live: the scene (--scene, default sim_config/scene_sar_one_drone.jsonc) must spawn the
 drone at the scenario's start and the area must be clear of buildings at the mission
@@ -108,7 +108,16 @@ async def _takeoff(adapter, vid, recorder, timeout_s):
 
 async def _sample_truth(adapter, vid, mission, recorder, stop, period_s, on_breach):
     breached = False
+    seen = None                                   # last collision sim time recorded
     while not stop.is_set():
+        try:
+            for c in adapter.collision_log(vid):
+                if c.sim_time_ns is not None and (seen is None or c.sim_time_ns > seen):
+                    recorder.record("collision", vehicle_id=vid, collision=c,
+                                    sim_time_ns=c.sim_time_ns)
+                    seen = c.sim_time_ns
+        except Exception:
+            pass
         poses = adapter.latest_poses()
         p = poses.get(vid)
         if p is not None:
@@ -260,7 +269,7 @@ async def run_one(args, mission, scenario, run_index, out_dir: Path, timing: Tim
 
 
 def run_passes(m: dict, full_sweep: bool) -> bool:
-    ok = m["victim_found"] and m["landed"] and m["geofence_breaches"] == 0
+    ok = m["victim_found"] and m["landed"] and m["geofence_breaches"] == 0 and m["impacts"] == 0
     if full_sweep:
         ok = ok and m["sectors_swept"] == m["sector_count"]
     return ok
@@ -295,7 +304,8 @@ async def main(args) -> int:
         m = results[-1]
         print(f"  -> {m['outcome']}: found={m['victim_found']} time_to_find={m['time_to_find_s']} s, "
               f"{m['sectors_swept']}/{m['sector_count']} sectors, coverage {m['area_coverage']:.1%}, "
-              f"landed={m['landed']}")
+              f"landed={m['landed']}"
+              + (f", IMPACTS {m['impacts']} ({', '.join(m['impact_objects'])})" if m["impacts"] else ""))
     passed = [run_passes(m, args.full_sweep) for m in results]
     streak = best = 0
     for p in passed:
