@@ -14,6 +14,10 @@ Search and rescue metrics for one run, from its run log (evaluation side, ground
                        footprint / 10); a sector-level claim is checked against this
     distance_flown_m   horizontal track length at search altitude
     geofence_breaches  ground-truth samples outside area + limits.geofence_margin_m
+    llm_decisions      Phase 2: LLM decisions (model runs), with fallbacks (the fixed-order
+                       choice taken because the model gave no valid action), guard_rejections
+                       (choices the guard sent back), decision latency mean / max and the
+                       total host seconds spent deciding
     collisions         collision reports from the simulator; impacts = fast hits plus any
                        touch on a non-supporting surface (a wall); resting on the ground or
                        a roof, as at spawn and landing, is not one. An impact fails the run
@@ -124,6 +128,8 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
                 swept.discard(s["sector_id"])
     cols = [e.get("collision") or {} for e in log.of_kind("collision")]
     impacts = [c for c in cols if _is_impact(c)]
+    decisions = [e for e in log.of_kind("llm_decision") if not e.get("skipped")]
+    lat = [e["latency_s"] for e in decisions if e.get("latency_s") is not None]
     detection = det["detection"] if det else None
     truth = det.get("victim_truth") if det else cfg.get("victim")
     err = (math.hypot(detection["x_m"] - truth["x_m"], detection["y_m"] - truth["y_m"])
@@ -143,6 +149,14 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
         "geofence_breaches": breaches,
         "collisions": len(cols), "impacts": len(impacts),
         "impact_objects": sorted({str(c.get("object_name")) for c in impacts})[:10],
+        "llm_decisions": len(decisions),
+        "fallbacks": sum(1 for e in decisions if e.get("fallback")),
+        "guard_rejections": sum(len(e.get("guard_rejections") or []) for e in decisions),
+        "gate_rejections": sum(1 for e in log.of_kind("gate_decision")
+                               if (e.get("decision") or {}).get("outcome") == "rejected"),
+        "decision_latency_mean_s": round(sum(lat) / len(lat), 2) if lat else None,
+        "decision_latency_max_s": round(max(lat), 2) if lat else None,
+        "decision_time_total_s": round(sum(lat), 1) if lat else None,
         "run_complete": log.complete,
         "run_log_outcome": log.outcome,
     }

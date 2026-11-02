@@ -1,11 +1,22 @@
 """
-Phase 1 search and rescue runner: one drone, no LLM, N seeded runs, one command.
+Search and rescue runner: one drone, N seeded runs, one command.
+Phase 1 (default): the fixed-order planner, no LLM. Phase 2 (--planner llm): an LLM picks
+each next sector (agent/sar_llm_planner.py), checked by the invariant guard.
 
     python run_sar_mission.py                                   # deck mission, live sim
     python run_sar_mission.py --mission missions/sar/mission_dev.yaml \\
                               --scenario missions/sar/scenario_dev.yaml   # small grid, live
     python run_sar_mission.py --offline --speedup 50            # kinematic sim, no AirSim
     python run_sar_mission.py --offline --runs 1 --full-sweep   # keep sweeping after the find
+
+    # Phase 2: LLM planner (LLM_MODEL in .env, or --model); guard in the gate slot
+    python run_sar_mission.py --planner llm --mission missions/sar/mission_dev.yaml \
+                              --scenario missions/sar/scenario_dev.yaml --runs 1
+    python run_sar_mission.py --planner llm --model ollama:qwen3.5:9b --thinking off ...
+    python run_sar_mission.py --planner llm --model scripted --offline   # no model server
+
+Logfire: with LOGFIRE_TOKEN in .env, each run, each decision and each model request is
+traced (observability.py). The JSONL run log is written either way.
 
 Per drone (deck slide 12; every block is plain code):
     mission.yaml -> Mission (Pydantic) -> FixedSectorPlanner (Voronoi cells, fixed order)
@@ -43,6 +54,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from agent.sar_llm_planner import LLMSectorPlanner
 from agent.sector_planner import FixedSectorPlanner
 from channel.action_port import ActionPort
 from channel.observation_feed import ObservationFeed
@@ -53,12 +65,14 @@ from executor.path_follower import FollowerConfig
 from executor.projectairsim_executor import ExecutorConfig, ProjectAirSimExecutor
 from executor.sector_executor import SectorExecutor
 from gate.action_gate import BypassGate
+from gate.sar_guard import SarGuard, SarInvariantGate
 from models.belief import LocalBelief
 from models.sar import PlanFileError, load_mission, load_scenario
 from models.telemetry import GroundState, ValidationStatus
 from search.detection import VictimSensor
 from trust.assessor import NoTrustAssessor
 from utils.flight_safety import safe_shutdown
+from observability import configure_observability, span
 
 OBSERVATION_HZ = 1.0          # the planner decides at sector boundaries, not every second
 SENSOR_HZ = 20.0
@@ -154,14 +168,20 @@ async def _watch_time(adapter, vid, mission, planner, sector_ex, stop, period_s)
 
 
 async def run_one(args, mission, scenario, run_index, out_dir: Path, timing: Timing,
-                  log=print) -> dict:
+                  log=print, llm=None) -> dict:
+    with span("sar run {run_index}", run_index=run_index, mission=mission.mission_id,
+              planner=args.planner, model=llm["label"] if llm else None):
+        return await _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm)
+
+
+async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm) -> dict:
     drone = scenario.drones[0]
     vid = drone.vehicle
     victim = scenario.victim_for_run(mission, run_index)
     victim_sector = mission.grid.sector_at(victim.x_m, victim.y_m)
     stem = out_dir / f"run_{run_index:02d}"
     recorder = EvaluationRecorder(path=stem.with_suffix(".jsonl"), run_config={
-        "script": "run_sar_mission.py", "phase": 1, "mode": "offline" if args.offline else "live",
+        "script": "run_sar_mission.py", "phase": 2 if llm else 1, "mode": "offline" if args.offline else "live",
         "speedup": timing.k, "mission_file": args.mission, "scenario_file": args.scenario,
         "mission": mission.model_dump(mode="json"), "derived": mission.derived(),
         "scenario_id": scenario.scenario_id, "run_index": run_index,
@@ -169,8 +189,10 @@ async def run_one(args, mission, scenario, run_index, out_dir: Path, timing: Tim
         "start": drone.start.model_dump(), "victim": victim.model_dump(),
         "victim_sector": victim_sector, "full_sweep_override": args.full_sweep,
         "scene": None if args.offline else args.scene,
-        "pipeline": {"planner": FixedSectorPlanner.name, "allocation": "voronoi",
-                     "trust_assessor": NoTrustAssessor.name, "action_gate": BypassGate.name,
+        "pipeline": {"planner": (LLMSectorPlanner if llm else FixedSectorPlanner).name,
+                     "allocation": "voronoi", "trust_assessor": NoTrustAssessor.name,
+                     "action_gate": SarInvariantGate.name if llm else BypassGate.name,
+                     "model": llm["config"] if llm else None,
                      "observation_hz": OBSERVATION_HZ, "sensor_hz": SENSOR_HZ,
                      "truth_hz": TRUTH_HZ, "detection": "footprint_geometry"},
         "executor": asdict(timing.executor()), "follower": asdict(timing.follower())})
@@ -213,10 +235,25 @@ async def run_one(args, mission, scenario, run_index, out_dir: Path, timing: Tim
             sector_ex = SectorExecutor(adapter, vid, mission, home_xy, flight,
                                        follower_config=timing.follower(),
                                        on_event=recorder.recorder_for(source="mission"))
-            port = ActionPort(vid, sector_ex, feed, gate=BypassGate(), recorder=recorder,
+            if llm:
+                guard = SarGuard(mission, belief, home_xy)
+                gate = SarInvariantGate(guard)
+            else:
+                gate = BypassGate()
+            port = ActionPort(vid, sector_ex, feed, gate=gate, recorder=recorder,
                               max_observation_age_s=MAX_OBSERVATION_AGE_S)
-            planner = FixedSectorPlanner(vid, mission, feed, port, belief, recorder=recorder,
-                                         sweep_progress=sector_ex.last_progress, log=log)
+            if llm:
+                if hasattr(llm["model"], "on_event"):
+                    llm["model"].on_event = recorder.recorder_for(source="model")
+                planner = LLMSectorPlanner(vid, mission, feed, port, belief, model=llm["model"],
+                                           guard=guard, model_label=llm["label"],
+                                           model_settings=llm["settings"],
+                                           decision_timeout_s=args.decision_timeout,
+                                           recorder=recorder,
+                                           sweep_progress=sector_ex.last_progress, log=log)
+            else:
+                planner = FixedSectorPlanner(vid, mission, feed, port, belief, recorder=recorder,
+                                             sweep_progress=sector_ex.last_progress, log=log)
 
             def detected(d):
                 belief.add_detection(d)
@@ -290,6 +327,13 @@ async def main(args) -> int:
             update={"stop_on_detection": False})})
     runs = args.runs or scenario.runs
     timing = Timing(args.speedup if args.offline else 1.0)
+    llm = None
+    if args.planner == "llm":
+        try:
+            llm = await prepare_llm(args)
+        except RuntimeError as err:
+            print(f"no model available, nothing flown: {err}")
+            return 2
     batch = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{mission.mission_id}"
     out_dir = Path(args.out) / batch
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -300,12 +344,15 @@ async def main(args) -> int:
           f"{'offline x' + format(timing.k, 'g') if args.offline else 'live'}; output {out_dir}")
     results = []
     for i in range(runs):
-        results.append(await run_one(args, mission, scenario, i, out_dir, timing))
+        results.append(await run_one(args, mission, scenario, i, out_dir, timing, llm=llm))
         m = results[-1]
         print(f"  -> {m['outcome']}: found={m['victim_found']} time_to_find={m['time_to_find_s']} s, "
               f"{m['sectors_swept']}/{m['sector_count']} sectors, coverage {m['area_coverage']:.1%}, "
               f"landed={m['landed']}"
-              + (f", IMPACTS {m['impacts']} ({', '.join(m['impact_objects'])})" if m["impacts"] else ""))
+              + (f", IMPACTS {m['impacts']} ({', '.join(m['impact_objects'])})" if m["impacts"] else "")
+              + (f"; {m['llm_decisions']} decisions (mean {m['decision_latency_mean_s']} s), "
+                 f"{m['guard_rejections']} refused, {m['fallbacks']} fallbacks"
+                 if m.get("llm_decisions") else ""))
     passed = [run_passes(m, args.full_sweep) for m in results]
     streak = best = 0
     for p in passed:
@@ -313,6 +360,7 @@ async def main(args) -> int:
         best = max(best, streak)
     found = [m["time_to_find_s"] for m in results if m["time_to_find_s"] is not None]
     summary = {"batch": batch, "mission_file": args.mission, "scenario_file": args.scenario,
+               "planner": args.planner, "model": llm["label"] if llm else None,
                "mode": "offline" if args.offline else "live", "speedup": timing.k,
                "full_sweep": args.full_sweep, "runs": results, "passed": passed,
                "longest_pass_streak": best, "all_passed": all(passed),
@@ -332,8 +380,39 @@ async def main(args) -> int:
     return 0 if all(passed) else 1
 
 
+async def prepare_llm(args) -> dict:
+    """Pick and ping the model BEFORE anything connects to the simulator."""
+    observed = configure_observability()
+    print(f"Logfire tracing {'on' if observed else 'off (no LOGFIRE_TOKEN)'}")
+    settings = {}
+    if args.thinking != "default":
+        settings["thinking"] = args.thinking == "on"
+    spec = args.model or ""
+    if spec == "scripted" or spec.startswith("scripted:"):
+        from agent.sar_scripted_model import scripted_search_model
+        policy = spec.split(":", 1)[1] if ":" in spec else "nearest"
+        model = scripted_search_model(policy)
+        return {"model": model, "label": model.model_name, "settings": {},
+                "config": {"model": model.model_name, "harness": "pydantic-ai"}}
+    from agent.model_config import pick_model
+    model, label, tried = await pick_model(args.model)
+    return {"model": model, "label": label, "settings": settings,
+            "config": {"model": label, "harness": "pydantic-ai", "preflight": tried,
+                       "model_settings": settings, "logfire": observed,
+                       "rpm": getattr(getattr(model, "limiter", None), "rpm", None)}}
+
+
 def parse_args(argv=None):
-    ap = argparse.ArgumentParser(description="Phase 1 SAR runner: one drone, no LLM")
+    ap = argparse.ArgumentParser(description="SAR runner: one drone; fixed planner (Phase 1) "
+                                             "or LLM planner (Phase 2)")
+    ap.add_argument("--planner", choices=("fixed", "llm"), default="fixed")
+    ap.add_argument("--model", default=None, help="LLM (Pydantic AI model string, default "
+                    "LLM_MODEL from .env); 'scripted[:nearest|prior|stubborn|broken]' needs no "
+                    "model server")
+    ap.add_argument("--thinking", choices=("default", "on", "off"), default="default",
+                    help="model thinking/reasoning (off is much faster on qwen3.5)")
+    ap.add_argument("--decision-timeout", type=float, default=60.0,
+                    help="seconds per LLM decision before the fallback is used")
     ap.add_argument("--mission", default="missions/sar/mission.yaml")
     ap.add_argument("--scenario", default="missions/sar/scenario.yaml")
     ap.add_argument("--runs", type=int, default=None, help="override scenario.runs")
