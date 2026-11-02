@@ -14,12 +14,16 @@ own memory and the frozen mission. Trust checks on peers' claims come in Phase 5
     unknown_sector       the sector id is not in the mission grid
     not_assigned         the sector is outside this drone's Voronoi cells
     already_swept        this drone's memory already marks the sector swept
+    search_over          the victim was detected and the mission stops on detection (a
+                         durable stop: holds even if the detection came while deciding)
     not_enough_time      flying there, sweeping it and flying home would overrun
                          termination.max_mission_time_s (estimate, see below)
     premature_return     return_home while assigned sectors are unsearched, the victim has
                          not been detected and at least one of them still fits in the time
-                         (planner choices only: the gate always lets a drone go home, since
-                         that is the safe action after a failure)
+                         (planner choices only: the gate always lets a drone go home. That is a
+                         trusted-controller privilege, not an invariant: going home is the
+                         safe action after a failure, so a planner that skips the validator
+                         can end its search early, never fly somewhere it shouldn't)
     wrong_altitude       change_altitude to anything but the mission altitude
     not_allowed          any other action type
 
@@ -98,6 +102,9 @@ class SarGuard:
                                f"grid")
             if self.cells is not None and sid not in self.cells:
                 return Verdict(False, "not_assigned", f"{sid} is not in your assigned sectors")
+            if self.mission.termination.stop_on_detection and self.belief.victim_detected:
+                return Verdict(False, "search_over", "the victim has been detected; the search "
+                               "is over, return home")
             if self.belief.status(sid).value == "swept":
                 return Verdict(False, "already_swept", f"{sid} is already swept (your memory); "
                                f"choose an unsearched sector")

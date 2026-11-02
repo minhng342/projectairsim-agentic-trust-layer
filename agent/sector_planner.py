@@ -34,11 +34,19 @@ from search.voronoi import coverage_order, voronoi_partition
 @dataclass
 class PlannerResult:
     outcome: str                 # victim_found | all_swept | time_limit | returned | failed | aborted
+                                 # (victim_found whenever the sensor detected the victim)
     reason: str
     order: list[str]
     swept: list[str]
     detection: Detection | None
     actions: list[dict] = field(default_factory=list)   # (action, feedback code) per submission
+    ended_by: str = ""           # what ended the search, never overwritten by a detection
+    return_home: str | None = None   # feedback code of the final return home
+
+    @property
+    def healthy(self) -> bool:
+        """No failure along the way and the drone made it home."""
+        return self.ended_by not in ("failed", "aborted") and self.return_home == "home_reached"
 
 
 class FixedSectorPlanner:
@@ -46,8 +54,10 @@ class FixedSectorPlanner:
 
     def __init__(self, vehicle_id: str, mission: Mission, feed, port, belief: LocalBelief,
                  fleet_positions=None, sweep_progress=None, recorder=None,
-                 observe_timeout_s: float = 5.0, log=print):
+                 observe_timeout_s: float = 5.0, log=print, guard=None):
         self.vehicle_id, self.mission = vehicle_id, mission
+        self.guard = guard               # SarGuard (gate/sar_guard.py) or None
+        self.return_code: str | None = None
         self.feed, self.port, self.belief = feed, port, belief
         self._fleet_positions = fleet_positions          # Phase 3: peers' positions
         self._sweep_progress = sweep_progress            # share of the last sweep flown
@@ -83,6 +93,8 @@ class FixedSectorPlanner:
         cells = voronoi_partition(grid, positions)
         self.order = coverage_order(grid, cells[self.vehicle_id], (state.x_m, state.y_m),
                                     self.mission.search.start_sector)
+        if self.guard is not None:
+            self.guard.start_sim_s, self.guard.cells = self.start_sim_s, set(self.order)
         self._record("sar_plan", allocation="voronoi", fleet=sorted(positions),
                      cells=cells[self.vehicle_id], order=self.order,
                      start={"x_m": state.x_m, "y_m": state.y_m}, derived=self.mission.derived())
@@ -103,6 +115,11 @@ class FixedSectorPlanner:
             if not remaining:
                 return await self._finish("all_swept", "every sector swept")
             action = await self.choose(remaining)
+            # The decision may have taken a while (an LLM): a detection or the time limit
+            # that arrived meanwhile ends the search before anything new is flown.
+            stop = self._should_stop()
+            if stop:
+                return await self._finish(*stop)
             if isinstance(action, ReturnHome):
                 return await self._finish(self.return_outcome, action.reason)
             sid = action.sector_id
@@ -132,9 +149,21 @@ class FixedSectorPlanner:
             return await self._finish("failed", f"{sid}: {fb.code}: {fb.message}")
 
     async def choose(self, remaining: list[str]) -> SweepSector | ReturnHome:
-        """The decision Phase 2 hands to the LLM: here, the next sector in the fixed order."""
-        return SweepSector(sector_id=remaining[0], reason=f"next sector in the fixed "
-                                                          f"{self.mission.search.sector_order} order")
+        """The decision Phase 2 hands to the LLM: here, the next sector in the fixed order
+        (with a guard: the next one the guard allows, else return home)."""
+        reason = f"next sector in the fixed {self.mission.search.sector_order} order"
+        if self.guard is None:
+            return SweepSector(sector_id=remaining[0], reason=reason)
+        _, state = await self._observe()
+        if state is None:
+            return SweepSector(sector_id=remaining[0], reason=reason)
+        for sid in remaining:
+            a = SweepSector(sector_id=sid, reason=reason)
+            if self.guard.check(a.to_proposed(self.vehicle_id), state.x_m, state.y_m,
+                                state.sim_time_s).ok:
+                return a
+        self.return_outcome = "time_limit"
+        return ReturnHome(reason="no unsearched sector fits in the mission time left")
 
     # ------------------------------------------------------------ helpers
     def _should_stop(self):
@@ -148,16 +177,20 @@ class FixedSectorPlanner:
     async def _finish(self, outcome: str, reason: str) -> PlannerResult:
         fb = await self._submit(ReturnHome(reason=f"mission over: {outcome}").to_proposed(
             self.vehicle_id))
-        self._record("return_home", code=fb.code if fb else None)
+        self.return_code = fb.code if fb else None
+        self._record("return_home", code=self.return_code)
         return self._done(outcome, reason)
 
     def _done(self, outcome, reason) -> PlannerResult:
+        ended_by = outcome
         if self.detection is not None and outcome != "victim_found":
             outcome, reason = "victim_found", f"victim detected; then {reason}"
         r = PlannerResult(outcome=outcome, reason=reason, order=self.order,
                           swept=self.belief.swept(), detection=self.detection,
-                          actions=self.actions)
-        self._record("planner_end", outcome=outcome, reason=reason, swept=len(r.swept),
+                          actions=self.actions, ended_by=ended_by,
+                          return_home=self.return_code)
+        self._record("planner_end", outcome=outcome, ended_by=ended_by, reason=reason,
+                     return_home=self.return_code, healthy=r.healthy, swept=len(r.swept),
                      sectors=len(self.belief.sectors))
         return r
 

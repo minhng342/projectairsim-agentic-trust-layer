@@ -157,7 +157,7 @@ class LLMSectorPlanner(FixedSectorPlanner):
     def __init__(self, vehicle_id, mission, feed, port, belief, *, model, guard: SarGuard,
                  model_label: str | None = None, model_settings: dict | None = None,
                  retries: int = 2, decision_timeout_s: float = 60.0, clock=time.monotonic, **kw):
-        super().__init__(vehicle_id, mission, feed, port, belief, **kw)
+        super().__init__(vehicle_id, mission, feed, port, belief, guard=guard, **kw)
         self.model, self.guard = model, guard
         self.model_label = model_label or getattr(model, "model_name", str(model))
         self.model_settings = dict(model_settings or {})
@@ -196,9 +196,6 @@ class LLMSectorPlanner(FixedSectorPlanner):
         return await super().run()
 
     async def choose(self, remaining: list[str]):
-        if self.guard.start_sim_s is None:
-            self.guard.start_sim_s = self.start_sim_s
-            self.guard.cells = set(self.order)
         obs, state = await self._observe()
         fallback_choice = self._fallback(remaining, state)
         if state is None:
