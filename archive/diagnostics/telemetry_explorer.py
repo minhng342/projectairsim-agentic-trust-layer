@@ -11,7 +11,7 @@ so we know what the adapter can map into models/telemetry.py.
 5. Saves everything to telemetry_dump.json for reference.
 
 Run from this folder with Blocks.exe running:
-    python .\telemetry_explorer.py
+    python -m archive.diagnostics.telemetry_explorer
 """
 import asyncio
 import json
@@ -22,10 +22,10 @@ from projectairsim import ProjectAirSimClient, Drone, World
 
 from utils.flight_safety import safe_shutdown
 
-SIM_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_config") + os.sep
+SIM_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "sim_config") + os.sep
 SCENE = "scene_basic_drone.jsonc"
 NAME = "Drone1"
-OUT_FILE = os.path.join(os.path.dirname(__file__), "telemetry_dump.json")
+OUT_FILE = "telemetry_dump.json"  # written in the current directory (the repo root)
 
 
 class TopicRecorder:

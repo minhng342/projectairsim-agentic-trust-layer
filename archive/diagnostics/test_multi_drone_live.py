@@ -2,7 +2,7 @@
 Three drones flying at the same time, each driven by its own agent through
 the observation channel and its action port, with every event recorded.
 
-    python .\\test_multi_drone_live.py
+    python -m archive.diagnostics.test_multi_drone_live
 
 Scene: sim_config/scene_three_drones.jsonc (Drone1/2/3 spawned 3 m apart).
 

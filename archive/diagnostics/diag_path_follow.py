@@ -1,7 +1,7 @@
 """
 Diagnostic: continuous corridor flight with the velocity path follower (Phase 0).
 
-    python .\\diag_path_follow.py [--speed 3] [--no-maneuvers]
+    python -m archive.diagnostics.diag_path_follow [--speed 3] [--no-maneuvers]
 
 No LLM. One drone (scene_basic_drone.jsonc, spawned at heading 315: the heading where
 Simple Flight's position hold used to orbit). After takeoff and a climb to launch + 5 m,

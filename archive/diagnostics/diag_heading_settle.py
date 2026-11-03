@@ -1,7 +1,7 @@
 """
 Diagnostic: does Simple Flight settle after move_to_position at every heading?
 
-    python .\\diag_heading_settle.py [--headings 315,45,0] [--modes rate,velocity]
+    python -m archive.diagnostics.diag_heading_settle [--headings 315,45,0] [--modes rate,velocity]
 
 Why: in the first live LLM run (scene_basic_drone.jsonc, drone spawned at heading
 315), a 10 m move north overshot and then ORBITED the target in a slowly decaying

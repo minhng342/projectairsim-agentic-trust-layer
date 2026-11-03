@@ -1,8 +1,8 @@
 """
 Live check of ProjectAirSimAdapter against the running simulator.
 
-    python .\\test_adapter_live.py          # stationary: snapshots at 2 Hz for 5 s
-    python .\\test_adapter_live.py --fly    # also takeoff, move, land while sampling
+    python -m archive.diagnostics.test_adapter_live          # stationary: snapshots at 2 Hz for 5 s
+    python -m archive.diagnostics.test_adapter_live --fly    # also takeoff, move, land while sampling
 
 The --fly option uses the raw drone handle only to make values change; the
 adapter itself has no command methods yet.
