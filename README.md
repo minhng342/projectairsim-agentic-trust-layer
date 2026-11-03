@@ -69,7 +69,7 @@ don't.
 | 5.5 | Observation feed (verdict stripped, attack hooks before assessment, receiver-stamped ids), vehicle-bound action port (ownership, observation linkage, no replays, explicit gate bypass), JSONL evaluation recorder written during the run; three-drone demo runs through agents, with a sync point before descending; agents capture home on the ground before takeoff; altitude tolerance 0.5 m (Simple Flight accuracy) | done |
 | 5.6a | Interface hardening for external (LLM) agents: agent-facing `ActionFeedback` (no ground truth, fixed codes; full `CommandResult` evaluation side only, executor `reason_code`), proposals by `observation_id` resolved to frozen, feed-protected records, freshness and supersession checks, one command in flight per drone, fixed-rate observation sampling with history | done (offline) |
 | 5.6b | LLM pilot agent (`agent/llm_pilot.py`): tools `get_observation` / `submit_action`, final comment, bounded turns / submissions / time, model retries, provider interface (`agent/providers/`) with Gemini; dict proposals recorded with one request_id; protected copies from `resolve()` and to the assessor; supersession by feed sequence (Windows clock resolution) | offline done; live next |
-| 5.6c | Executor velocity final approach (default): Simple Flight's position hold orbited the target (~1 m, 0.6-0.7 m/s, never settling) at diagonal headings 315/45; holding the heading explicitly did not help; steering in with velocity commands settled at 315/45/0 in ~9.4 s with < 0.05 m/s residual motion (`diag_heading_settle.py`) | done (diag); demo rerun next |
+| 5.6c | Executor velocity final approach (default): Simple Flight's position hold orbited the target (~1 m, 0.6-0.7 m/s, never settling) at diagonal headings 315/45; holding the heading explicitly did not help; steering in with velocity commands settled at 315/45/0 in ~9.4 s with < 0.05 m/s residual motion (`archive/diagnostics/diag_heading_settle.py`) | done (diag); demo rerun next |
 | 5.6d | Pydantic AI harness (default): any model via one setting (`LLM_MODEL`: Ollama, OpenAI-compatible, Gemini), pacing and transient-error retries below the framework, optional Logfire tracing; same prompt, tools, port and recording as the reference `LLMPilot` (`PilotCore`); schema-rejected tool calls recorded | offline done; live next |
 | 0.a | Velocity path follower (`executor/path_follower.py`): continuous polyline flight by pure pursuit, live maneuvers (hold = brake then stay, resume, altitude, speed, stop), fail-safe hover; live diag at 3 m/s: 2.90 m/s on straights, 0.22 m median cross-track (1.15 m out of corners), no orbit after arrival. Python 3.11 `asyncio.wait_for` could swallow a cancellation: replaced by `asyncio.timeout` in executor, feed, follower, native pilot | done (hold fix: live recheck) |
 | 0.b | Remote ID broadcast channel (`channel/remote_id.py`): honest 1 Hz broadcasters, bus, per-drone receivers keyed by CLAIMED id, sender hooks (malicious drone: lie, impersonate, Sybil, drop) and link hooks (in transit), assessor slot per stream, agent traffic view with unverified free text | done (offline) |
@@ -121,27 +121,62 @@ Project AirSim v1.0.1 samples), so no sibling checkout is required.
 
 ## Running
 
-All commands from the repo root.
+All commands from the repo root. On zeus-g prefix them with `pas` (runs them in the lab image).
+
+### What's where
+
+| Phase | Entry point | Docs |
+|---|---|---|
+| 1. One drone, no LLM (SAR) | `run_sar_mission.py` | [docs/phase1.md](docs/phase1.md) |
+| 2. One drone, LLM planner (SAR) | `run_sar_mission.py --planner llm` | [docs/phase2.md](docs/phase2.md) |
+| 0. Corridor scenario (parked; Remote ID, conflict detection reused later) | `test_corridors_live.py` | Status table above |
+| Model check | `check_llm.py` | below |
+| Simulator bring-up checks, diagnostics, the earlier LLM pilot | `archive/` | below |
+
+### Demo: Phases 1 and 2 live
+
+Project AirSim (CityEnviron) and Ollama running. Same seed, so both search for the same victim.
+
+```bash
+# Phase 1: fixed serpentine order
+python run_sar_mission.py --mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml --runs 1
+# Phase 2: the LLM picks each next sector (invariant guard on by default)
+python run_sar_mission.py --planner llm --model ollama:qwen3.5:9b --thinking off \
+    --mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml --runs 1
+```
+
+Each run writes `runs/sar/<batch>/run_00.jsonl`, `.memory.json`, `.summary.json` and a top-down `.svg`.
+
+### Current commands
 
 | Command | Needs sim | What it checks |
 |---|---|---|
-| `python -m pytest tests` | no | Adapter, validation, ground detector, action contract, completion predicates, fail-safe |
-| `python smoke_projectairsim_connection.py` | yes | Connect / disconnect |
-| `python test_drone_creation.py` | yes | Scene load, drone creation, one telemetry read |
-| `python test_navigation.py` | yes | Takeoff, rotate nose, move along tracks, return, land |
-| `python test_adapter_live.py [--fly]` | yes | Snapshots at 2 Hz, optionally during a flight |
-| `python test_executor_live.py` | yes | Executor: takeoff (setup), rotate +90 deg, climb 2 m, safe shutdown |
-| `python test_multi_drone_live.py` | yes | Three drones (scene_three_drones.jsonc), each flown by a scripted agent through its own feed and port: climb to separate layers, fan out, turn, return, (wait for all) descend, land. Writes `runs/run_<id>.jsonl`. PASS also requires >= 2 m separation between every pair, no drone-to-drone collisions or impacts, and adequate telemetry coverage (otherwise the separation verdict is INCONCLUSIVE, which fails the run) |
-| `python check_llm.py [--harness pydantic\|native] [--model SPEC] [--slow-first 12]` | no | Model, tool calling and the whole agent loop against a fake drone; `--slow-first` delays the first action past the observation expiry; `--model test` runs Pydantic AI's built-in test model (no network) |
-| `python test_llm_pilot_live.py [--harness pydantic\|native] [--model SPEC] [--task "..."]` | yes | One drone (scene_basic_drone.jsonc) flown by an LLM pilot through its feed and port; takeoff/landing are setup/shutdown, not the agent's; prints every action, the agent's final comment and the run summary |
-| `python diag_path_follow.py [--speed 3] [--no-maneuvers]` | yes | One drone flies a 50 m rectangle with the velocity path follower; hold/resume, layer change and speed change mid-flight; reports cruise speed, cross-track, stopping distance, drift |
-| `python test_corridors_live.py [--mission missions/inspection_5.json] [--no-maneuvers]` | yes | Phase 0 base scenario: 5 drones fly crossing corridors (scene_inspection_5.jsonc), Remote ID between all of them, scripted mission agents send maneuvers through their ports (no attacks, no gate); PASS = all corridors done, all landed, separation >= 2 m with coverage |
-| `python test_corridors_live.py --mission missions/inspection_5_conflict.json --llm Drone2,Drone3` | yes | 2 LLM mission agents (model: `LLM_MODEL`) + 3 scripted drones that do not yield; two head-on encounters on shared layers; LLM agents wake on predicted conflicts and maneuver |
-| `python run_sar_mission.py --offline [--mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml] [--runs N] [--full-sweep]` | no | Phase 1 search and rescue on the kinematic sim: one drone sweeps the 8 x 8 grid (Voronoi order, boustrophedon lanes) until it detects the victim; per run `runs/sar/<batch>/run_NN.jsonl` + `.memory.json` + `.summary.json` + `.svg`; PASS = every run found the victim and landed (`--full-sweep`: and swept every sector) |
-| `python run_sar_mission.py [--mission ... --scenario ...] [--scene scene_sar_one_drone.jsonc]` | yes | The same mission in Project AirSim; refuses to fly if the drone spawns > 5 m from the scenario start |
+| `python -m pytest` | no | The whole offline test suite (`tests/`); real model calls are blocked |
+| `python run_sar_mission.py --offline [--mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml] [--runs N] [--full-sweep]` | no | Phase 1 search and rescue on the kinematic sim: one drone sweeps the 8 x 8 grid (Voronoi order, boustrophedon lanes) until it detects the victim; PASS = found, home, landed, no failures (`--full-sweep`: also every sector swept and 95% measured coverage) |
+| `python run_sar_mission.py --offline --planner llm --model scripted[:stubborn\|broken]` | no | Phase 2 pipeline without a model server: guard refusals sent back to the model (`stubborn`), fallback to the Phase 1 order (`broken`); `--model test` uses Pydantic AI's TestModel |
+| `python run_sar_mission.py [--planner llm --model SPEC --thinking off] [--mission ... --scenario ...]` | yes | The same missions in Project AirSim (scene `sim_config/scene_sar_one_drone.jsonc`); refuses to fly if the drone spawns > 5 m from the scenario start |
+| `python check_llm.py [--harness pydantic\|native] [--model SPEC]` | no | The model answers and calls tools correctly (against a fake drone); `--model test` needs no network |
 | `python -m evaluation.plot_tracks runs/<...>.jsonl` | no | Top-down SVG of a run: SAR grid with swept sectors, track, victim and detection; or corridors and tracks for Phase 0 runs |
-| `python -m evaluation.summarize_run runs\run_<id>.jsonl` | no | Per-drone observation stream counts and chain observation (age) -> proposal -> gate decision -> result -> feedback code, shutdowns, separation; works on incomplete runs |
-| `python telemetry_explorer.py` | yes | Dumps every non-camera topic to `telemetry_dump.json` |
+| `python test_corridors_live.py [--mission missions/inspection_5.json] [--no-maneuvers]` | yes | Phase 0 base scenario: 5 drones fly crossing corridors (scene_inspection_5.jsonc), Remote ID between all of them, scripted mission agents; PASS = all corridors done, all landed, separation >= 2 m with coverage |
+| `python test_corridors_live.py --mission missions/inspection_5_conflict.json --llm Drone2,Drone3` | yes | 2 LLM mission agents + 3 scripted drones that do not yield; two head-on encounters on shared layers |
+| `python -m evaluation.summarize_run runs/run_<id>.jsonl` | no | Per-drone observation counts and the chain observation -> proposal -> gate decision -> result -> feedback; works on incomplete runs |
+
+### Archived scripts
+
+Kept because they still work and help when something breaks, but no longer on the main path. Run them as modules from the repo root.
+
+| Command | Needs sim | What it checks |
+|---|---|---|
+| `python -m archive.diagnostics.smoke_projectairsim_connection` | yes | Connect / disconnect |
+| `python -m archive.diagnostics.test_drone_creation` | yes | Scene load, drone creation, one telemetry read |
+| `python -m archive.diagnostics.test_navigation` | yes | Takeoff, rotate nose, move along tracks, return, land |
+| `python -m archive.diagnostics.test_adapter_live [--fly]` | yes | Snapshots at 2 Hz, optionally during a flight |
+| `python -m archive.diagnostics.test_executor_live` | yes | Executor: takeoff (setup), rotate +90 deg, climb 2 m, safe shutdown |
+| `python -m archive.diagnostics.test_multi_drone_live` | yes | Three drones (scene_three_drones.jsonc), scripted agents through their own feeds and ports; PASS also requires >= 2 m separation between every pair |
+| `python -m archive.diagnostics.telemetry_explorer` | yes | Dumps every non-camera topic to `telemetry_dump.json` |
+| `python -m archive.diagnostics.diag_path_follow [--speed 3] [--no-maneuvers]` | yes | 50 m rectangle with the velocity path follower; cruise speed, cross-track, stopping distance, drift |
+| `python -m archive.diagnostics.diag_heading_settle [--headings 315,45,0]` | yes | Does Simple Flight settle after move_to_position at every heading |
+| `python -m archive.llm_pilot.test_llm_pilot_live [--harness pydantic\|native] [--model SPEC]` | yes | The pre-SAR LLM pilot: one drone flown by an LLM through its feed and port (its modules in `agent/` stay, since Phase 0 and the tests use them) |
 
 Every script that arms the drone calls `utils.flight_safety.safe_shutdown()`
 in a `finally` block: hover, land, and disarm only once the drone is confirmed

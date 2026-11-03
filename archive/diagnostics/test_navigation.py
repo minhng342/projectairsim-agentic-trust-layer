@@ -10,7 +10,7 @@ Command semantics (see models/telemetry.py):
 - change_altitude:   climbs/descends to a local altitude, holding N/E.
 
 Coordinates are NED (north, east, down) in meters; up is negative z.
-Run from the repo root with Blocks.exe running:  python .\\test_navigation.py
+Run from the repo root with Blocks.exe running:  python -m archive.diagnostics.test_navigation
 """
 import asyncio
 import math
@@ -22,7 +22,7 @@ from adapters.projectairsim_adapter import track_deg_from_velocity, yaw_deg_from
 from models.telemetry import Quaternion, Vector3
 from utils.flight_safety import safe_shutdown
 
-SIM_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sim_config") + os.sep
+SIM_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "sim_config") + os.sep
 SCENE = "scene_basic_drone.jsonc"
 NAME = "Drone1"
 

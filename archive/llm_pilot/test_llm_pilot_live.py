@@ -1,7 +1,7 @@
 """
 One drone flown by an LLM pilot agent in Project AirSim.
 
-    python .\\test_llm_pilot_live.py [--harness pydantic|native] [--model SPEC] [--task "..."]
+    python -m archive.llm_pilot.test_llm_pilot_live [--harness pydantic|native] [--model SPEC] [--task "..."]
 
     --harness pydantic (default)  Pydantic AI, any model: --model / LLM_MODEL, e.g.
                                   "ollama:qwen3.5:9b" or "google:gemini-3.5-flash-lite"

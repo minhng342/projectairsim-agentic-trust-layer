@@ -1,7 +1,7 @@
 """
 Live check of ProjectAirSimExecutor (Pass 5, step 1) against the running simulator.
 
-    python .\\test_executor_live.py
+    python -m archive.diagnostics.test_executor_live
 
 Sequence
     1. connect + load scene
