@@ -283,6 +283,37 @@ the batch. `python -m evaluation.archive BATCH ... [--reference REF]` checks eac
 against its manifest (refuses a changed one), writes `EVIDENCE.md` (one line per batch plus
 the paired table) and packs everything into `runs/evidence/<time>.tar.gz`.
 
+### Comparison table (offline, commit f257a03, 2026-11-05)
+
+Dev mission, seed 42, 20 runs per condition, the same 20 victims in every row, kinematic sim
+x50. Paired speedup per victim against the one-drone row, 95% bootstrap intervals
+(`python -m evaluation.compare`). Each batch has its `manifest.json`.
+
+| Condition | Found | Passed | Time to find, mean / median (s) | min / max (s) | Paired speedup, mean (95% CI) | Median speedup (95% CI) | Faster | Coverage | Duplicate sweeps | Delivery |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 drone (Phase 1 planner) | 20/20 | 20/20 | 635 / 626 | 158 / 1311 | 1.0 (reference) | 1.0 (reference) | n/a | 45.9% | n/a | n/a |
+| 3 drones, full cooperation (fixed planner) | 20/20 | 20/20 | 319 / 329 | 132 / 543 | 1.85x (1.63-2.08x) | 1.78x (1.54-2.05x) | 19/20 | 46.0% | 0 | 99.3% |
+| 3 drones, static split | 20/20 | 20/20 | 292 / 267 | 135 / 499 | 2.01x (1.77-2.25x) | 2.08x (1.83-2.24x) | 20/20 | 42.6% | 0 | 99.9% |
+| 3 drones, no messages heard (radio 1 m) | 20/20 | 19/20 | 619 / 644 | 154 / 1214 | 1.03x (0.97-1.09x) | 0.97x (0.96-1.03x) | 7/20 | 51.8% | 980 | 0% |
+| 3 drones, Pydantic AI planners (scripted model) | 20/20 | 20/20 | 311 / 280 | 133 / 586 | 2.43x (1.80-3.08x) | 2.52x (1.28-3.50x) | 16/20 | 56.3% | 0 | 99.8% |
+
+What it says:
+
+- Three drones that share the work find the victim about twice as fast as one, and the
+  interval excludes 1x. Three drones that cannot hear each other gain nothing (the interval
+  covers 1x) and sweep the same sectors 980 times.
+- **The static split is as fast as live cooperation here** (the intervals overlap; its mean is
+  slightly better). Offline nothing goes wrong: no drone drops out, no sector is blocked,
+  every drone flies at the same speed, so a fixed thirds split is already near ideal and the
+  live re-split only adds transit. Live cooperation's value has to show where the static plan
+  breaks: a drone lost or slowed, blocked sectors, uneven speeds. That condition (for example
+  one drone dropping out mid-search) is the one to add next.
+- The no-radio batch's one failure is a real near miss, not noise: in run 15 Drone3 came down
+  over its pad from its 170 m layer while Drone2 flew home along the pad row at 160 m and
+  passed over Drone3's pad (0.55 m apart). A return path can cross another drone's pad column
+  while that drone descends; nothing deconflicts the pad area yet. It showed up here because
+  both drones found the victim and headed home at the same moment.
+
 ## Ready for Phase 4
 
 - The insider's slots: `PeerMessenger(hooks=...)` and `RemoteIdBroadcaster(hooks=...)` (sender
