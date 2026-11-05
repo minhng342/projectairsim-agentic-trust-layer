@@ -500,3 +500,64 @@ def test_acceptance_fails_on_separation_errors_and_identity_mismatches():
     spoofed = dict(base, messages={"identity_mismatch": 2})
     assert any("identity" in r for r in run_failures(spoofed, False))
     assert run_failures(dict(spoofed, insider_enabled=True), False) == []
+
+
+# ------------------------------------------------------------ follow-up review (04be8d7)
+def _truth_log(tmp_path, events):
+    """events = [(t_s or None, {vid: (north, east, alt, pose_t_s or None)})]."""
+    from evaluation.recorder import EvaluationRecorder
+    rec = EvaluationRecorder(path=tmp_path / "t.jsonl", run_config={})
+    for t, poses in events:
+        rec.record("truth", sim_time_ns=None if t is None else int(t * 1e9), poses={
+            v: {"sim_time_ns": None if p[3] is None else int(p[3] * 1e9), "north_m": p[0],
+                "east_m": p[1], "altitude_m": p[2]} for v, p in poses.items()})
+    rec.close("searched")
+    drones = [{"vehicle": "Drone1", "start": {"x_m": 0, "y_m": 0}},
+              {"vehicle": "Drone2", "start": {"x_m": 0, "y_m": 3}}]
+    return read_run(tmp_path / "t.jsonl"), mission(), drones
+
+
+def test_samples_of_one_drone_never_make_separation_measured(tmp_path):
+    from evaluation.swarm_metrics import separation
+    log, m, d = _truth_log(tmp_path, [(t, {"Drone1": (0, 0, 0, t)}) for t in (0, 0.5, 1)])
+    s = separation(log, m, d)
+    assert not s["measured"] and s["unmeasured_pairs"] == ["Drone1-Drone2"]
+
+
+def test_skewed_airborne_pairs_are_gaps_not_measurements(tmp_path):
+    from evaluation.swarm_metrics import separation
+    ev = [(0, {"Drone1": (0, 0, 0, 0), "Drone2": (0, 3, 0, 0)})]
+    ev += [(t, {"Drone1": (50, 50, 30, t), "Drone2": (50, 60, 35, t - 1)}) for t in (3, 6)]
+    log, m, d = _truth_log(tmp_path, ev)
+    s = separation(log, m, d)
+    assert s["skewed_pairs"] == 2 and not s["measured"]
+    assert s["pairs"]["Drone1-Drone2"]["airborne"] == 0
+
+
+def test_a_long_missing_pair_interval_in_a_well_sampled_run_is_unmeasured(tmp_path):
+    from evaluation.swarm_metrics import separation
+    both = lambda t: {"Drone1": (50, 50, 30, t), "Drone2": (50, 60, 35, t)}
+    ev = [(0, {"Drone1": (0, 0, 0, 0), "Drone2": (0, 3, 0, 0)})]
+    ev += [(t / 2, both(t / 2)) for t in range(1, 10)]                     # to 4.5 s
+    ev += [(t / 2, {"Drone1": (50, 50, 30, t / 2)}) for t in range(10, 20)]  # Drone2 gone 5 s
+    ev += [(t / 2, both(t / 2)) for t in range(20, 24)]
+    log, m, d = _truth_log(tmp_path, ev)
+    s = separation(log, m, d)
+    assert not s["measured"] and s["max_gap_s"] == 5.5
+    log, m, d = _truth_log(tmp_path, [(0, {"Drone1": (0, 0, 0, 0), "Drone2": (0, 3, 0, 0)})]
+                           + [(t / 2, both(t / 2)) for t in range(1, 24)])
+    s = separation(log, m, d)
+    assert s["measured"] and s["pairs"]["Drone1-Drone2"]["airborne"] == 23
+
+
+def test_missing_timestamps_and_stale_poses_are_not_measurements(tmp_path):
+    from evaluation.swarm_metrics import separation
+    ev = [(0, {"Drone1": (0, 0, 0, 0), "Drone2": (0, 3, 0, 0)})]
+    ev += [(None, {"Drone1": (50, 50, 30, 1), "Drone2": (50, 60, 35, 1)})]   # event: no time
+    ev += [(t, {"Drone1": (50, 50, 30, t), "Drone2": (50, 60, 35, None)}) for t in (1, 2, 3)]
+    ev += [(t, {"Drone1": (50, 50, 30, t), "Drone2": (50, 60, 35, 0.2)}) for t in (4, 5)]
+    log, m, d = _truth_log(tmp_path, ev)
+    s = separation(log, m, d)
+    pr = s["pairs"]["Drone1-Drone2"]
+    assert s["samples_without_time"] == 1 and pr["airborne"] == 0 and pr["stale"] >= 1
+    assert not s["measured"]

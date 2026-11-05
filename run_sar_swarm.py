@@ -420,7 +420,8 @@ def run_failures(m: dict, full_sweep: bool, min_coverage: float = FULL_SWEEP_MIN
     sep = m.get("separation")
     if sep is not None:
         if not sep.get("measured"):
-            why.append(f"separation not measured (largest truth gap {sep.get('max_gap_s')} s)")
+            why.append(f"separation not measured for {', '.join(sep.get('unmeasured_pairs') or []) or 'any pair'} "
+                       f"(longest pair gap {sep.get('max_gap_s')} s, allowed {sep.get('allowed_gap_s')} s)")
         if sep.get("pad_violations"):
             why.append(f"separation below {sep['floors']['pad_m']:g} m near the pads "
                        f"({sep['min_pad_m']} m)")

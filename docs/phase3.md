@@ -202,6 +202,14 @@ the paired ratios are the useful part until live batches exist.
   the offline speedup) or pose times more than 0.5 s apart make it unmeasured / skipped.
   20-run offline dev batch after the fixes: 20/20 PASS, mean find 316 s, closest 2.79 m on the
   pads and 10.0 m in cruise (the layer spacing), 0 identity mismatches.
+- Follow-up review (main 04be8d7): `measured` used to count any truth event, so samples of
+  one drone, or only skewed pairs, still passed. Now coverage is tracked per pair of
+  configured drones: a sample counts for a pair only if both poses are present, timestamped,
+  fresh (newer than that drone's previous pose) and within 0.5 s of each other; it is then a
+  distance (both airborne) or a known "not jointly airborne" state. Anything else is a gap for
+  that pair, and other drones' samples never fill it. Each run records per-pair counts
+  (`separation.pairs`) and `unmeasured_pairs`. 2 Hz sampling with this rule is still a
+  sampled approximation, not proof of continuous-flight safety.
 - Not done here (Phase 4 work, in the review's order): attack-aware metrics (honest-only
   time to find, deception tied to attack message ids), the frozen threat-model contract,
   archived evidence for each batch, and a matched 3-drone static-partition condition. The
