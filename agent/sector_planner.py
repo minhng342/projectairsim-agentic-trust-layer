@@ -101,6 +101,7 @@ class FixedSectorPlanner:
         self.max_recoveries = 2
         self.recovery_climb_m = 10.0
         self._impact: dict | None = None     # set by on_impact, handled by the loop
+        self._dropout: str | None = None     # set by on_dropout (injected failure)
         self.impacts_reported = 0
 
     # ------------------------------------------------------------ events from outside
@@ -111,6 +112,14 @@ class FixedSectorPlanner:
 
     def on_time_up(self) -> None:
         self.time_up = True
+
+    def on_dropout(self, reason: str) -> bool:
+        """Experiment: the drone fails mid-search (the dropout condition). True if it was
+        searching; the caller then interrupts the sweep and the drone drops out as lost."""
+        if self.phase != "search" or self._dropout is not None:
+            return False
+        self._dropout = reason
+        return True
 
     def on_impact(self, info: dict) -> bool:
         """The simulator reported an impact (runner, ground truth). True if the planner will
@@ -144,6 +153,8 @@ class FixedSectorPlanner:
 
         self.phase = "search"
         while True:
+            if self._dropout is not None:
+                return await self._lost(self._dropout)
             if self._impact is not None:          # a hit between sweeps (or while deciding)
                 lost = await self._recover(None, "impact")
                 if lost is not None:
@@ -177,6 +188,13 @@ class FixedSectorPlanner:
                     return await self._finish("failed", "choices keep going stale")
                 continue
             sim = self._sim_now()
+            if self._dropout is not None:
+                if fb is not None and fb.code != "sector_swept":
+                    self.belief.mark_partial(sid, sim, self._sweep_progress()
+                                             if self._sweep_progress else 0.0, fb.request_id)
+                elif fb is not None:
+                    self.belief.mark_swept(sid, sim, fb.request_id)
+                return await self._lost(self._dropout)
             if fb is None:
                 return await self._finish("failed", f"{sid}: no observation to decide from")
             if fb.code == "sector_swept":

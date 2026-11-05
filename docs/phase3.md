@@ -283,6 +283,28 @@ the batch. `python -m evaluation.archive BATCH ... [--reference REF]` checks eac
 against its manifest (refuses a changed one), writes `EVIDENCE.md` (one line per batch plus
 the paired table) and packs everything into `runs/evidence/<time>.tar.gz`.
 
+### Pad area: one drone at a time
+
+The layers keep drones apart in cruise but not around the pads: a drone coming down from
+170 m crosses 160 and 150, and a teammate flying home on one of those layers can pass right
+over its pad (the no-radio run 15 near miss, 0.55 m). Now the runner keeps one pad zone for
+the team (`executor/pad_zone.py`: every pad's `pad_zone_m` circle plus 5 m; dev: 18 m around
+the pads). A return home is flown in two legs: to the zone's edge at the drone's own layer,
+then, once the zone is free, in to the pad. The zone is held until that drone has landed,
+so a transit never shares it with a descent. A drone that lands inside the zone for another
+reason (it dropped out there) takes the zone first too. Waits are logged
+(`pad_zone_enter` with `was_held_by`, `pad_zone_leave`; the run summary counts
+`pad_zone_waits`). Waiting gives up after 600 s of sim time so a stuck holder cannot strand
+the others. Agents never see it: it is a local stand-in for a vertiport manager.
+
+### Dropout: the condition where cooperation should pay
+
+`--dropout DRONE@SECONDS` fails that drone that many seconds into the search: it drops out
+(as `lost`) and lands where it is, and in the dynamic condition broadcasts
+`mission_state: lost` so the others take over its cells. The injected drop-out is the
+experiment, so it does not fail the run by itself (the victim still has to be found and
+everyone has to land).
+
 ### Comparison table (offline, commit f257a03, 2026-11-05)
 
 Dev mission, seed 42, 20 runs per condition, the same 20 victims in every row, kinematic sim

@@ -261,3 +261,70 @@ def test_archive_packs_intact_batches_and_refuses_changed_ones(tmp_path):
     (batch / "run_00.jsonl").write_text("tampered")
     assert archive_main([str(batch), "--out", str(out)]) == 1
     assert load_batch(batch)["runs"]
+
+
+# ------------------------------------------------------------------ pad zone
+def test_pad_zone_lets_one_drone_in_at_a_time():
+    from executor.pad_zone import PadZone
+    z = PadZone.around([(0, -3), (0, 0), (0, 3)], pad_zone_m=10)
+    assert z.center == (0.0, 0.0) and z.radius_m == pytest.approx(18.0)
+    assert z.inside((0, 17)) and not z.inside((0, 19))
+    assert z.approach_point((0, 100)) == pytest.approx((0.0, 18.0))
+    order = []
+
+    async def go():
+        assert await z.acquire("A")
+        assert await z.acquire("A")                       # re-entrant for the holder
+
+        async def b():
+            await z.acquire("B")
+            order.append("B in")
+        task = asyncio.create_task(b())
+        await asyncio.sleep(0.01)
+        order.append("A out")
+        z.release("A")
+        await task
+        assert not await z.acquire("C", timeout_s=0.01)   # B still holds it
+    asyncio.run(go())
+    assert order == ["A out", "B in"] and z.holder == "B"
+
+
+def test_swarm_lands_one_drone_at_a_time(tmp_path):
+    code, batch, s = run_swarm(tmp_path, "--full-sweep")
+    assert code == 0, s["runs"][0]["fail_reasons"]
+    log = read_run(batch / "run_00.jsonl")
+    enters = log.of_kind("pad_zone_enter")
+    leaves = log.of_kind("pad_zone_leave")
+    assert sorted(e["vehicle_id"] for e in enters) == ["Drone1", "Drone2", "Drone3"]
+    assert len(leaves) == 3
+    # never two drones inside at once: enter / leave alternate
+    seq = sorted([(e["event_id"], "in", e["vehicle_id"]) for e in enters]
+                 + [(e["event_id"], "out", e["vehicle_id"]) for e in leaves])
+    inside = None
+    for _, what, v in seq:
+        if what == "in":
+            assert inside is None
+            inside = v
+        else:
+            assert inside == v
+            inside = None
+
+
+# ------------------------------------------------------------------ dropout condition
+def test_dropout_static_split_leaves_the_part_unswept_but_cooperation_takes_it_over(tmp_path):
+    a = tmp_path / "a"
+    a.mkdir()
+    _, sb, s_static = run_swarm(a, "--full-sweep", "--allocation", "static",
+                                "--dropout", "Drone2@20")
+    b = tmp_path / "b"
+    b.mkdir()
+    code, db, s_dyn = run_swarm(b, "--full-sweep", "--dropout", "Drone2@20")
+    st, dy = s_static["runs"][0], s_dyn["runs"][0]
+    for m in (st, dy):
+        d2 = m["drones"]["Drone2"]
+        assert d2["ended_by"] == "lost" and d2["landed"]
+        assert not any(r.startswith("Drone2: search ended") for r in m["fail_reasons"])
+    assert st["sectors_swept"] < st["sector_count"]       # nobody takes Drone2's part
+    assert dy["sectors_swept"] == dy["sector_count"], dy["fail_reasons"]
+    assert code == 0
+    assert read_run(db / "run_00.jsonl").of_kind("dropout_injected")
