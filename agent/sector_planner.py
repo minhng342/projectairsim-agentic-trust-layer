@@ -86,18 +86,7 @@ class FixedSectorPlanner:
         if state is None:
             return self._done("failed", "no observation before planning")
         self.start_sim_s = state.sim_time_s
-        positions = {self.vehicle_id: (state.x_m, state.y_m)}
-        if self._fleet_positions:
-            positions.update(self._fleet_positions())
-        grid = self.mission.grid
-        cells = voronoi_partition(grid, positions)
-        self.order = coverage_order(grid, cells[self.vehicle_id], (state.x_m, state.y_m),
-                                    self.mission.search.start_sector)
-        if self.guard is not None:
-            self.guard.start_sim_s, self.guard.cells = self.start_sim_s, set(self.order)
-        self._record("sar_plan", allocation="voronoi", fleet=sorted(positions),
-                     cells=cells[self.vehicle_id], order=self.order,
-                     start={"x_m": state.x_m, "y_m": state.y_m}, derived=self.mission.derived())
+        self.order = self._plan(state)
 
         fb = await self._submit(ProposedAction(
             vehicle_id=self.vehicle_id, action_type=ActionType.CHANGE_ALTITUDE,
@@ -111,9 +100,9 @@ class FixedSectorPlanner:
             stop = self._should_stop()
             if stop:
                 return await self._finish(*stop)
-            remaining = [sid for sid in self.order if self.belief.status(sid).value != "swept"]
+            remaining = self._remaining()
             if not remaining:
-                return await self._finish("all_swept", "every sector swept")
+                return await self._finish(*self._nothing_left())
             action = await self.choose(remaining)
             # The decision may have taken a while (an LLM): a detection or the time limit
             # that arrived meanwhile ends the search before anything new is flown.
@@ -124,13 +113,16 @@ class FixedSectorPlanner:
                 return await self._finish(self.return_outcome, action.reason)
             sid = action.sector_id
             obs_sim = self._sim_now()
-            fb = await self._submit(action.to_proposed(self.vehicle_id), before=lambda rid:
-                                    self.belief.mark_started(sid, obs_sim, rid))
+            def before(rid, sid=sid, obs_sim=obs_sim):
+                self.belief.mark_started(sid, obs_sim, rid)
+                self._on_sweep_start(sid, rid)
+            fb = await self._submit(action.to_proposed(self.vehicle_id), before=before)
             sim = self._sim_now()
             if fb is None:
                 return await self._finish("failed", f"{sid}: no observation to decide from")
             if fb.code == "sector_swept":
                 self.belief.mark_swept(sid, sim, fb.request_id)
+                self._on_sector_swept(sid, fb.request_id)
                 self.gate_refusals_in_row = 0
                 continue
             if fb.stage.value in ("port", "gate"):
@@ -165,10 +157,48 @@ class FixedSectorPlanner:
         self.return_outcome = "time_limit"
         return ReturnHome(reason="no unsearched sector fits in the mission time left")
 
+    # ------------------------------------------------------------ hooks (Phase 3 overrides)
+    def _plan(self, state) -> list[str]:
+        """Voronoi partition over the fleet (one drone: the whole grid) and this drone's
+        coverage order; sets the guard's cells; recorded as sar_plan."""
+        positions = {self.vehicle_id: (state.x_m, state.y_m)}
+        if self._fleet_positions:
+            positions.update(self._fleet_positions())
+        grid = self.mission.grid
+        cells = voronoi_partition(grid, positions)
+        order = coverage_order(grid, cells[self.vehicle_id], (state.x_m, state.y_m),
+                               self.mission.search.start_sector)
+        if self.guard is not None:
+            self.guard.start_sim_s, self.guard.cells = self.start_sim_s, set(order)
+        self._record("sar_plan", allocation="voronoi", fleet=sorted(positions),
+                     cells=cells[self.vehicle_id], order=order,
+                     start={"x_m": state.x_m, "y_m": state.y_m}, derived=self.mission.derived())
+        return order
+
+    def _remaining(self) -> list[str]:
+        """This drone's sectors still to search, in the order to fly them."""
+        return [sid for sid in self.order if not self.belief.is_done(sid)]
+
+    def _nothing_left(self) -> tuple[str, str]:
+        return "all_swept", "every sector swept"
+
+    def _on_sweep_start(self, sid: str, request_id: str) -> None:
+        """Just before a sweep is submitted (Phase 3: claim the sector)."""
+
+    def _on_sector_swept(self, sid: str, request_id: str) -> None:
+        """A sweep finished (Phase 3: tell the peers it is clear)."""
+
+    def _peer_stop(self):
+        """(outcome, reason) when peers ended the search (Phase 3), else None."""
+        return None
+
     # ------------------------------------------------------------ helpers
     def _should_stop(self):
         if self.detection is not None and self.mission.termination.stop_on_detection:
             return "victim_found", f"victim detected in {self.detection.sector_id}"
+        peer = self._peer_stop()
+        if peer is not None:
+            return peer
         if self.time_up or self._elapsed_sim() > self.mission.termination.max_mission_time_s:
             return "time_limit", (f"max_mission_time_s "
                                   f"{self.mission.termination.max_mission_time_s:g} used up")

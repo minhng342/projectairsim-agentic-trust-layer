@@ -50,10 +50,13 @@ def _hook_name(hook) -> str:
 
 
 def message_from_snapshot(uas_id: str, snap, self_id_text: str = "",
-                          target_altitude_m: float | None = None) -> dict:
+                          target_altitude_m: float | None = None,
+                          mission_state: str | None = None) -> dict:
     """The honest broadcast for one simulator snapshot. target_altitude_m is an intent
     extension (not in ASTM F3411; modeled on ADS-B's selected altitude): the layer the
-    drone is going to, so others don't pick it too. Like every field, it is a claim."""
+    drone is going to, so others don't pick it too. mission_state (Phase 3, modeled on
+    F3411's operational status) says whether the drone is still searching, so peers share
+    out its area once it heads home. Like every field, they are claims."""
     vn, ve = snap.velocity_ned_mps.x, snap.velocity_ned_mps.y
     gs = math.hypot(vn, ve)
     return {
@@ -66,7 +69,8 @@ def message_from_snapshot(uas_id: str, snap, self_id_text: str = "",
         "track_deg": round(math.degrees(math.atan2(ve, vn)) % 360.0, 1) if gs >= 0.3 else None,
         "vertical_speed_mps": round(snap.vertical_speed_mps, 3),
         "self_id_text": self_id_text,
-    } | ({} if target_altitude_m is None else {"target_altitude_m": round(float(target_altitude_m), 2)})
+    } | ({} if target_altitude_m is None else {"target_altitude_m": round(float(target_altitude_m), 2)}) \
+      | ({} if mission_state is None else {"mission_state": mission_state})
 
 
 def _apply_hooks(hooks, payloads: list[dict], ctx: RidContext, on_error):
@@ -159,13 +163,23 @@ class RemoteIdReceiver:
 
 class RemoteIdBus:
     """In-process broadcast medium. Every message reaches every attached receiver except
-    the true sender's own."""
+    the true sender's own, and (Phase 3) only receivers within radio range.
 
-    def __init__(self, recorder=None):
+    in_range(true_sender_id, receiver_id) -> (bool, distance_m | None) decides range on the
+    evaluation side, from the simulator's TRUE positions (radio physics does not care what
+    a message claims). A message out of range is not delivered and is recorded as
+    rid_out_of_range. None = every receiver hears everything (Phase 0-2).
+
+    A receiver is anything with `owner_id` and `receive(payload)`; the swarm receiver
+    (agent/swarm.py) takes Remote ID reports and typed peer messages on the same bus."""
+
+    def __init__(self, recorder=None, in_range=None):
         self._receivers: dict[str, RemoteIdReceiver] = {}
         self._link_hooks: list[tuple[str | None, object]] = []
         self._recorder = recorder
+        self._in_range = in_range
         self._tx = 0
+        self.stats = {"transmitted": 0, "delivered": 0, "out_of_range": 0, "lost": 0}
 
     def attach(self, receiver: RemoteIdReceiver) -> RemoteIdReceiver:
         if receiver.owner_id in self._receivers:
@@ -183,6 +197,7 @@ class RemoteIdBus:
         deliveries = []
         for payload in payloads:
             self._tx += 1
+            self.stats["transmitted"] += 1
             tx_id = f"tx{self._tx}"
             self._record("rid_transmit", tx_id=tx_id, true_sender=sender_id, sequence=sequence,
                          payload=payload, clean_payload=clean,
@@ -190,6 +205,18 @@ class RemoteIdBus:
             for rid, rx in self._receivers.items():
                 if rid == sender_id:
                     continue
+                if self._in_range is not None:
+                    try:
+                        ok, dist = self._in_range(sender_id, rid)
+                    except Exception as err:
+                        ok, dist = False, None
+                        self._record("rid_range_error", tx_id=tx_id, receiver=rid,
+                                     error=f"{type(err).__name__}: {err}")
+                    if not ok:
+                        self.stats["out_of_range"] += 1
+                        self._record("rid_out_of_range", tx_id=tx_id, true_sender=sender_id,
+                                     receiver=rid, distance_m=None if dist is None else round(dist, 1))
+                        continue
                 hooks = [h for target, h in self._link_hooks if target in (None, rid)]
                 ctx = RidContext(sender_id=sender_id, sequence=sequence, receiver_id=rid)
                 got, changed = _apply_hooks(hooks, [copy.deepcopy(payload)], ctx,
@@ -197,12 +224,14 @@ class RemoteIdBus:
                                                 "rid_link_error", tx_id=tx_id, receiver=rid,
                                                 hook=_hook_name(h), error=f"{type(e).__name__}: {e}"))
                 if not got:
+                    self.stats["lost"] += 1
                     self._record("rid_lost", tx_id=tx_id, receiver=rid, link_hooks=changed or None)
                 for p in got:
                     report = rx.receive(p)
+                    self.stats["delivered"] += 1
                     d = {"tx_id": tx_id, "true_sender": sender_id, "receiver": rid,
-                         "report_id": report.observation_id if report else None,
-                         "claimed_uas_id": report.claimed_uas_id if report else None,
+                         "report_id": getattr(report, "observation_id", None),
+                         "claimed_uas_id": getattr(report, "claimed_uas_id", None),
                          "link_tampered_by": changed or None}
                     self._record("rid_delivery", **d)
                     deliveries.append(d)
@@ -217,9 +246,10 @@ class RemoteIdBroadcaster:
     """One drone's transmitter. Honest unless given sender hooks (the red team's slot)."""
 
     def __init__(self, adapter, vehicle_id: str, bus: RemoteIdBus, hooks=(), recorder=None,
-                 self_id_text: str = "", uas_id: str | None = None, intent=None):
+                 self_id_text: str = "", uas_id: str | None = None, intent=None, status=None):
         self.vehicle_id = vehicle_id
         self._intent = intent           # () -> target altitude (m) or None: the intent extension
+        self._status = status           # () -> mission_state str or None (Phase 3)
         self.uas_id = uas_id or vehicle_id
         self.self_id_text = self_id_text
         self.rate_hz: float | None = None
@@ -241,7 +271,13 @@ class RemoteIdBroadcaster:
                 target = self._intent()
             except Exception:
                 target = None
-        clean = message_from_snapshot(self.uas_id, snap, self.self_id_text, target)
+        state = None
+        if self._status is not None:
+            try:
+                state = self._status()
+            except Exception:
+                state = None
+        clean = message_from_snapshot(self.uas_id, snap, self.self_id_text, target, state)
         ctx = RidContext(sender_id=self.vehicle_id, sequence=self._seq)
         sent, changed = _apply_hooks(self._hooks, [copy.deepcopy(clean)], ctx,
                                      lambda h, e: self._record(

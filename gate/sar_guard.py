@@ -13,8 +13,10 @@ own memory and the frozen mission. Trust checks on peers' claims come in Phase 5
     code                 rule
     unknown_sector       the sector id is not in the mission grid
     not_assigned         the sector is outside this drone's Voronoi cells
-    already_swept        this drone's memory already marks the sector swept
-    search_over          the victim was detected and the mission stops on detection (a
+    already_swept        this drone's memory already marks the sector done (its own sweep,
+                         or a peer's clear the peer-claim rule accepted, Phase 3)
+    search_over          the victim was detected (own sensor, or a peer report the
+                         peer-claim rule accepted) and the mission stops on detection (a
                          durable stop: holds even if the detection came while deciding)
     not_enough_time      flying there, sweeping it and flying home would overrun
                          termination.max_mission_time_s (estimate, see below)
@@ -60,6 +62,12 @@ class SarGuard:
         # Set by the planner once it has planned / started:
         self.cells: set[str] | None = None        # this drone's Voronoi cells
         self.start_sim_s: float | None = None     # sim time the search started
+        self.peer_victim_accepted = False         # Phase 3: a peer's VictimDetected, accepted
+
+    def search_over(self) -> bool:
+        """The victim was found: by this drone's sensor, or (Phase 3) by a peer whose report
+        the peer-claim rule accepted (set by the swarm coordinator)."""
+        return self.belief.victim_detected or self.peer_victim_accepted
 
     # ------------------------------------------------------------ estimates
     def sweep_time_s(self, sid: str, from_xy: tuple[float, float]) -> float:
@@ -84,7 +92,7 @@ class SarGuard:
         """Assigned sectors not yet swept."""
         ids = self.mission.grid.ids()
         cells = self.cells if self.cells is not None else set(ids)
-        return [s for s in ids if s in cells and self.belief.status(s).value != "swept"]
+        return [s for s in ids if s in cells and not self.belief.is_done(s)]
 
     def feasible(self, from_xy, sim_s) -> list[str]:
         """Open sectors that still fit in the remaining time."""
@@ -102,11 +110,13 @@ class SarGuard:
                                f"grid")
             if self.cells is not None and sid not in self.cells:
                 return Verdict(False, "not_assigned", f"{sid} is not in your assigned sectors")
-            if self.mission.termination.stop_on_detection and self.belief.victim_detected:
+            if self.mission.termination.stop_on_detection and self.search_over():
                 return Verdict(False, "search_over", "the victim has been detected; the search "
                                "is over, return home")
-            if self.belief.status(sid).value == "swept":
-                return Verdict(False, "already_swept", f"{sid} is already swept (your memory); "
+            if self.belief.is_done(sid):
+                b = self.belief.sectors[sid]
+                by = "your memory" if b.verified_by_self else f"cleared by {b.source}"
+                return Verdict(False, "already_swept", f"{sid} is already swept ({by}); "
                                f"choose an unsearched sector")
             need, left = self.sector_time_s(sid, (x_m, y_m)), self.remaining_s(sim_s)
             if need > left:
@@ -115,7 +125,7 @@ class SarGuard:
                                f"left")
             return OK
         if t == ActionType.RETURN_HOME:
-            if not planner_choice or self.belief.victim_detected:
+            if not planner_choice or self.search_over():
                 return OK
             fits = self.feasible((x_m, y_m), sim_s)
             if fits:

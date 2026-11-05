@@ -1,0 +1,53 @@
+// Phase 3 swarm scene (run_sar_swarm.py with missions/sar/scenario_swarm_dev.yaml):
+// three drones on the south edge of the dev grid, at the scenario starts (x 0, y 30 / 80 / 130).
+// Same robot, clock and home as scene_sar_one_drone.jsonc. Not yet checked in CityEnviron:
+// if a spawn point is inside a building, move it here AND in the scenario.
+{
+  "id": "SceneSarThreeDrones",
+  "actors": [
+    {
+      "type": "robot",
+      "name": "Drone1",
+      "origin": {
+        "xyz": "0.0 30.0 -4.0",
+        "rpy-deg": "0 0 0"
+      },
+      "robot-config": "robot_quadrotor_fastphysics.jsonc"
+    },
+    {
+      "type": "robot",
+      "name": "Drone2",
+      "origin": {
+        "xyz": "0.0 80.0 -4.0",
+        "rpy-deg": "0 0 0"
+      },
+      "robot-config": "robot_quadrotor_fastphysics.jsonc"
+    },
+    {
+      "type": "robot",
+      "name": "Drone3",
+      "origin": {
+        "xyz": "0.0 130.0 -4.0",
+        "rpy-deg": "0 0 0"
+      },
+      "robot-config": "robot_quadrotor_fastphysics.jsonc"
+    }
+  ],
+  "clock": {
+    "type": "steppable",
+    "step-ns": 3000000,
+    "real-time-update-rate": 3000000,
+    "pause-on-start": false
+  },
+  "home-geo-point": {
+    "latitude": 47.641468,
+    "longitude": -122.140165,
+    "altitude": 122.0
+  },
+  "segmentation": {
+    "initialize-ids": true,
+    "ignore-existing": false,
+    "use-owner-name": true
+  },
+  "scene-type": "UnrealNative"
+}

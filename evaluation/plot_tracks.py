@@ -102,18 +102,34 @@ def plot_run(path, out=None) -> Path:
     if is_sar:
         from models.sar import Mission
         ms = Mission.model_validate(mission)
-        status = {}
+        status, swept_by = {}, {}
+        team = len(tracks) > 1
         for e in log.of_kind("belief_update"):
             s = e.get("sector")
-            if s:
+            if not s:
+                continue
+            if team:
+                # swarm: shade by who swept it ITSELF (peer clears are not sweeps)
+                if s.get("verified_by_self") and s["status"] == "swept":
+                    swept_by.setdefault(s["sector_id"], []).append(e.get("vehicle_id"))
+                elif s.get("verified_by_self") and s["sector_id"] not in swept_by:
+                    status[s["sector_id"]] = s["status"]
+            else:
                 status[s["sector_id"]] = s["status"]
         fill = {"swept": "#bbf7d0", "partial": "#fde68a", "in_progress": "#fde68a"}
+        color_of = {vid: COLORS[i % len(COLORS)] for i, vid in enumerate(sorted(tracks))}
         for sec in ms.grid.sectors():
             x0, y0 = c.p(sec.x_max, sec.y_min)
             x1, y1 = c.p(sec.x_min, sec.y_max)
+            who = swept_by.get(sec.id)
+            if who:
+                col, op = color_of.get(who[0], "#94a3b8"), 0.22
+            else:
+                col, op = fill.get(status.get(sec.id), "#f8fafc"), 1.0
             c.add(f'<rect x="{x0:.1f}" y="{y0:.1f}" width="{x1 - x0:.1f}" height="{y1 - y0:.1f}" '
-                  f'fill="{fill.get(status.get(sec.id), "#f8fafc")}" stroke="#94a3b8" stroke-width="0.8"/>')
-            c.add(f'<text x="{x0 + 3:.1f}" y="{y0 + 12:.1f}" font-size="10" fill="#64748b">{sec.id}</text>')
+                  f'fill="{col}" fill-opacity="{op}" stroke="#94a3b8" stroke-width="0.8"/>')
+            label = sec.id + (" x" + str(len(who)) if who and len(who) > 1 else "")
+            c.add(f'<text x="{x0 + 3:.1f}" y="{y0 + 12:.1f}" font-size="10" fill="#64748b">{label}</text>')
         victim = cfg.get("victim")
         det = next(iter(log.of_kind("victim_detected")), None)
     else:
@@ -143,8 +159,13 @@ def plot_run(path, out=None) -> Path:
     end = log.events[-1] if log.complete else {}
     title = (f"{cfg.get('script', 'run')}  {log.events[0].get('run_id', '') if log.events else ''}"
              f"  outcome: {end.get('outcome', 'incomplete')}")
-    legend = ("green = swept (memory), amber = partial, X = true victim, dashed box = detection footprint"
-              if is_sar else "dashed = planned corridor, solid = flown track (ground truth)")
+    if is_sar and len(tracks) > 1:
+        legend = ("sector tint = the drone that swept it (xN = swept N times), amber = partial, "
+                  "X = true victim, dashed box = detection footprint")
+    elif is_sar:
+        legend = "green = swept (memory), amber = partial, X = true victim, dashed box = detection footprint"
+    else:
+        legend = "dashed = planned corridor, solid = flown track (ground truth)"
     c.add(f'<text x="{c.pad}" y="{c.h - 14:.0f}" font-size="11" fill="#475569">'
           f'{html.escape(legend)}. North up, east right.</text>')
     out = Path(out) if out else Path(path).with_suffix(".svg")

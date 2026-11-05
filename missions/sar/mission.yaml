@@ -32,3 +32,12 @@ termination:
 limits:
   min_battery_pct: 25
   geofence_margin_m: 10
+# Phase 3 (swarm, run_sar_swarm.py); ignored by the one-drone runner. models/sar.py, Swarm.
+swarm:
+  radio_range_m: 500            # 3D distance, decided from true positions
+  layer_spacing_m: 10           # drone i flies at altitude_m + i * layer_spacing_m
+  peer_timeout_s: 10             # not heard for 10 s = dropped out of the partition
+  max_claim_s: 600
+  peer_clear_rule: single        # one honest peer's SectorCleared is enough (baseline)
+  peer_victim_rule: accept       # a peer's VictimDetected ends the search
+  victim_repeat_s: 2
