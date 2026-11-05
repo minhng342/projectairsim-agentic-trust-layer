@@ -341,10 +341,15 @@ What it says:
   the layer Phase 4 attacks.
 - With the pad zone (below) the no-radio batch now passes 20 of 20: the run 15 near miss
   (0.55 m, before the fix) is gone.
-- Peer-message delivery is lower than in the first batch of the day (about 83% instead of
-  99% for full cooperation). The likely cause is that landings now happen one at a time, so
-  the finder keeps repeating its find to teammates that have already landed. I have not
-  checked this in the logs.
+- Peer-message delivery in these batches (about 83% for full cooperation, 99% earlier in the
+  day) is a counting artefact, checked in the logs: with one landing at a time the runs last
+  longer and the finder kept repeating its find every 2 s until the run ended (1,690 repeats
+  in the first batch, 4,355 here); of 1,827 undelivered peer messages, 1,100 went to drones
+  already landed and out of range and nearly all the rest to drones heading home or waiting
+  at the pad edge. Lost claims and clears were unchanged (27 vs 34) and every drone heard the
+  find within 1.5 s. Fixed after these batches: the finder stops repeating once no peer's
+  last Remote ID report says it is searching (`victim_repeat_stopped`); a 5-run check gives
+  98.4% delivery again.
 
 ## Ready for Phase 4
 

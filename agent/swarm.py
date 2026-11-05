@@ -146,6 +146,7 @@ class SwarmCoordinator:
         self.peer_victim: PeerClaim | None = None
         self.on_peer_victim = None          # set by the runner: interrupt the sweep
         self._victim_msg: VictimDetected | None = None
+        self._victim_repeats = 0
         self._last_cells: list[str] | None = None
         self.state = "searching"            # broadcast as Remote ID mission_state
         # swarm.allocation == "static": this drone's fixed part of the grid, set by the
@@ -301,17 +302,35 @@ class SwarmCoordinator:
                                               footprint_m=d.footprint_m)
             self.messenger.send(self._victim_msg)
 
+    def peers_still_searching(self) -> list[str]:
+        """Peers whose LAST Remote ID report (however old) says they are searching. An
+        out-of-range peer that never heard the find still counts: it is who the repeats are
+        for. No peer heard at all also counts as "maybe", so the repeats go on."""
+        latest = {u: r for u, r in self.rid.latest().items() if u != self.vehicle_id}
+        if not latest:
+            return ["(none heard yet)"]
+        return sorted(u for u, r in latest.items()
+                      if r.payload.get("mission_state", "searching") == "searching")
+
     async def repeat_victim(self, period_s: float, stop: asyncio.Event) -> None:
-        """Repeat this drone's own VictimDetected (same msg_id) until stop, so peers that
-        were out of range at the find hear it when they come back in range."""
+        """Repeat this drone's own VictimDetected (same msg_id) so peers that were out of
+        range at the find hear it when they come back in range, until no peer is still
+        searching by its last report (then nobody needs it: repeats to drones flying home or
+        landed only inflated the undelivered count), or until stop."""
         while not stop.is_set():
             try:
                 async with asyncio.timeout(period_s):
                     await stop.wait()
             except asyncio.TimeoutError:
                 pass
-            if self._victim_msg is not None and not stop.is_set():
-                self.messenger.send(self._victim_msg)
+            if self._victim_msg is None or stop.is_set():
+                continue
+            if not self.peers_still_searching():
+                self._record("victim_repeat_stopped", reason="no peer is still searching",
+                             repeats_sent=self._victim_repeats)
+                return
+            self._victim_repeats += 1
+            self.messenger.send(self._victim_msg)
 
     def _record(self, kind, **fields):
         if self._recorder is not None:

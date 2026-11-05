@@ -328,3 +328,15 @@ def test_dropout_static_split_leaves_the_part_unswept_but_cooperation_takes_it_o
     assert dy["sectors_swept"] == dy["sector_count"], dy["fail_reasons"]
     assert code == 0
     assert read_run(db / "run_00.jsonl").of_kind("dropout_injected")
+
+
+def test_finder_stops_repeating_the_find_once_no_peer_is_searching(tmp_path):
+    code, batch, s = run_swarm(tmp_path)
+    assert code == 0, s["runs"][0]["fail_reasons"]
+    log = read_run(batch / "run_00.jsonl")
+    finder = s["runs"][0]["finder"]
+    (stopped,) = [e for e in log.of_kind("victim_repeat_stopped") if e["vehicle_id"] == finder]
+    last_sent = max(e["event_id"] for e in log.of_kind("peer_message_sent")
+                    if e["vehicle_id"] == finder and e["msg"]["msg_type"] == "victim_detected")
+    assert last_sent < stopped["event_id"]
+    assert s["runs"][0]["messages"]["delivery_ratio"] == 1.0
