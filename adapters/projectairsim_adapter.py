@@ -23,6 +23,12 @@ Threading
   counted and surfaced as snapshot errors instead.
 - The client's synchronous request socket is not safe for concurrent callers,
   so all pull requests are serialized with _request_lock.
+- Those requests block the caller, and the client waits up to 5 minutes for a
+  reply. Agents run on one asyncio loop, so a sim that stops answering would
+  freeze every drone and every timeout with it (live 2026-11-05: a 757 s hang).
+  Pull requests therefore run on a worker thread with request_timeout_s; past it
+  the adapter is marked stalled and every later snapshot raises SimStalled at
+  once, so the run winds down in seconds instead of hanging.
 
 Usage:
     with ProjectAirSimAdapter(vehicle_ids=["Drone1"]) as adapter:
@@ -32,6 +38,8 @@ import math
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -46,6 +54,10 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_SIM_CONFIG = os.path.join(_REPO_ROOT, "sim_config") + os.sep
 
 NAN = float("nan")
+
+
+class SimStalled(RuntimeError):
+    """The simulator stopped answering telemetry requests (see module docstring)."""
 
 
 # ---------------------------------------------------------------- helpers
@@ -150,6 +162,7 @@ class ProjectAirSimAdapter:
         ground_latch_release_climb_m: float = 0.3,
         ground_latch_release_horizontal_m: float = 0.5,
         support_normal_max_z: float = -0.7,
+        request_timeout_s: float = 20.0,
     ):
         self.vehicle_ids = list(vehicle_ids)
         self.scene = scene
@@ -168,6 +181,9 @@ class ProjectAirSimAdapter:
         self.ground_latch_release_climb_m = ground_latch_release_climb_m
         self.ground_latch_release_horizontal_m = ground_latch_release_horizontal_m
         self.support_normal_max_z = support_normal_max_z
+        self.request_timeout_s = request_timeout_s
+        self.stalled: str | None = None        # why, once a pull request timed out
+        self._pool: ThreadPoolExecutor | None = None
 
         self._client: ProjectAirSimClient | None = None
         self._world: World | None = None
@@ -194,6 +210,8 @@ class ProjectAirSimAdapter:
         if self._client is not None:
             self.disconnect()
         self._reset_state()
+        self.stalled = None
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sim-pull")
         client = ProjectAirSimClient(address=self.address)
         try:
             client.connect()
@@ -222,6 +240,9 @@ class ProjectAirSimAdapter:
         with self._lock:
             self._world = None
             self._drones = {}
+        pool, self._pool = self._pool, None
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)   # a stuck request stays stuck
 
     def __enter__(self):
         self.connect()
@@ -415,6 +436,20 @@ class ProjectAirSimAdapter:
             geo = {}
         return kin, geo, landed
 
+    def _pull_bounded(self, drone: Drone, errors: list[str]):
+        """_pull on the worker thread, at most request_timeout_s; else SimStalled."""
+        if self.stalled:
+            raise SimStalled(self.stalled)
+        if self._pool is None:                  # not connected through connect()
+            return self._pull(drone, errors)
+        fut = self._pool.submit(self._pull, drone, errors)
+        try:
+            return fut.result(timeout=self.request_timeout_s)
+        except FutureTimeout:
+            self.stalled = (f"simulator did not answer a telemetry request within "
+                            f"{self.request_timeout_s:g} s")
+            raise SimStalled(self.stalled) from None
+
     def get_snapshot(self, vehicle_id: str) -> TelemetrySnapshot:
         if not self.connected:
             raise RuntimeError("ProjectAirSimAdapter is not connected")
@@ -422,7 +457,7 @@ class ProjectAirSimAdapter:
         extra_errors: list[str] = []
         extra_warnings: list[str] = []
 
-        kin, geo, landed = self._pull(drone, extra_errors)
+        kin, geo, landed = self._pull_bounded(drone, extra_errors)
         received_at = datetime.now(timezone.utc)
 
         now = time.perf_counter()

@@ -72,6 +72,11 @@ class FixedSectorPlanner:
         self.actions: list[dict] = []
         self.gate_refusals_in_row = 0
         self.max_refusals_in_row = 3
+        # A sweep the flight controller could not complete (it hovered) is retried from
+        # wherever the drone is; only this many in a row end the search (live 2026-11-05:
+        # one path_failed in G2 grounded Drone3 for the rest of the run).
+        self.flight_failures_in_row = 0
+        self.max_flight_failures_in_row = 2
         self.return_outcome = "returned"     # outcome when choose() returns ReturnHome
         self.stale_choices = 0
 
@@ -139,6 +144,7 @@ class FixedSectorPlanner:
                 self.belief.mark_swept(sid, sim, fb.request_id)
                 self._on_sector_swept(sid, fb.request_id)
                 self.gate_refusals_in_row = 0
+                self.flight_failures_in_row = 0
                 continue
             if fb.stage.value in ("port", "gate"):
                 # Refused before anything flew: the sector is untouched; decide again.
@@ -153,6 +159,14 @@ class FixedSectorPlanner:
             if fb.code == "sweep_stopped":
                 stop = self._should_stop()
                 return await self._finish(*(stop or ("aborted", f"{sid}: sweep stopped")))
+            if fb.code == "failed":        # path_failed and other flight-controller failures
+                self.flight_failures_in_row += 1
+                self._record("sweep_failed", sector_id=sid, message=fb.message,
+                             in_row=self.flight_failures_in_row, progress=progress)
+                if self.flight_failures_in_row < self.max_flight_failures_in_row:
+                    self._log(f"  [{time.strftime('%H:%M:%S')}] {self.vehicle_id}: {sid} "
+                              f"failed ({fb.message}); deciding again")
+                    continue
             return await self._finish("failed", f"{sid}: {fb.code}: {fb.message}")
 
     async def choose(self, remaining: list[str]) -> SweepSector | ReturnHome:

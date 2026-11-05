@@ -535,3 +535,32 @@ if __name__ == "__main__":
             print(f"FAIL {name}: {type(err).__name__}: {err}")
     print(f"\n{len(tests) - failed}/{len(tests)} passed")
     sys.exit(1 if failed else 0)
+
+
+# ------------------------------------------------------------ frozen simulator
+def test_hung_pull_request_marks_stalled_and_fails_fast():
+    """Live 2026-11-05: CityEnviron stopped answering and the blocking pull froze every
+    drone for 757 s. The adapter bounds each pull and then refuses at once."""
+    from adapters.projectairsim_adapter import SimStalled
+    a = make_adapter(request_timeout_s=0.2)
+    fresh_pose(a)
+    a.get_snapshot("Drone1")                     # healthy first
+    release = threading.Event()
+    a.drone("Drone1").get_ground_truth_kinematics = lambda: release.wait(5) and {}
+    t0 = time.monotonic()
+    try:
+        a.get_snapshot("Drone1")
+        raise AssertionError("expected SimStalled")
+    except SimStalled as err:
+        assert "0.2 s" in str(err)
+    assert time.monotonic() - t0 < 2.0
+    assert a.stalled
+    t1 = time.monotonic()
+    try:
+        a.get_snapshot("Drone1")
+        raise AssertionError("expected SimStalled")
+    except SimStalled:
+        pass
+    assert time.monotonic() - t1 < 0.1           # no second wait
+    release.set()
+    a.disconnect()

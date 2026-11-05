@@ -318,3 +318,79 @@ def test_guard_allows_only_the_staging_move():
     g.staging_xy = (0, 20)
     assert g.check(mv(0, 20), 0, 0, None).ok
     assert not g.check(mv(5, 20), 0, 0, None).ok and not g.check(mv(0, 20, 30), 0, 0, None).ok
+
+
+def test_sim_clock_watchdog_marks_stall_and_stops():
+    import asyncio
+    from run_sar_swarm import _watch_sim_clock
+
+    class A:
+        stalled = None
+        ns = 1_000
+
+        def latest_poses(self):
+            return {"Drone1": (self.ns, 0.0, 0.0, 0.0)}
+
+    now = [0.0]
+    a, calls = A(), []
+
+    async def go():
+        stop = asyncio.Event()
+        task = asyncio.create_task(_watch_sim_clock(a, stop, 30.0, 0.001, calls.append,
+                                                    clock=lambda: now[0]))
+        for _ in range(5):                       # clock moving: no stall
+            a.ns += 10
+            now[0] += 20.0
+            await asyncio.sleep(0.005)
+        assert not calls
+        now[0] += 31.0                           # frozen for 31 s of host time
+        await asyncio.wait_for(task, 1.0)
+
+    asyncio.run(go())
+    assert calls and a.stalled and "stopped" in a.stalled
+
+
+def test_one_failed_sweep_does_not_end_a_drones_search(tmp_path, monkeypatch):
+    """Live 2026-11-05: one path_failed in G2 sent Drone3 home for the rest of the run."""
+    from executor.sector_executor import SectorExecutor
+    from models.action import ActionType, CommandResult, CommandStatus
+    real, failed = SectorExecutor.execute, []
+
+    async def execute(self, action):
+        if (action.action_type == ActionType.SWEEP_SECTOR and action.vehicle_id == "Drone3"
+                and not failed):
+            failed.append(action.sector_id)
+            return CommandResult(request_id=action.request_id, vehicle_id=action.vehicle_id,
+                                 action_type=action.action_type, status=CommandStatus.FAILED,
+                                 reason_code="path_failed", sent_to_simulator=True,
+                                 reason="injected")
+        return await real(self, action)
+    monkeypatch.setattr(SectorExecutor, "execute", execute)
+    code, batch, summary = run(tmp_path, "--full-sweep")
+    m = summary["runs"][0]
+    assert failed and code == 0, m["fail_reasons"]
+    d3 = m["drones"]["Drone3"]
+    assert d3["ended_by"] not in ("failed", "aborted") and d3["sectors_swept"] >= 1
+    assert m["sectors_swept"] == 16
+    ev = read_run(batch / "run_00.jsonl").of_kind("sweep_failed")
+    assert [e["sector_id"] for e in ev] == failed and ev[0]["in_row"] == 1
+
+
+def test_two_failed_sweeps_in_a_row_still_end_the_search(tmp_path, monkeypatch):
+    from executor.sector_executor import SectorExecutor
+    from models.action import ActionType, CommandResult, CommandStatus
+    real = SectorExecutor.execute
+
+    async def execute(self, action):
+        if action.action_type == ActionType.SWEEP_SECTOR and action.vehicle_id == "Drone3":
+            return CommandResult(request_id=action.request_id, vehicle_id=action.vehicle_id,
+                                 action_type=action.action_type, status=CommandStatus.FAILED,
+                                 reason_code="path_failed", sent_to_simulator=True,
+                                 reason="injected")
+        return await real(self, action)
+    monkeypatch.setattr(SectorExecutor, "execute", execute)
+    code, batch, summary = run(tmp_path, "--full-sweep")
+    m = summary["runs"][0]
+    assert m["drones"]["Drone3"]["ended_by"] == "failed" and code == 1
+    assert len(read_run(batch / "run_00.jsonl").of_kind("sweep_failed")) == 2
+    assert m["sectors_swept"] == 16                       # the other two covered its cell
