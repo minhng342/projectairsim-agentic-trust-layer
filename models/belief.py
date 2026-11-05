@@ -86,7 +86,7 @@ class PeerClaim(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     msg_id: str
-    msg_type: str                         # sector_claimed | sector_cleared | victim_detected
+    msg_type: str                         # sector_claimed | sector_cleared | sector_blocked | victim_detected
     sender_id: str                        # CLAIMED sender
     sector_id: str | None = None
     sent_sim_s: float                     # the sender's claimed time

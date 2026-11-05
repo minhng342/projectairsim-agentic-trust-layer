@@ -67,6 +67,16 @@ class PeerClaimRules:
         return RuleVerdict(False, "needs_corroboration", f"{sid}: {len(senders)} of {n} "
                            f"peers say clear", ev)
 
+    def on_blocked(self, belief: LocalBelief, claim: PeerClaim) -> RuleVerdict:
+        ev = (claim.msg_id,)
+        if claim.sector_id not in belief.sectors:
+            return RuleVerdict(False, "unknown_sector", f"{claim.sector_id} is not in the "
+                               f"mission grid", ev)
+        if self.swarm.peer_blocked_rule == "accept":
+            return RuleVerdict(True, "accept", f"{claim.sender_id} was stopped by an obstacle "
+                               f"in {claim.sector_id}", ev)
+        return RuleVerdict(False, "ignore", "peer blocked reports are recorded only", ev)
+
     def on_victim(self, belief: LocalBelief, claim: PeerClaim) -> RuleVerdict:
         if self.swarm.peer_victim_rule == "accept":
             return RuleVerdict(True, "accept", f"{claim.sender_id} reports the victim in "

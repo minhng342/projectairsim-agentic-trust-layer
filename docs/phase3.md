@@ -322,6 +322,29 @@ found both callers ignored the timeout):
 Known limit: live, a contingency landing outside the zone can come down on a roof. It is a
 last resort, so it fails the run rather than being tuned away.
 
+### Shared obstacle reports: one obstacle, one incident
+
+A drone remembered a blocked sector only for itself, so after one drone was lost at a wall
+its teammates took over the same sectors and hit the same wall, until the whole team could be
+lost and the victim missed (`test_swarm_carries_on_when_one_drone_drops_out`, flaky for this
+reason). Now a drone stopped by an obstacle sends `SectorBlocked(sector_id, altitude_m, cause)`
+on the bus, range-filtered and authenticated like the other messages and repeated (same
+`msg_id`) for peers out of range at the time. A receiver accepts a single report
+(`peer_blocked_rule: accept`; `ignore` records it only, the old behavior): it stays out of the
+sector (the guard refuses it as `blocked_by_obstacle`), leaves it out of allocation and work
+stealing, and the LLM planner sees it as `blocked_by_teammates`. The static split sends no
+reports, like its other sector talk.
+
+A blocked sector is not cleared. It stays unsearched: the run reports `unreachable_sectors`,
+and a victim in one is `victim_unreachable`, not a silent miss. Per drone, `blocked_sectors`
+are its own incidents and `blocked_heard` are the reports that kept it out; `blocked_shared`
+counts the reports sent.
+
+The price is coverage. The sector named is the one the drone was flying to, which may not
+be where the obstacle is (a wall on the way in), and a report keeps every layer out, even one
+that could fly over the obstacle. A drone can still be stopped by a different sector's
+obstacle, and a peer that never heard the report can still enter.
+
 ### Dropout: the condition where cooperation should pay
 
 `--dropout DRONE@SECONDS` fails that drone SECONDS of sim time after the mission starts (the
@@ -380,7 +403,9 @@ What it says:
 
 - The insider's slots: `PeerMessenger(hooks=...)` and `RemoteIdBroadcaster(hooks=...)` (sender
   hooks, the drone lies about what it transmits), `RemoteIdBus.add_link_hook` (in transit).
-- Attack surfaces this phase exposes: a false `SectorCleared` is accepted by the single-peer
+- Attack surfaces this phase exposes: a false `SectorBlocked` is accepted from a single peer
+  and keeps the whole team out of that sector (a liar can hide the victim's sector without
+  claiming it was searched); a false `SectorCleared` is accepted by the single-peer
   rule; a false `VictimDetected` ends everyone's search; a claim with a far expiry is capped at
   `max_claim_s` but still squats; a false Remote ID position pulls Voronoi cells toward the
   liar; a liar that never announces `returning` keeps its cells.
