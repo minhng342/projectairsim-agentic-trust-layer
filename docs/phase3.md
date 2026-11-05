@@ -168,7 +168,13 @@ the paired ratios are the useful part until live batches exist.
   boundaries only, so with qwen3.5:9b `--thinking off` (~4 s per decision) the load is light.
 - First full 3-drone pass (2026-11-05, qwen3.5:9b, thinking off): victim in A6 found by Drone3
   at 550 s, mission 578 s, 58/64 sectors, 0 duplicates, 195 messages (2 out of range), all
-  landed. LLM decisions took about 0.7-2.5 s each.
+  landed. LLM decisions took about 0.7-2.5 s each. Radio range accounts for all the message
+  loss: 195 messages x 2 receivers = 390 expected deliveries, less the 2 out of range gives
+  388, the reported 99.5%. The bus drops a delivery when the true 3D distance between sender
+  and receiver exceeds `radio_range_m` (150 m on the dev mission, whose diagonal is 226 m) and
+  records it as `rid_out_of_range`; this is the range rule working, not a fault. This comes
+  from the run's summary numbers; the per-message log was not inspected. An offline run gave
+  the same picture: 281 of 282 delivered, the one miss at 150.4 m.
 - Second run froze: CityEnviron stopped stepping (sim time moved 0.16 s in 757 s of host time),
   and because telemetry pulls are synchronous on the one asyncio loop, every drone and the
   60 s decision timeout froze with it. Now the adapter bounds each pull
