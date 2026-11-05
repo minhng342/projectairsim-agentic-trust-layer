@@ -17,7 +17,8 @@ Per run:
     bus           RemoteIdBus with a radio-range filter (true positions, mission.swarm.
                   radio_range_m): 1 Hz Remote ID position broadcasts (with mission_state)
                   and typed peer messages SectorClaimed / SectorCleared / VictimDetected
-    each drone    flies its own layer (altitude_m + i * layer_spacing_m), re-partitions the
+    each drone    climbs on its pad, flies to its staging point if the mission has one
+                  (swarm.staging), then flies its own layer (altitude_m + i * layer_spacing_m), re-partitions the
                   open sectors (Voronoi + claims) before every sweep, claims a sector before
                   sweeping it, reports it cleared after, reports its own find (repeated);
                   a peer's clear / find is applied under the peer-claim rules
@@ -234,8 +235,11 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                                          guard=guard, recorder=recorder, log=log)
                 bus.attach(SwarmReceiver(vid, rid_rx, coord.on_message, sim_clock_of(vid),
                                          recorder=recorder))
+                stage = (mission.swarm.staging or [])
+                i = [x.vehicle for x in drones].index(vid)
                 common = dict(recorder=recorder, sweep_progress=sector_ex.last_progress,
-                              log=log, swarm=coord)
+                              log=log, swarm=coord,
+                              staging_xy=(stage[i].x_m, stage[i].y_m) if i < len(stage) else None)
                 if llm:
                     planner = SwarmLLMPlanner(vid, m, feed, port, belief, model=llm["model"],
                                               guard=guard, model_label=llm["label"],
@@ -244,8 +248,11 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                 else:
                     planner = SwarmFixedPlanner(vid, m, feed, port, belief, guard=guard, **common)
 
-                def peer_victim(claim, sector_ex=sector_ex, m=m):
-                    if m.termination.stop_on_detection:
+                # Stop only a SEARCH move: a drone already heading home (it found nothing
+                # left, or an earlier report ended its search) keeps flying home even if it
+                # passes over the victim on the way.
+                def peer_victim(claim, sector_ex=sector_ex, m=m, coord=coord):
+                    if m.termination.stop_on_detection and coord.state == "searching":
                         sector_ex.interrupt(f"{claim.sender_id} reported the victim")
                 coord.on_peer_victim = peer_victim
 
@@ -256,7 +263,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                     belief.add_detection(det)
                     planner.on_detection(det)
                     coord.own_detection(det)
-                    if m.termination.stop_on_detection:
+                    if m.termination.stop_on_detection and coord.state == "searching":
                         sector_ex.interrupt("victim detected")
                 sensor = VictimSensor(adapter, vid, (victim.x_m, victim.y_m),
                                       m.sensor.footprint_m, m.flight.altitude_m, grid=m.grid,

@@ -31,6 +31,9 @@ from models.sar import DroneState, Mission, ReturnHome, SweepSector
 from search.voronoi import coverage_order, voronoi_partition
 
 
+STALE = object()        # _submit: the `before` check withdrew the action
+
+
 @dataclass
 class PlannerResult:
     outcome: str                 # victim_found | all_swept | time_limit | returned | failed | aborted
@@ -70,6 +73,7 @@ class FixedSectorPlanner:
         self.gate_refusals_in_row = 0
         self.max_refusals_in_row = 3
         self.return_outcome = "returned"     # outcome when choose() returns ReturnHome
+        self.stale_choices = 0
 
     # ------------------------------------------------------------ events from outside
     def on_detection(self, d: Detection) -> None:
@@ -95,6 +99,9 @@ class FixedSectorPlanner:
         if fb is None or fb.code != "completed":
             return await self._finish("failed", f"climb to mission altitude: "
                                                 f"{fb.code if fb else 'no observation'}")
+        failed = await self._after_climb()
+        if failed:
+            return await self._finish("failed", failed)
 
         while True:
             stop = self._should_stop()
@@ -114,9 +121,17 @@ class FixedSectorPlanner:
             sid = action.sector_id
             obs_sim = self._sim_now()
             def before(rid, sid=sid, obs_sim=obs_sim):
+                if not self._still_open(sid):
+                    return False
                 self.belief.mark_started(sid, obs_sim, rid)
                 self._on_sweep_start(sid, rid)
             fb = await self._submit(action.to_proposed(self.vehicle_id), before=before)
+            if fb is STALE:
+                # it changed hands while deciding (Phase 3: a peer claimed or cleared it)
+                self.stale_choices += 1
+                if self.stale_choices > 100:
+                    return await self._finish("failed", "choices keep going stale")
+                continue
             sim = self._sim_now()
             if fb is None:
                 return await self._finish("failed", f"{sid}: no observation to decide from")
@@ -179,8 +194,17 @@ class FixedSectorPlanner:
         """This drone's sectors still to search, in the order to fly them."""
         return [sid for sid in self.order if not self.belief.is_done(sid)]
 
+    def _still_open(self, sid: str) -> bool:
+        """Right before submitting: is the chosen sector still this drone's to sweep?"""
+        return True
+
     def _nothing_left(self) -> tuple[str, str]:
         return "all_swept", "every sector swept"
+
+    async def _after_climb(self) -> str | None:
+        """At mission altitude, before the first sector (Phase 3: fly to the staging point).
+        Returns a failure reason, or None."""
+        return None
 
     def _on_sweep_start(self, sid: str, request_id: str) -> None:
         """Just before a sweep is submitted (Phase 3: claim the sector)."""
@@ -242,8 +266,8 @@ class FixedSectorPlanner:
         obs, _ = await self._observe()
         if obs is None:
             return None
-        if before is not None:
-            before(action.request_id)
+        if before is not None and before(action.request_id) is False:
+            return STALE            # nothing submitted
         fb = await self.port.submit(action, based_on=obs.observation_id)
         entry = {"action": action.action_type.value, "sector_id": action.sector_id,
                  "code": fb.code, "request_id": fb.request_id}

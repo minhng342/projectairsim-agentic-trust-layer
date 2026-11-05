@@ -41,3 +41,4 @@ swarm:
   peer_clear_rule: single        # one honest peer's SectorCleared is enough (baseline)
   peer_victim_rule: accept       # a peer's VictimDetected ends the search
   victim_repeat_s: 2
+  staging: [{x_m: 0, y_m: 135}, {x_m: 0, y_m: 400}, {x_m: 0, y_m: 665}]

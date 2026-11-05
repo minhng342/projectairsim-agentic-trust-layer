@@ -27,6 +27,8 @@ own memory and the frozen mission. Trust checks on peers' claims come in Phase 5
                          safe action after a failure, so a planner that skips the validator
                          can end its search early, never fly somewhere it shouldn't)
     wrong_altitude       change_altitude to anything but the mission altitude
+    (move_to_position)   only to this drone's staging point at its layer (Phase 3), else
+                         not_allowed
     not_allowed          any other action type
 
 Time estimate: path length (straight transit + the sector's boustrophedon lanes + straight
@@ -63,6 +65,7 @@ class SarGuard:
         self.cells: set[str] | None = None        # this drone's Voronoi cells
         self.start_sim_s: float | None = None     # sim time the search started
         self.peer_victim_accepted = False         # Phase 3: a peer's VictimDetected, accepted
+        self.staging_xy: tuple[float, float] | None = None   # Phase 3: the one allowed move
 
     def search_over(self) -> bool:
         """The victim was found: by this drone's sensor, or (Phase 3) by a peer whose report
@@ -137,6 +140,14 @@ class SarGuard:
             alt = self.mission.flight.altitude_m
             if action.altitude_m is None or abs(action.altitude_m - alt) > self.altitude_tolerance_m:
                 return Verdict(False, "wrong_altitude", f"the search flies at {alt:g} m only")
+            return OK
+        if t == ActionType.MOVE_TO_POSITION and self.staging_xy is not None:
+            sx, sy = self.staging_xy
+            alt = self.mission.flight.altitude_m
+            if (abs(action.north_m - sx) > 1.0 or abs(action.east_m - sy) > 1.0
+                    or abs(action.altitude_m - alt) > self.altitude_tolerance_m):
+                return Verdict(False, "not_allowed", f"the only move allowed is to your staging "
+                               f"point ({sx:g}, {sy:g}) at {alt:g} m")
             return OK
         return Verdict(False, "not_allowed", f"{t.value} is not a search action")
 

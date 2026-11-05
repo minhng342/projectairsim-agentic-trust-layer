@@ -277,9 +277,30 @@ class SwarmPlannerMixin:
     """Planner hooks for a swarm member. Put it before the planner class:
     class SwarmFixedPlanner(SwarmPlannerMixin, FixedSectorPlanner)."""
 
-    def __init__(self, *args, swarm: SwarmCoordinator, **kw):
+    def __init__(self, *args, swarm: SwarmCoordinator, staging_xy=None, **kw):
         self.swarm = swarm
+        self.staging_xy = staging_xy
         super().__init__(*args, **kw)
+
+    async def _after_climb(self):
+        if self.staging_xy is None:
+            return None
+        from models.action import ActionType, ProposedAction
+        if self.guard is not None:
+            self.guard.staging_xy = self.staging_xy
+        x, y = self.staging_xy
+        fb = await self._submit(ProposedAction(
+            vehicle_id=self.vehicle_id, action_type=ActionType.MOVE_TO_POSITION,
+            north_m=x, east_m=y, altitude_m=self.mission.flight.altitude_m,
+            reason="fly to the staging point before searching"))
+        if self.guard is not None:
+            self.guard.staging_xy = None          # a one-time move
+        if fb is not None and fb.code == "sweep_stopped":
+            return None                           # a find meanwhile: the loop stops the search
+        if fb is None or fb.code != "position_reached":
+            return f"staging: {fb.code if fb else 'no observation'}"
+        self._record("staged", at={"x_m": x, "y_m": y})
+        return None
 
     def _here(self):
         obs = self.feed.latest()
@@ -308,6 +329,19 @@ class SwarmPlannerMixin:
         if self.guard is not None:
             self.guard.cells = set(order)
         return order
+
+    def _still_open(self, sid):
+        """No await between this check and the claim, so a peer's claim or clear that
+        arrived while this drone was deciding is never overridden."""
+        if self.belief.is_done(sid):
+            return False
+        _, now = self._here()
+        peers = self.swarm.live_peers(now)
+        holder = self.swarm.live_claims(now, peers).get(sid)
+        if holder not in (None, self.vehicle_id):
+            self._record("stale_choice", sector_id=sid, claimed_by=holder)
+            return False
+        return True
 
     def _nothing_left(self):
         if not self.belief.unsearched():

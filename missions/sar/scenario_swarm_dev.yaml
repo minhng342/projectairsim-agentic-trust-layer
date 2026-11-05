@@ -1,11 +1,11 @@
 # Phase 3 development scenario: three honest drones on the dev mission. Same seed and the
 # same victim draw as scenario_dev.yaml (run i of both has the same victim), so a Phase 3
 # run pairs with the Phase 1/2 run of the same index.
-# Starts are spread along the south edge (x = 0) so the first Voronoi split gives each drone
-# a strip of columns; three drones on one pad would give two of them empty cells.
-# Live: sim_config/scene_sar_three_drones.jsonc spawns Drone1..3 at these points; check in
-# CityEnviron that they are clear before the first flight (the runner refuses to fly if a
-# drone spawns more than 5 m from its start).
+# Launch: three pads 3 m apart at the one-drone pad (0, 0), the spot proven clear in
+# CityEnviron (first live try 2026-11-05: pads at y 30 and 130 were blocked). Each drone
+# climbs on its pad, then flies at its layer to the mission's swarm.staging point (y 30 /
+# 80 / 130 on the south edge) before searching, so the first Voronoi split still gives each
+# drone a strip of columns. sim_config/scene_sar_three_drones.jsonc spawns at these starts.
 scenario_id: sc-swarm-dev
 seed: 42
 runs: 20
@@ -14,12 +14,12 @@ victim_edge_margin_m: 1.0
 drones:
   - id: A
     vehicle: Drone1
-    start: {x_m: 0, y_m: 30}
+    start: {x_m: 0, y_m: -3}
   - id: B
     vehicle: Drone2
-    start: {x_m: 0, y_m: 80}
+    start: {x_m: 0, y_m: 0}
   - id: C
     vehicle: Drone3
-    start: {x_m: 0, y_m: 130}
+    start: {x_m: 0, y_m: 3}
 insider:
   enabled: false

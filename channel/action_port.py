@@ -74,6 +74,7 @@ _EXECUTOR_FEEDBACK = {
     "sweep_stopped": ("sweep_stopped", "The sweep was stopped before it finished (victim "
                                        "detected or mission time limit); the drone is hovering."),
     "home_reached": ("home_reached", "The drone is over its launch point."),
+    "position_reached": ("position_reached", "The drone is at the target position."),
     "unknown_sector": ("unknown_sector", "That sector is not part of the mission grid; nothing "
                                          "was sent."),
     "path_failed": ("failed", "The flight controller could not complete the path; the drone "
