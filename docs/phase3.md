@@ -93,9 +93,11 @@ heard: the bus never queues messages. That is why the find is repeated.
    "go and verify" response (`VerifySector`) is a Phase 5 option.
 3. **Allocation is recomputed at every decision from the drones' current positions**, not once
    from the launch points. In practice the three drones advance north as a front and the cells
-   rebalance themselves; claims prevent two drones taking the same sector at once. With every
-   drone on one pad the first split would be degenerate, so the scenario starts are spread
-   along the south edge (x 0, y 30 / 80 / 130 on the dev grid).
+   rebalance themselves; claims prevent two drones taking the same sector at once (a choice is
+   re-checked right before its claim goes out, with no wait in between). With every drone on
+   one pad the first split would be degenerate, so the team launches from pads 3 m apart at
+   (0, 0) and each drone first flies at its layer to `swarm.staging[i]` (dev: x 0, y 30 / 80 /
+   130 on the south edge).
 4. **A drone with nothing left in its cell steals** the open, unclaimed sector furthest from
    the other drones (relative to its own distance), and goes home only when every open sector
    is claimed by someone else or done.
@@ -131,14 +133,15 @@ Run 2026-11-05.
 | Condition | Found | Time to find, mean / median (s) | min / p90 / max (s) | Paired speedup vs 1 drone, mean / median | Coverage at the end | Duplicate sweeps (20 runs) | Peer message delivery |
 |---|---|---|---|---|---|---|---|
 | 1 drone (Phase 1 planner) | 20/20 | 632 / 623 | 160 / 1236 / 1314 | 1.0 | 45.9% | n/a | n/a |
-| **3 drones, Phase 3 baseline** (fixed planner) | **20/20** | **285 / 267** | 112 / 454 / 502 | **2.07x / 1.95x** (faster in 19 of 20) | 44.0% | 0 | 99.5% |
-| 3 drones, Pydantic AI planners (scripted model) | 20/20 | 271 / 258 | 114 / 417 / 437 | 2.68x / 2.59x | 48.0% | 0 | 99.5% |
-| 3 drones, no messages heard (`--radio-range 1`) | 20/20 | 603 / 622 | 123 / 1085 / 1179 | 1.08x / 0.99x | 52.0% | 980 | 0% |
+| **3 drones, Phase 3 baseline** (fixed planner) | **20/20** | **311 / 287** | 132 / 516 / 549 | **1.89x / 1.96x** (faster in 19 of 20) | 45.0% | 0 | 99.6% |
+| 3 drones, Pydantic AI planners (scripted model) | 20/20 | 332 / 324 | 133 / 483 / 575 | 2.26x / 1.76x | 61.0% | 0 | 99.4% |
+| 3 drones, no messages heard (`--radio-range 1`) | 20/20 | 620 / 644 | 155 / 1087 / 1219 | 1.02x / 0.96x | 52.0% | 980 | 0% |
 
-Other baseline numbers: mission time (search start to the last drone's end) mean 310 s; finds
-by Drone1 / Drone2 / Drone3 = 8 / 8 / 4; peers heard the find within 0.4 s; 17 work steals;
-22 peer-message deliveries lost to range; closest approach of two airborne drones 10.35 m
-(the layer spacing). The no-messages row is the reference that shows the gain comes from
+Other baseline numbers: mission time (search start to the last drone's end) mean 345 s; finds
+by Drone1 / Drone2 / Drone3 = 5 / 10 / 5; 54 work steals; 25 peer-message deliveries lost to
+range; closest approach of two airborne drones 2.36 m, at the pads (3 m apart) just after
+takeoff, before the layers separate them. Times include the climb on the pad and the flight
+to the staging point. The no-messages row is the reference that shows the gain comes from
 cooperation, not from three airframes: without messages each drone searches the whole grid
 on its own and they sweep the same sectors 980 times.
 
@@ -153,12 +156,13 @@ These are kinematic-sim numbers: real flight adds turn and settle time (live swe
 mission took about 2x the straight-line time in Phase 1), so absolute seconds will grow live;
 the paired ratios are the useful part until live batches exist.
 
-## Live (zeus-g), not run yet
+## Live (zeus-g)
 
-- `sim_config/scene_sar_three_drones.jsonc` spawns Drone1..3 at (0, 30), (0, 80), (0, 130).
-  Check in CityEnviron that the three pads are clear at ground level before the first run (the
-  runner refuses to fly when a drone spawns more than 5 m from its scenario start). If one is
-  in a building, move it in the scene AND in `scenario_swarm_dev.yaml`.
+- First live try (2026-11-05, qwen3.5:9b): with pads at (0, 30), (0, 80), (0, 130), Drone1
+  and Drone3 could not take off (blocked spawns); Drone2 searched alone with the LLM planner,
+  took over the others' cells once they dropped out of Remote ID, found the victim in A5 at
+  408.7 s and Drone3 accepted its report over the bus. The pads are now (0, -3 / 0 / 3), the
+  spacing `scene_three_drones.jsonc` already flew in CityEnviron, plus staging points.
 - Layers 150 / 160 / 170 m stay above the rooftops that forced 150 m in Phase 1.
 - With `--planner llm` three agents share one Ollama server; decisions are at sector
   boundaries only, so with qwen3.5:9b `--thinking off` (~4 s per decision) the load is light.

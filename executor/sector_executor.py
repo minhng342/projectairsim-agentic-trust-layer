@@ -11,6 +11,8 @@ action port's executor, so every action still goes proposal -> gate -> executor 
                      speed; the path starts at the drone's position, so the transit from
                      the previous sector is part of it
     return_home      straight back over the launch point at mission altitude
+    move_to_position straight to (north, east) at mission altitude (Phase 3 staging);
+                     result position_reached
     change_altitude  delegated to the flight executor (climb in place to mission altitude,
                      the move the corridor missions proved live)
 
@@ -38,7 +40,8 @@ from search.boustrophedon import sweep_path
 
 
 class SectorExecutor:
-    SUPPORTED = (ActionType.SWEEP_SECTOR, ActionType.RETURN_HOME, ActionType.CHANGE_ALTITUDE)
+    SUPPORTED = (ActionType.SWEEP_SECTOR, ActionType.RETURN_HOME, ActionType.CHANGE_ALTITUDE,
+                 ActionType.MOVE_TO_POSITION)
 
     def __init__(self, adapter, vehicle_id: str, mission: Mission, home_xy: tuple[float, float],
                  flight_executor, follower_config: FollowerConfig | None = None,
@@ -103,6 +106,16 @@ class SectorExecutor:
             self._emit("sector_started", sector_id=sid, lanes=path.lanes,
                        sweep_length_m=round(path.length_m, 2), waypoints=path.waypoints,
                        request_id=action.request_id)
+        elif t == ActionType.MOVE_TO_POSITION:
+            if abs(action.altitude_m - self.mission.flight.altitude_m) > 1.0:
+                return result(CommandStatus.REFUSED, "not_applicable",
+                              f"moves fly at the mission altitude "
+                              f"{self.mission.flight.altitude_m:g} m only")
+            sid, path = None, None
+            target = (action.north_m, action.east_m)
+            waypoints = [here, target]
+            self.current_sector = None
+            self._emit("move_started", target=target, request_id=action.request_id)
         else:
             sid, path = None, None
             waypoints = [here, self.home_xy]
@@ -126,6 +139,8 @@ class SectorExecutor:
                            elapsed_s=r.elapsed_s, max_cross_track_m=r.max_cross_track_m)
                 return result(CommandStatus.SUCCEEDED, "sector_swept",
                               f"{sid} swept ({path.lanes} lanes, {r.elapsed_s:.1f} s)", True)
+            if t == ActionType.MOVE_TO_POSITION:
+                return result(CommandStatus.SUCCEEDED, "position_reached", "at the target", True)
             return result(CommandStatus.SUCCEEDED, "home_reached", "over the launch point", True)
         if r.mode == FollowMode.STOPPED and self._interrupt_reason:
             self._emit("sector_stopped" if sid else "return_home_stopped", sector_id=sid,

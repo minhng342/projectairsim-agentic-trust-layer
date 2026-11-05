@@ -1,7 +1,7 @@
 // Phase 3 swarm scene (run_sar_swarm.py with missions/sar/scenario_swarm_dev.yaml):
-// three drones on the south edge of the dev grid, at the scenario starts (x 0, y 30 / 80 / 130).
-// Same robot, clock and home as scene_sar_one_drone.jsonc. Not yet checked in CityEnviron:
-// if a spawn point is inside a building, move it here AND in the scenario.
+// three pads 3 m apart at the one-drone pad (x 0, y -3 / 0 / 3; the same spacing as
+// scene_three_drones.jsonc, which flew in CityEnviron). The drones then fly to the mission's
+// staging points. Spawns at (0, 30) and (0, 130) were blocked in CityEnviron (2026-11-05).
 {
   "id": "SceneSarThreeDrones",
   "actors": [
@@ -9,7 +9,7 @@
       "type": "robot",
       "name": "Drone1",
       "origin": {
-        "xyz": "0.0 30.0 -4.0",
+        "xyz": "0.0 -3.0 -4.0",
         "rpy-deg": "0 0 0"
       },
       "robot-config": "robot_quadrotor_fastphysics.jsonc"
@@ -18,7 +18,7 @@
       "type": "robot",
       "name": "Drone2",
       "origin": {
-        "xyz": "0.0 80.0 -4.0",
+        "xyz": "0.0 0.0 -4.0",
         "rpy-deg": "0 0 0"
       },
       "robot-config": "robot_quadrotor_fastphysics.jsonc"
@@ -27,7 +27,7 @@
       "type": "robot",
       "name": "Drone3",
       "origin": {
-        "xyz": "0.0 130.0 -4.0",
+        "xyz": "0.0 3.0 -4.0",
         "rpy-deg": "0 0 0"
       },
       "robot-config": "robot_quadrotor_fastphysics.jsonc"

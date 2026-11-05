@@ -142,6 +142,10 @@ class Swarm(_Strict):
                       baseline); ignore: recorded only
     victim_repeat_s   the finder repeats its VictimDetected this often until it lands, so a
                       peer out of range at the moment of the find still hears it later
+    staging           optional: drone i first flies (at its layer) to staging[i], then starts
+                      searching. Lets the team launch from one known-clear pad area while the
+                      first Voronoi split still starts from spread-out generators (drones on
+                      one pad would give two of them empty cells)
     """
     radio_range_m: float | None = Field(default=500.0, gt=0)
     layer_spacing_m: float = Field(default=10.0, ge=0)
@@ -151,6 +155,7 @@ class Swarm(_Strict):
     corroboration_n: int = Field(default=2, ge=2)
     peer_victim_rule: Literal["accept", "ignore"] = "accept"
     victim_repeat_s: float = Field(default=2.0, gt=0)
+    staging: list[Point] | None = None
 
 
 class Mission(_Strict):
@@ -174,6 +179,9 @@ class Mission(_Strict):
             raise ValueError(f"search.start_sector {self.search.start_sector!r} is outside the "
                              f"{self.area.sectors.x} x {self.area.sectors.y} grid "
                              f"(A1..{self.grid.last_id})")
+        for i, p in enumerate(self.swarm.staging or []):
+            if self.geofence_excursion_m(p.x_m, p.y_m) > 0:
+                raise ValueError(f"swarm.staging[{i}] ({p.x_m:g}, {p.y_m:g}) is outside the area")
         return self
 
     # derived, never written in YAML

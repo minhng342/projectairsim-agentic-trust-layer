@@ -286,3 +286,35 @@ def test_one_drone_through_the_swarm_runner(tmp_path):
     code, batch, summary = run(tmp_path, drones=THREE[:1])
     m = summary["runs"][0]
     assert code == 0 and m["victim_found"] and m["messages"]["delivery_ratio"] is None
+
+
+def test_team_launches_from_one_pad_area_and_flies_to_staging_points(tmp_path):
+    pads = [{"id": k, "vehicle": f"Drone{i + 1}", "start": {"x_m": 0, "y_m": -3 + 3 * i}}
+            for i, k in enumerate("ABC")]
+    stage = [{"x_m": 0, "y_m": 5}, {"x_m": 0, "y_m": 20}, {"x_m": 0, "y_m": 35}]
+    code, batch, summary = run(tmp_path, drones=pads, staging=stage)
+    m = summary["runs"][0]
+    assert code == 0, m["fail_reasons"]
+    log = read_run(batch / "run_00.jsonl")
+    staged = {e["vehicle_id"]: e["at"]["y_m"] for e in log.of_kind("staged")}
+    assert staged == {"Drone1": 5, "Drone2": 20, "Drone3": 35}
+    # the first split after staging gives everyone sectors, not two empty cells
+    assert all(d["sectors_swept"] >= 1 for d in m["drones"].values())
+    moves = [e for e in log.of_kind("gate_decision")
+             if e["decision"]["outcome"] == "approved"]
+    assert moves
+
+
+def test_guard_allows_only_the_staging_move():
+    from gate.sar_guard import SarGuard
+    from models.action import ActionType, ProposedAction
+    m = mission()
+    g = SarGuard(m, LocalBelief("Drone1", m), (0, 0))
+
+    def mv(n, e, alt=10):
+        return ProposedAction(vehicle_id="Drone1", action_type=ActionType.MOVE_TO_POSITION,
+                              north_m=n, east_m=e, altitude_m=alt, reason="t")
+    assert not g.check(mv(0, 20), 0, 0, None).ok
+    g.staging_xy = (0, 20)
+    assert g.check(mv(0, 20), 0, 0, None).ok
+    assert not g.check(mv(5, 20), 0, 0, None).ok and not g.check(mv(0, 20, 30), 0, 0, None).ok

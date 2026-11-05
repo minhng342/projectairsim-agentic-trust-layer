@@ -33,3 +33,6 @@ swarm:
   peer_clear_rule: single        # one honest peer's SectorCleared is enough (baseline)
   peer_victim_rule: accept       # a peer's VictimDetected ends the search
   victim_repeat_s: 2
+  # The team launches from the one-drone pad area (spawns 3 m apart, clear in CityEnviron) and
+  # drone i first flies to staging[i] at its layer: the south edge, one per third of the grid.
+  staging: [{x_m: 0, y_m: 30}, {x_m: 0, y_m: 80}, {x_m: 0, y_m: 130}]
