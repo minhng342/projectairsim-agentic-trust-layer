@@ -141,8 +141,8 @@ class SectorExecutor:
             if z is not None and z.holder != self.vehicle_id:
                 # leg 1: to the zone's edge on this layer. A drone already inside (its
                 # search ended near the pads) waits at the edge too, not over the pads.
-                if not (z.inside(here) and z.holder is None):
-                    edge = z.approach_point(here, PAD_EDGE_MARGIN_M)
+                edge = (None if z.inside(here) and z.holder is None else self._pad_edge(here))
+                if edge is not None:
                     r = await self._fly([here, edge], fly_alt, action)
                     if r is not None:
                         return result(*r)
@@ -197,6 +197,12 @@ class SectorExecutor:
         return result(CommandStatus.FAILED, "path_blocked" if blocked else "path_failed",
                       f"{r.mode.value}: {r.reason}", True)
 
+    def _pad_edge(self, here):
+        """The waiting point outside the pad zone, inside the geofence (None if there is none)."""
+        return self.pad_zone.exit_point(
+            here, PAD_EDGE_MARGIN_M,
+            allowed=lambda p: self.mission.geofence_excursion_m(*p) <= 0.0)
+
     async def leave_pad_zone(self) -> bool:
         """Fly straight out to the pad zone's edge on this drone's layer (the runner, when a
         drone must land without holding the zone). True once outside it."""
@@ -206,7 +212,9 @@ class SectorExecutor:
         here = (snap.position_ned_m.x, snap.position_ned_m.y)
         if not z.inside(here):
             return True
-        edge = z.approach_point(here, PAD_EDGE_MARGIN_M)
+        edge = self._pad_edge(here)
+        if edge is None:
+            return False
         self._emit("pad_zone_exit", position=here, edge=edge)
         r = await self._fly([here, edge], self.mission.flight.altitude_m,
                             _Leg(request_id=None))

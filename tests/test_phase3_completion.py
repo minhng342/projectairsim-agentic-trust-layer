@@ -394,6 +394,40 @@ def test_pad_zone_timeout_from_inside_leaves_the_zone_first():
     assert "return_home_started" not in [k for k, _ in events]
 
 
+def test_exit_point_stays_allowed():
+    from executor.pad_zone import PadZone
+    z = PadZone((0.0, 0.0), 18.0)
+    quadrant = lambda p: p[0] >= 0 and p[1] >= 0
+    assert z.exit_point((5.0, 0.0), 2.0, quadrant) == pytest.approx((20.0, 0.0))   # straight out
+    x, y = z.exit_point((0.0, -3.0), 2.0, quadrant)        # straight out would leave the area
+    assert quadrant((x, y)) and not z.inside((x, y))
+    assert z.exit_point((0.0, -3.0), 2.0, lambda p: False) is None
+
+
+def test_leaving_the_zone_stays_inside_the_geofence():
+    """A drone inside a held zone whose straight way out crosses the geofence (found as a
+    flaky geofence breach in the three-drone run): it waits inside the area."""
+    from executor.pad_zone import PadZone
+    m = _mission()
+    sim = KinematicSim({"Drone1": (0.0, 0.0)}, speedup=200)
+    zone = PadZone((0.0, 20.0), 30.0)                      # straight out from (0, 25) is (0, 52)
+
+    async def go():
+        await _airborne_at(sim, "Drone1", 0.0, 25.0, alt=m.flight.altitude_m)
+        assert await zone.acquire("Drone2")
+        ex = SectorExecutor(sim, "Drone1", m, (0.0, 0.0), ProjectAirSimExecutor(sim),
+                            pad_zone=zone, pad_wait_s=0.001,
+                            follower_config=FollowerConfig(poll_interval_s=0.0005,
+                                                           hover_timeout_s=5.0))
+        r = await ex.execute(ProposedAction(vehicle_id="Drone1", reason="t",
+                                            action_type=ActionType.RETURN_HOME))
+        p = sim.get_snapshot("Drone1").position_ned_m
+        return r, (p.x, p.y)
+    r, xy = asyncio.run(go())
+    assert r.reason_code == "pad_zone_timeout"
+    assert m.geofence_excursion_m(*xy) <= 0.5 and not zone.inside(xy)
+
+
 def test_approach_point_from_the_centre_is_on_the_edge():
     from executor.pad_zone import PadZone
     z = PadZone((1.0, 2.0), 10.0)

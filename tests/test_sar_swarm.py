@@ -206,7 +206,8 @@ def test_live_peers_drop_stale_and_homebound_drones():
 # ------------------------------------------------------------------ end to end
 def files(tmp_path, victim=(25.0, 33.0), runs=1, drones=THREE, **swarm):
     m = json.loads(json.dumps(MISSION))
-    m["swarm"] = {"radio_range_m": 200, "layer_spacing_m": 5, **swarm}
+    m["swarm"] = {"radio_range_m": 200, "layer_spacing_m": 5, "separation_cruise_m": 4.5,
+                  **swarm}                       # the floor just under the 5 m layers
     sc = {"scenario_id": "sc-swarm-test", "seed": 7, "runs": runs, "drones": drones}
     sc |= {"victim": {"x_m": victim[0], "y_m": victim[1]}} if victim else {"randomize_victim": True}
     (tmp_path / "m.yaml").write_text(yaml.safe_dump(m), encoding="utf-8")

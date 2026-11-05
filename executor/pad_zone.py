@@ -62,6 +62,19 @@ class PadZone:
             return (self.center[0] + r, self.center[1])
         return (self.center[0] + dx / d * r, self.center[1] + dy / d * r)
 
+    def exit_point(self, from_xy, margin_m: float = 0.0, allowed=None):
+        """Where to wait outside the zone: straight out from from_xy, or, if allowed(point)
+        refuses that (the geofence: pads can sit on the edge of the area), the nearest
+        allowed point on the same circle. None if no point of it is allowed."""
+        radial = self.approach_point(from_xy, margin_m)
+        if allowed is None or allowed(radial):
+            return radial
+        r = self.radius_m + margin_m
+        points = [(self.center[0] + r * math.cos(math.radians(a)),
+                   self.center[1] + r * math.sin(math.radians(a))) for a in range(0, 360, 5)]
+        points = [p for p in points if allowed(p)]
+        return min(points, key=lambda p: math.dist(p, from_xy)) if points else None
+
     async def acquire(self, vid: str, timeout_s: float | None = None) -> bool:
         if self.holder == vid:
             return True
