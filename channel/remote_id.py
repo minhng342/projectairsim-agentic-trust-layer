@@ -171,7 +171,10 @@ class RemoteIdBus:
     rid_out_of_range. None = every receiver hears everything (Phase 0-2).
 
     A receiver is anything with `owner_id` and `receive(payload)`; the swarm receiver
-    (agent/swarm.py) takes Remote ID reports and typed peer messages on the same bus."""
+    (agent/swarm.py) takes Remote ID reports and typed peer messages on the same bus.
+    A receiver with `receive_linked(payload, link_sender)` is also told the transmitter's
+    authenticated identity (Phase 3: the link layer of an authenticated radio). It is the
+    transmitter's enrolled id, never its position or whether it is honest."""
 
     def __init__(self, recorder=None, in_range=None):
         self._receivers: dict[str, RemoteIdReceiver] = {}
@@ -226,8 +229,9 @@ class RemoteIdBus:
                 if not got:
                     self.stats["lost"] += 1
                     self._record("rid_lost", tx_id=tx_id, receiver=rid, link_hooks=changed or None)
+                linked = getattr(rx, "receive_linked", None)
                 for p in got:
-                    report = rx.receive(p)
+                    report = linked(p, sender_id) if linked is not None else rx.receive(p)
                     self.stats["delivered"] += 1
                     d = {"tx_id": tx_id, "true_sender": sender_id, "receiver": rid,
                          "report_id": getattr(report, "observation_id", None),

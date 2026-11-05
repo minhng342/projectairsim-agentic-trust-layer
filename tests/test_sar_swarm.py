@@ -394,3 +394,109 @@ def test_two_failed_sweeps_in_a_row_still_end_the_search(tmp_path, monkeypatch):
     assert m["drones"]["Drone3"]["ended_by"] == "failed" and code == 1
     assert len(read_run(batch / "run_00.jsonl").of_kind("sweep_failed")) == 2
     assert m["sectors_swept"] == 16                       # the other two covered its cell
+
+
+# ------------------------------------------------------------ audit 2026-11-05 (Phase 3)
+def _spoof_two_names(identity):
+    """The audit's reproduction: one transmitter (Drone3) sends SectorCleared(B2) as FakeA,
+    then as FakeB, to a receiver using the corroborated rule."""
+    m, clock = mission(peer_clear_rule="corroborated", identity=identity), _Clock()
+    bus = RemoteIdBus()
+    b = LocalBelief("Drone1", m)
+    rid = RemoteIdReceiver("Drone1", clock=clock)
+    coord = SwarmCoordinator("Drone1", m, b, rid, PeerMessenger("Drone1", bus), clock,
+                             log=lambda s: None)
+    rx = SwarmReceiver("Drone1", rid, coord.on_message, clock,
+                       authenticated=identity == "authenticated")
+    bus.attach(rx)
+    liar = PeerMessenger("Drone3", bus)
+    for name in ("FakeA", "FakeB"):
+        liar.send(SectorCleared(sender_id=name, sim_time_s=1, sector_id="B2"))
+    return b, rx
+
+
+def test_one_transmitter_cannot_pose_as_two_peers_when_identity_is_authenticated():
+    b, rx = _spoof_two_names("authenticated")
+    assert b.status("B2").value == "unsearched"
+    assert rx.identity_mismatches == 2 and not b.peer_claims
+
+
+def test_unverified_identity_is_the_labelled_spoofing_condition():
+    b, rx = _spoof_two_names("unverified")
+    assert b.status("B2").value == "peer_cleared" and rx.identity_mismatches == 0
+
+
+def test_remote_id_reports_are_bound_to_the_transmitter_too():
+    m, clock = mission(), _Clock()
+    bus = RemoteIdBus()
+    _, rx1 = _member("Drone1", m, bus, clock)
+    bus.attach(type("Tx", (), {"owner_id": "Drone3", "receive": lambda self, p: None})())
+    bus.transmit("Drone3", [{"uas_id": "Drone2", "north_m": 1.0, "east_m": 2.0}], sequence=1)
+    assert rx1.identity_mismatches == 1 and "Drone2" not in rx1.rid.latest()
+    bus.transmit("Drone3", [{"uas_id": "Drone3", "north_m": 1.0, "east_m": 2.0}], sequence=2)
+    assert "Drone3" in rx1.rid.latest()
+
+
+def test_a_peer_processing_error_fails_the_run(tmp_path, monkeypatch):
+    real = SwarmCoordinator.on_message
+    calls = []
+
+    def on_message(self, msg, t):
+        if not calls:
+            calls.append(msg.msg_id)
+            raise RuntimeError("injected")
+        return real(self, msg, t)
+    monkeypatch.setattr(SwarmCoordinator, "on_message", on_message)
+    code, batch, summary = run(tmp_path)
+    m = summary["runs"][0]
+    assert calls and code == 1 and m["messages"]["processing_errors"] == 1
+    assert any("processing failed" in r for r in m["fail_reasons"])
+
+
+def _sep_log(tmp_path, pairs):
+    """A run log with truth samples: pairs = [(t_s, {vid: (north, east, alt)})]."""
+    from evaluation.recorder import EvaluationRecorder
+    m = mission()
+    rec = EvaluationRecorder(path=tmp_path / "r.jsonl", run_config={})
+    for t, poses in pairs:
+        rec.record("truth", sim_time_ns=int(t * 1e9), poses={
+            v: {"sim_time_ns": int(t * 1e9), "north_m": p[0], "east_m": p[1],
+                "altitude_m": p[2]} for v, p in poses.items()})
+    rec.close("searched")
+    drones = [{"vehicle": "Drone1", "start": {"x_m": 0, "y_m": 0}},
+              {"vehicle": "Drone2", "start": {"x_m": 0, "y_m": 3}}]
+    return read_run(tmp_path / "r.jsonl"), m, drones
+
+
+def test_separation_floors_split_pad_zone_and_cruise(tmp_path):
+    from evaluation.swarm_metrics import separation
+    ground = {"Drone1": (0, 0, 0), "Drone2": (0, 3, 0)}
+    climb = {"Drone1": (0, 0, 20), "Drone2": (0, 3, 21)}          # 3.2 m apart on the pads
+    cruise_ok = {"Drone1": (50, 50, 30), "Drone2": (50, 60, 35)}
+    cruise_close = {"Drone1": (50, 50, 30), "Drone2": (52, 50, 31)}  # 2.2 m in cruise
+    log, m, drones = _sep_log(tmp_path, [(0, ground), (0.5, climb), (1, cruise_ok)])
+    s = separation(log, m, drones)
+    assert s["measured"] and s["pad_violations"] == 0 and s["cruise_violations"] == 0
+    assert s["min_pad_m"] == 3.16 and s["min_cruise_m"] == 11.18
+    log, m, drones = _sep_log(tmp_path, [(0, ground), (0.5, cruise_close)])
+    s = separation(log, m, drones)
+    assert s["cruise_violations"] == 1 and s["violations"][0]["zone"] == "cruise"
+    log, m, drones = _sep_log(tmp_path, [(0, ground), (9, cruise_ok)])     # 9 s gap
+    assert not separation(log, m, drones)["measured"]
+
+
+def test_acceptance_fails_on_separation_errors_and_identity_mismatches():
+    from run_sar_swarm import run_failures
+    base = {"victim_found": True, "drones": {}, "geofence_breaches": 0, "impacts": 0,
+            "run_complete": True, "run_log_outcome": "victim_found",
+            "messages": {}, "separation": {"measured": True, "pad_violations": 0,
+                                           "cruise_violations": 0,
+                                           "floors": {"pad_m": 1.5, "cruise_m": 5.0}}}
+    assert run_failures(base, False) == []
+    bad = dict(base, separation=dict(base["separation"], cruise_violations=1, min_cruise_m=0.1))
+    assert any("cruise" in r for r in run_failures(bad, False))
+    bad = dict(base, separation=dict(base["separation"], measured=False, max_gap_s=9))
+    assert any("not measured" in r for r in run_failures(bad, False))
+    spoofed = dict(base, messages={"identity_mismatch": 2})
+    assert any("identity" in r for r in run_failures(spoofed, False))
+    assert run_failures(dict(spoofed, insider_enabled=True), False) == []

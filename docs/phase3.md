@@ -181,6 +181,32 @@ the paired ratios are the useful part until live batches exist.
   Phase 1 rule. Now a failed sweep is recorded (`sweep_failed`), the sector stays partly
   swept, and the drone decides again; only 2 failures in a row end its search.
 
+## Audit fixes (2026-11-05 outside review of main 4b3123d)
+
+- **Identity is authenticated** (`swarm.identity: authenticated`, default). The bus hands each
+  receiver the transmitter's enrolled id with every delivery (a simulated signed link); a peer
+  message whose `sender_id`, or a Remote ID report whose `uas_id`, is not that transmitter is
+  dropped and recorded as `identity_mismatch`. The audit's reproduction (one drone sending
+  `SectorCleared(B2)` as FakeA then FakeB passed `corroborated`) is now a test and fails to
+  clear B2. This is the professor's authenticated insider: a known teammate that can lie about
+  content, not about who it is. `identity: unverified` keeps spoofing as a separately labelled
+  condition. Agents still never see true positions or who is malicious.
+- **Peer-processing errors fail the run.** A delivered message the coordinator fails to act on
+  is counted (`messages.processing_errors`) and fails acceptance. In an honest run (insider off)
+  invalid peer messages and identity mismatches fail it too: an honest team never sends them.
+- **Separation is an acceptance check.** `swarm.separation_cruise_m` (5 m) between airborne
+  drones, `separation_pad_m` (1.5 m) while either is within `pad_zone_m` (10 m) of a launch
+  point (pads are 3 m apart; the team climbs and lands in place). Airborne = 1 m above that
+  drone's own launch altitude. Measured from the 2 Hz truth samples, so a closer approach
+  between samples can be missed; a gap longer than `max_truth_gap_s` (2 s, plus host jitter at
+  the offline speedup) or pose times more than 0.5 s apart make it unmeasured / skipped.
+  20-run offline dev batch after the fixes: 20/20 PASS, mean find 316 s, closest 2.79 m on the
+  pads and 10.0 m in cruise (the layer spacing), 0 identity mismatches.
+- Not done here (Phase 4 work, in the review's order): attack-aware metrics (honest-only
+  time to find, deception tied to attack message ids), the frozen threat-model contract,
+  archived evidence for each batch, and a matched 3-drone static-partition condition. The
+  live baseline is still preliminary: one clean 3-drone pass, one run lost to a sim freeze.
+
 ## Ready for Phase 4
 
 - The insider's slots: `PeerMessenger(hooks=...)` and `RemoteIdBroadcaster(hooks=...)` (sender
@@ -191,6 +217,8 @@ the paired ratios are the useful part until live batches exist.
   liar; a liar that never announces `returning` keeps its cells.
 - A free-text field is rejected by today's schema (`extra="forbid"`); Phase 4 adds it on
   purpose to test persuasion.
+- The `corroborated` rule is a hook, not a validated defense: a liar's track and its clear
+  are not independent evidence. Phase 5 evaluates defenses one at a time.
 - Agents deceived: every belief item and rule verdict carries the message ids behind it
   (`peer_rule` events, `PeerClaim.msg_id`), and the bus records the true sender of each
   delivery, so the metric can be computed from the log.

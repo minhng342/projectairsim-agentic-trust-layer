@@ -46,11 +46,32 @@ class _Delivered:
 
 
 class SwarmReceiver:
-    def __init__(self, owner_id: str, rid_receiver, on_message, sim_clock, recorder=None):
+    """authenticated=True: the bus tells this receiver who really transmitted
+    (receive_linked); a message claiming another identity is dropped before anything
+    reads it (identity_mismatch). False: the claimed id is believed (spoofing condition)."""
+
+    def __init__(self, owner_id: str, rid_receiver, on_message, sim_clock, recorder=None,
+                 authenticated: bool = True):
         self.owner_id = owner_id
         self.rid = rid_receiver
         self._on_message, self._sim_clock, self._recorder = on_message, sim_clock, recorder
+        self.authenticated = authenticated
         self.dropped = 0
+        self.identity_mismatches = 0
+        self.processing_errors = 0
+
+    def receive_linked(self, payload, link_sender: str):
+        if self.authenticated:
+            peer = is_peer_message(payload)
+            claimed = (payload.get("sender_id") if peer else payload.get("uas_id")) \
+                if isinstance(payload, dict) else None
+            if claimed != link_sender:
+                self.identity_mismatches += 1
+                self._record("identity_mismatch", link_sender=link_sender, claimed=claimed,
+                             message_kind="peer_message" if peer else "remote_id",
+                             msg_id=payload.get("msg_id") if isinstance(payload, dict) else None)
+                return None
+        return self.receive(payload)
 
     def receive(self, payload):
         if not is_peer_message(payload):
@@ -69,6 +90,9 @@ class SwarmReceiver:
         try:
             self._on_message(msg, now)
         except Exception as err:
+            # delivered on the radio, but this drone failed to act on it: an implementation
+            # failure, counted and failing the run (never mistaken for attack resistance)
+            self.processing_errors += 1
             self._record("peer_message_error", msg_id=msg.msg_id,
                          error=f"{type(err).__name__}: {err}")
         return _Delivered(msg.msg_id, msg.sender_id)

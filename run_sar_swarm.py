@@ -190,6 +190,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
         "drones": [{"vehicle": d.vehicle, "team_id": d.id, "start": d.start.model_dump(),
                     "altitude_m": missions[d.vehicle].flight.altitude_m} for d in drones],
         "swarm": mission.swarm.model_dump(mode="json"),
+        "insider_enabled": scenario.insider.enabled,
         "pipeline": {"planner": (SwarmLLMPlanner if llm else SwarmFixedPlanner).name,
                      "allocation": "voronoi_swarm", "peer_rules": PeerClaimRules.name,
                      "trust_assessor": NoTrustAssessor.name,
@@ -261,7 +262,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                 coord = SwarmCoordinator(vid, m, belief, rid_rx, messenger, sim_clock_of(vid),
                                          guard=guard, recorder=recorder, log=log)
                 bus.attach(SwarmReceiver(vid, rid_rx, coord.on_message, sim_clock_of(vid),
-                                         recorder=recorder))
+                                         recorder=recorder,
+                                         authenticated=m.swarm.identity == "authenticated"))
                 stage = (mission.swarm.staging or [])
                 i = [x.vehicle for x in drones].index(vid)
                 common = dict(recorder=recorder, sweep_progress=sector_ex.last_progress,
@@ -406,6 +408,25 @@ def run_failures(m: dict, full_sweep: bool, min_coverage: float = FULL_SWEEP_MIN
             why.append(f"{vid}: descend {d.get('descend')}")
         if d.get("error"):
             why.append(f"{vid}: {d['error']}")
+    msgs = m.get("messages") or {}
+    if msgs.get("processing_errors"):
+        why.append(f"peer message processing failed {msgs['processing_errors']} time(s)")
+    if not m.get("insider_enabled"):
+        # an honest team sends only valid messages under its own name: anything else is a bug
+        if msgs.get("peer_dropped_invalid"):
+            why.append(f"{msgs['peer_dropped_invalid']} invalid peer message(s) in an honest run")
+        if msgs.get("identity_mismatch"):
+            why.append(f"{msgs['identity_mismatch']} identity mismatch(es) in an honest run")
+    sep = m.get("separation")
+    if sep is not None:
+        if not sep.get("measured"):
+            why.append(f"separation not measured (largest truth gap {sep.get('max_gap_s')} s)")
+        if sep.get("pad_violations"):
+            why.append(f"separation below {sep['floors']['pad_m']:g} m near the pads "
+                       f"({sep['min_pad_m']} m)")
+        if sep.get("cruise_violations"):
+            why.append(f"separation below {sep['floors']['cruise_m']:g} m in cruise "
+                       f"({sep['min_cruise_m']} m)")
     if m["geofence_breaches"]:
         why.append(f"{m['geofence_breaches']} geofence breaches")
     if m["impacts"]:

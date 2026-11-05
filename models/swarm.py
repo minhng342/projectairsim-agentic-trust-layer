@@ -10,9 +10,13 @@ not validate (unknown type, missing or extra field, malformed sector id) is drop
 receiver before anything else sees it, and the drop is recorded. Phase 4 shows that
 validation alone does not stop a well-formed lie.
 
-sender_id is a CLAIM, like Remote ID's uas_id: the receiver never learns who really
-transmitted (the bus records that on the evaluation side only). sim_time_s is the sender's
-own clock, also a claim; receivers stamp their own receipt time.
+sender_id is bound to the transmitter (Swarm.identity, default authenticated): the bus
+passes each receiver the link's authenticated sender (a simulated signed link) and a
+message claiming another id is dropped as identity_mismatch, so a liar can lie about
+content but not about who it is (the authenticated insider). With identity unverified the
+claimed id is believed, a separately labelled spoofing condition. The receiver never learns
+a sender's true position or whether it is honest. sim_time_s is the sender's own clock, a
+claim; receivers stamp their own receipt time.
 
 Messages travel on the same bus as the 1 Hz Remote ID position broadcast
 (channel/remote_id.py), so they share its radio-range filter, sender hooks (the insider's
