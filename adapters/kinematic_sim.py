@@ -19,14 +19,20 @@ times faster than in a live run, so each poll still covers about the same sim ti
 runner's --offline mode does that.
 
 Velocity commands last `duration` SIM seconds, then the vehicle brakes to a hover, like
-Simple Flight's move_by_velocity. No collisions, no wind, no buildings.
+Simple Flight's move_by_velocity. No wind. No buildings unless `obstacles` are given:
+axis-aligned boxes {name, n_min, n_max, e_min, e_max, top_m} for testing obstacle handling.
+A vehicle that would move into a box below its top stays where it was horizontally
+(horizontal velocity zeroed, vertical motion still allowed, so it can climb clear) and a
+wall contact is added to collision_log (not resting, not a supporting surface: an impact),
+at most one per second. Over a box, its top is the floor: a vehicle coming down slides
+along the roof at roof height (no impact), and lands on it when told to land.
 """
 import asyncio
 import math
 import time
 from datetime import datetime, timezone
 
-from models.telemetry import (GroundState, LandedState, Quaternion, TelemetrySnapshot,
+from models.telemetry import (CollisionState, GroundState, LandedState, Quaternion, TelemetrySnapshot,
                               ValidationStatus, Vector3)
 
 
@@ -142,7 +148,7 @@ class KinematicSim:
     def __init__(self, starts: dict[str, tuple[float, float]], ground_alt_m: float = 0.0,
                  speedup: float = 20.0, max_step_s: float = 0.02, max_accel_mps2: float = 4.0,
                  max_vertical_mps: float = 3.0, land_speed_mps: float = 1.0,
-                 takeoff_height_m: float = 3.0, clock=time.monotonic):
+                 takeoff_height_m: float = 3.0, clock=time.monotonic, obstacles=()):
         if speedup <= 0:
             raise ValueError("speedup must be > 0")
         self.vehicle_ids = list(starts)
@@ -156,6 +162,9 @@ class KinematicSim:
         self.now_s = 0.0                       # sim seconds integrated so far
         self.t0_ns = 10_000_000_000            # sim clock starts at 10 s, like the real one
         self.task_poll_s = 0.002
+        self.obstacles = [dict(o) for o in obstacles]
+        self._collisions: dict[str, list[CollisionState]] = {vid: [] for vid in self._v}
+        self._contact_since: dict[str, float] = {}
 
     # ------------------------------------------------------------ adapter API
     def __enter__(self):
@@ -195,7 +204,27 @@ class KinematicSim:
         return {vid: (self.sim_time_ns, v.n, v.e, -v.alt) for vid, v in self._v.items()}
 
     def collision_log(self, vid) -> list:
-        return []
+        self.integrate()
+        return list(self._collisions.get(vid, []))
+
+    def _blocked_by(self, n, e, alt):
+        for o in self.obstacles:
+            if (o["n_min"] <= n <= o["n_max"] and o["e_min"] <= e <= o["e_max"]
+                    and alt < o["top_m"]):
+                return o
+        return None
+
+    def _contact(self, v: _Vehicle, o: dict, speed: float) -> None:
+        last = self._contact_since.get(v.vid)
+        if last is not None and self.now_s - last < 1.0:
+            return
+        self._contact_since[v.vid] = self.now_s
+        log = self._collisions[v.vid]
+        log.append(CollisionState(
+            has_collided=True, recent_collision=True, object_name=o.get("name", "obstacle"),
+            sim_time_ns=self.sim_time_ns, impact_speed_mps=round(speed, 2),
+            is_resting_contact=False, normal_z=0.0, is_supporting_surface=False,
+            count=len(log) + 1, impact_count=len(log) + 1))
 
     @property
     def sim_time_ns(self) -> int:
@@ -238,10 +267,29 @@ class KinematicSim:
         v.vn += dv[0]
         v.ve += dv[1]
         v.vu = max(-self.max_vertical, min(self.max_vertical, v.vu + dv[2]))
+        n0, e0, a0 = v.n, v.e, v.alt
         v.n += v.vn * dt
         v.e += v.ve * dt
         v.alt += v.vu * dt
-        if v.alt <= v.ground and v.vu <= 0:
-            v.alt, v.vn, v.ve, v.vu = v.ground, 0.0, 0.0, 0.0
+        floor = v.ground
+        if self.obstacles:
+            o = self._blocked_by(v.n, v.e, v.alt)
+            if o is not None and a0 >= o["top_m"] - 1e-6 and self._blocked_by(n0, e0, a0) is None \
+                    and o["n_min"] <= n0 <= o["n_max"] and o["e_min"] <= e0 <= o["e_max"]:
+                floor = o["top_m"]                  # came down onto its roof: a floor, no hit
+            elif o is not None:                     # flew into a side: a wall hit
+                speed = math.hypot(v.vn, v.ve)
+                v.n, v.e, v.vn, v.ve = n0, e0, 0.0, 0.0
+                if self._blocked_by(v.n, v.e, v.alt) is not None:     # and down onto a roof
+                    floor = max(floor, a0)
+                self._contact(v, o, speed)
+            for b in self.obstacles:                # flying over a roof: it is the floor
+                if (b["n_min"] <= v.n <= b["n_max"] and b["e_min"] <= v.e <= b["e_max"]
+                        and b["top_m"] <= max(a0, v.alt) + 1e-6):
+                    floor = max(floor, b["top_m"])
+        if floor > v.ground and v.alt <= floor and v.vu <= 0 and v.mode != "land":
+            v.alt, v.vu = floor, 0.0                # skims the roof (supporting surface)
+        elif v.alt <= floor and v.vu <= 0:
+            v.alt, v.vn, v.ve, v.vu = floor, 0.0, 0.0, 0.0
             if v.mode in ("land", "hover", "velocity", "idle"):
                 v.grounded, v.mode = True, "idle"

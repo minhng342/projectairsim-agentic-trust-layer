@@ -26,7 +26,10 @@ own memory and the frozen mission. Trust checks on peers' claims come in Phase 5
                          trusted-controller privilege, not an invariant: going home is the
                          safe action after a failure, so a planner that skips the validator
                          can end its search early, never fly somewhere it shouldn't)
-    wrong_altitude       change_altitude to anything but the mission altitude
+    blocked_by_obstacle  this drone hit something or was blocked flying to that sector
+                         earlier (planner obstacle recovery); not offered again
+    wrong_altitude       change_altitude to anything but the mission altitude (or, during
+                         an obstacle recovery, the recovery climb the planner set)
     (move_to_position)   only to this drone's staging point at its layer (Phase 3), else
                          not_allowed
     not_allowed          any other action type
@@ -66,6 +69,8 @@ class SarGuard:
         self.start_sim_s: float | None = None     # sim time the search started
         self.peer_victim_accepted = False         # Phase 3: a peer's VictimDetected, accepted
         self.staging_xy: tuple[float, float] | None = None   # Phase 3: the one allowed move
+        self.blocked: set[str] = set()            # sectors this drone could not get through
+        self.recovery_alt_m: float | None = None  # the climb allowed during a recovery
 
     def search_over(self) -> bool:
         """The victim was found: by this drone's sensor, or (Phase 3) by a peer whose report
@@ -95,7 +100,8 @@ class SarGuard:
         """Assigned sectors not yet swept."""
         ids = self.mission.grid.ids()
         cells = self.cells if self.cells is not None else set(ids)
-        return [s for s in ids if s in cells and not self.belief.is_done(s)]
+        return [s for s in ids if s in cells and not self.belief.is_done(s)
+                and s not in self.blocked]
 
     def feasible(self, from_xy, sim_s) -> list[str]:
         """Open sectors that still fit in the remaining time."""
@@ -121,6 +127,9 @@ class SarGuard:
                 by = "your memory" if b.verified_by_self else f"cleared by {b.source}"
                 return Verdict(False, "already_swept", f"{sid} is already swept ({by}); "
                                f"choose an unsearched sector")
+            if sid in self.blocked:
+                return Verdict(False, "blocked_by_obstacle", f"you were blocked by an obstacle "
+                               f"flying {sid} earlier; choose another sector")
             need, left = self.sector_time_s(sid, (x_m, y_m)), self.remaining_s(sim_s)
             if need > left:
                 return Verdict(False, "not_enough_time", f"{sid} needs about {need:.0f} s "
@@ -128,6 +137,12 @@ class SarGuard:
                                f"left")
             return OK
         if t == ActionType.RETURN_HOME:
+            if action.altitude_m is not None and not (
+                    self.recovery_alt_m is not None
+                    and abs(action.altitude_m - self.recovery_alt_m) <= self.altitude_tolerance_m):
+                return Verdict(False, "wrong_altitude", f"return home flies at "
+                               f"{self.mission.flight.altitude_m:g} m (a higher return only as "
+                               f"an obstacle recovery)")
             if not planner_choice or self.search_over():
                 return OK
             fits = self.feasible((x_m, y_m), sim_s)
@@ -138,6 +153,9 @@ class SarGuard:
             return OK
         if t == ActionType.CHANGE_ALTITUDE:
             alt = self.mission.flight.altitude_m
+            if (self.recovery_alt_m is not None and action.altitude_m is not None
+                    and abs(action.altitude_m - self.recovery_alt_m) <= self.altitude_tolerance_m):
+                return OK
             if action.altitude_m is None or abs(action.altitude_m - alt) > self.altitude_tolerance_m:
                 return Verdict(False, "wrong_altitude", f"the search flies at {alt:g} m only")
             return OK

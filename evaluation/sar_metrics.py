@@ -137,6 +137,10 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
                 swept.discard(s["sector_id"])
     cols = [e.get("collision") or {} for e in log.of_kind("collision")]
     impacts = [c for c in cols if _is_impact(c)]
+    obstacle = {"obstacle_incidents": len(log.of_kind("obstacle")),
+                "obstacles_recovered": len(log.of_kind("obstacle_recovered")),
+                "blocked_sectors": (end.get("blocked") or []) if end else [],
+                "lost": bool(log.of_kind("drone_lost"))}
     gaps = [b[0] - a[0] for a, b in zip(track, track[1:])]
     decisions = [e for e in log.of_kind("llm_decision") if not e.get("skipped")]
     lat = [e["latency_s"] for e in decisions if e.get("latency_s") is not None]
@@ -160,7 +164,7 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
         "truth_max_gap_s": round(max(gaps), 2) if gaps else None,
         "distance_flown_m": round(dist, 1),
         "geofence_breaches": breaches,
-        "collisions": len(cols), "impacts": len(impacts),
+        "collisions": len(cols), "impacts": len(impacts), **obstacle,
         "impact_objects": sorted({str(c.get("object_name")) for c in impacts})[:10],
         "llm_decisions": len(decisions),
         "fallbacks": sum(1 for e in decisions if e.get("fallback")),

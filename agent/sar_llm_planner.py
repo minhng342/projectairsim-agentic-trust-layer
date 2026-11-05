@@ -143,6 +143,8 @@ def situation(planner: "LLMSectorPlanner", state, remaining: list[str]) -> dict:
         "last_sector": planner.last_sector,
         "nearest_unsearched": nearest,
     }
+    if getattr(planner, "blocked", None):
+        out["blocked_sectors"] = sorted(planner.blocked)     # obstacle recovery: not offered
     if hasattr(planner, "swarm_situation"):
         out["team"] = planner.swarm_situation()
     prior = planner.prior

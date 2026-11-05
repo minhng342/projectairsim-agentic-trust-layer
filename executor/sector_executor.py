@@ -10,7 +10,8 @@ action port's executor, so every action still goes proposal -> gate -> executor 
                      as one polyline by the velocity PathFollower at mission altitude and
                      speed; the path starts at the drone's position, so the transit from
                      the previous sector is part of it
-    return_home      straight back over the launch point at mission altitude
+    return_home      straight back over the launch point at mission altitude (or at
+                     action.altitude_m if higher: the planner's obstacle recovery)
     move_to_position straight to (north, east) at mission altitude (Phase 3 staging);
                      result position_reached
     change_altitude  delegated to the flight executor (climb in place to mission altitude,
@@ -25,6 +26,8 @@ Result codes (CommandResult.reason_code, mapped to agent feedback by the port):
     sweep_stopped     interrupted (victim detected, time limit); progress in the result reason
     home_reached      over the launch point
     unknown_sector    not a sector of this mission's grid; nothing sent
+    path_blocked      the follower made no progress for stuck_after_s (an obstacle); it
+                      hovered
     path_failed       the follower failed (telemetry, timeout, grounded); it hovered
     unsupported_action, not_applicable
 Policy (which sector may be swept now, geofence) is not checked here: in Phase 2 that is
@@ -94,6 +97,7 @@ class SectorExecutor:
         if snap is None:
             return result(CommandStatus.REFUSED, "path_failed", "no telemetry")
         here = (snap.position_ned_m.x, snap.position_ned_m.y)
+        fly_alt = self.mission.flight.altitude_m
 
         if t == ActionType.SWEEP_SECTOR:
             sid = action.sector_id
@@ -118,6 +122,8 @@ class SectorExecutor:
             self._emit("move_started", target=target, request_id=action.request_id)
         else:
             sid, path = None, None
+            if action.altitude_m is not None and action.altitude_m > fly_alt:
+                fly_alt = float(action.altitude_m)
             waypoints = [here, self.home_xy]
             self.current_sector = None
             self._emit("return_home_started", home=self.home_xy, request_id=action.request_id)
@@ -127,7 +133,7 @@ class SectorExecutor:
         kw = {"sleep": self._sleep} if self._sleep is not None else {}
         self._interrupt_reason = None
         self.follower = PathFollower(self.adapter, self.vehicle_id, waypoints,
-                                     self.mission.flight.altitude_m, self.mission.flight.speed_m_s,
+                                     fly_alt, self.mission.flight.speed_m_s,
                                      config=self.follower_config, on_event=self._on_event,
                                      log=self._log, **kw)
         r = await self.follower.run(timeout_s=timeout)
@@ -148,9 +154,12 @@ class SectorExecutor:
                        progress=round(progress, 4))
             return result(CommandStatus.SUCCEEDED, "sweep_stopped",
                           f"stopped: {self._interrupt_reason} (progress {progress:.2f})", True)
+        blocked = self.follower.blocked
         self._emit("sector_failed" if sid else "return_home_failed", sector_id=sid,
-                   request_id=action.request_id, reason=r.reason, progress=round(progress, 4))
-        return result(CommandStatus.FAILED, "path_failed", f"{r.mode.value}: {r.reason}", True)
+                   request_id=action.request_id, reason=r.reason, progress=round(progress, 4),
+                   blocked=blocked)
+        return result(CommandStatus.FAILED, "path_blocked" if blocked else "path_failed",
+                      f"{r.mode.value}: {r.reason}", True)
 
     def last_progress(self) -> float:
         f = self.follower

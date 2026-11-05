@@ -24,6 +24,9 @@ Guidance
              vertical speed clamped.
     DONE     within tolerance of the final point, slow, for `done_dwell_s` of SIM time;
              then hover.
+    BLOCKED  (a FAILED result, reason starting "blocked:") CRUISE progress stalled for
+             `stuck_after_s` of SIM time away from the end of the path: hover, give up the
+             path so the planner can recover instead of grinding into a wall.
 
 Maneuver commands (hold, resume, set_altitude, set_speed, stop) are plain method calls,
 safe to make from another task while run() is flying: they change setpoints, nothing is
@@ -75,6 +78,12 @@ class FollowerConfig:
     done_speed_mps: float = 0.3
     done_dwell_s: float = 1.0
     hover_timeout_s: float = 5.0
+    # Blocked: in CRUISE, progress along the path has not grown by stuck_min_progress_m for
+    # stuck_after_s of SIM time (pressed against a wall, wedged on a roof edge). Without it
+    # the follower ground on against the obstacle until the whole-path timeout (3x the
+    # expected time + 60 s: many minutes in CityEnviron). None turns it off.
+    stuck_after_s: float | None = 10.0
+    stuck_min_progress_m: float = 1.0
 
 
 @dataclass
@@ -160,6 +169,8 @@ class PathFollower:
         self._yaw_rad = 0.0
         self._passed: list[int] = []
         self._max_xtrack = 0.0
+        self._stuck_ref: tuple[float, int] | None = None   # (progress, sim ns) last advance
+        self.blocked = False
 
     # ------------------------------------------------------------ maneuvers
     def hold(self) -> None:
@@ -229,6 +240,17 @@ class PathFollower:
                     self._set_mode(FollowMode.HOLD, "hold",
                                    at=(snap.position_ned_m.x, snap.position_ned_m.y))
                 vn, ve, vup, arrived = self._guidance(snap)
+                stuck = self._stuck_for(snap)
+                if stuck is not None:
+                    self.blocked = True
+                    await self._hover(drone)
+                    self._emit("follower_blocked", progress_m=round(self.progress_m, 2),
+                               stalled_s=round(stuck, 1), at=(snap.position_ned_m.x,
+                                                              snap.position_ned_m.y),
+                               sim_time_ns=snap.sim_time_ns)
+                    return self._result(FollowMode.FAILED,
+                                        f"blocked: no progress along the path for "
+                                        f"{stuck:.0f} s", started)
                 if done.update(snap.sim_time_ns, arrived):
                     self.progress_m = self.path.length      # arrived within tolerance: finished
                     self._mark_passed(snap)
@@ -302,6 +324,22 @@ class PathFollower:
         v = min(self.speed_mps, max(cfg.min_approach_speed_mps, cfg.arrive_gain * d_end))
         d = math.hypot(dn, de)
         return v * dn / d, v * de / d, vup, arrived
+
+    def _stuck_for(self, snap) -> float | None:
+        """Sim seconds CRUISE progress has stalled, once past stuck_after_s; else None.
+        Not in HOLD (progress is frozen on purpose) and not on the last stretch (the
+        arrival slows down by design)."""
+        cfg = self.config
+        if (cfg.stuck_after_s is None or self.mode != FollowMode.CRUISE
+                or self.remaining_m <= cfg.lookahead_m or snap.sim_time_ns is None):
+            self._stuck_ref = None
+            return None
+        ref = self._stuck_ref
+        if ref is None or self.progress_m >= ref[0] + cfg.stuck_min_progress_m:
+            self._stuck_ref = (self.progress_m, snap.sim_time_ns)
+            return None
+        stalled = (snap.sim_time_ns - ref[1]) / 1e9
+        return stalled if stalled >= cfg.stuck_after_s else None
 
     def _mark_passed(self, snap) -> None:
         for i, c in enumerate(self.path.cum):

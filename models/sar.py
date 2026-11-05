@@ -158,6 +158,13 @@ class Swarm(_Strict):
                          2 Hz truth samples (a close approach between samples can be missed);
     max_truth_gap_s      a gap longer than this in the samples makes separation unmeasured,
                          which fails the run too
+    allocation        dynamic (default, the Phase 3 baseline): Voronoi over the open sectors,
+                      live peers and claims, recomputed at every decision, with work
+                      stealing, claims and clears on the radio. static (comparison
+                      condition): the grid is split once before takeoff (Voronoi over the
+                      staging points, else the pads) and each drone sweeps only its own
+                      part; no claims, no clears, no re-split when a drone drops out. Finds
+                      are still reported, so the team stops on the first find in both
     staging           optional: drone i first flies (at its layer) to staging[i], then starts
                       searching. Lets the team launch from one known-clear pad area while the
                       first Voronoi split still starts from spread-out generators (drones on
@@ -171,6 +178,7 @@ class Swarm(_Strict):
     corroboration_n: int = Field(default=2, ge=2)
     peer_victim_rule: Literal["accept", "ignore"] = "accept"
     victim_repeat_s: float = Field(default=2.0, gt=0)
+    allocation: Literal["dynamic", "static"] = "dynamic"
     staging: list[Point] | None = None
     identity: Literal["authenticated", "unverified"] = "authenticated"
     separation_cruise_m: float = Field(default=5.0, ge=0)

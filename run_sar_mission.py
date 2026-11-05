@@ -63,7 +63,7 @@ from channel.action_port import ActionPort
 from channel.observation_feed import ObservationFeed
 from evaluation.plot_tracks import plot_run
 from evaluation.recorder import REPO_ROOT, EvaluationRecorder, read_run
-from evaluation.sar_metrics import sar_metrics
+from evaluation.sar_metrics import _is_impact, sar_metrics
 from executor.path_follower import FollowerConfig
 from executor.projectairsim_executor import ExecutorConfig, ProjectAirSimExecutor
 from executor.sector_executor import SectorExecutor
@@ -123,7 +123,27 @@ async def _takeoff(adapter, vid, recorder, timeout_s):
     raise RuntimeError(f"{vid} not airborne after takeoff")
 
 
-async def _sample_truth(adapter, vid, mission, recorder, stop, period_s, on_breach):
+def parse_obstacle(text: str) -> dict:
+    """--obstacle NAME:N_MIN,N_MAX,E_MIN,E_MAX,TOP_M (offline kinematic sim only): an
+    axis-aligned box the drone cannot fly through below TOP_M, for testing obstacle
+    recovery."""
+    try:
+        name, nums = text.split(":", 1)
+        n0, n1, e0, e1, top = (float(x) for x in nums.split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--obstacle wants NAME:N_MIN,N_MAX,E_MIN,E_MAX,TOP_M, "
+                                         f"got {text!r}")
+    if n0 >= n1 or e0 >= e1:
+        raise argparse.ArgumentTypeError(f"--obstacle {text!r}: min must be below max")
+    return {"name": name, "n_min": n0, "n_max": n1, "e_min": e0, "e_max": e1, "top_m": top}
+
+
+def collision_dict(c) -> dict:
+    return c.model_dump(mode="json") if hasattr(c, "model_dump") else dict(c)
+
+
+async def _sample_truth(adapter, vid, mission, recorder, stop, period_s, on_breach,
+                        on_impact=None):
     breached = False
     seen = None                                   # last collision sim time recorded
     while not stop.is_set():
@@ -133,6 +153,9 @@ async def _sample_truth(adapter, vid, mission, recorder, stop, period_s, on_brea
                     recorder.record("collision", vehicle_id=vid, collision=c,
                                     sim_time_ns=c.sim_time_ns)
                     seen = c.sim_time_ns
+                    info = collision_dict(c)
+                    if on_impact is not None and _is_impact(info):
+                        on_impact(info)
         except Exception:
             pass
         poses = adapter.latest_poses()
@@ -192,6 +215,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
         "start": drone.start.model_dump(), "victim": victim.model_dump(),
         "victim_sector": victim_sector, "full_sweep_override": args.full_sweep,
         "scene": None if args.offline else args.scene,
+        "obstacles": (getattr(args, "obstacle", None) or []) if args.offline else None,
         "pipeline": {"planner": (LLMSectorPlanner if llm else FixedSectorPlanner).name,
                      "allocation": "voronoi", "trust_assessor": NoTrustAssessor.name,
                      "action_gate": (SarInvariantGate.name if gate_mode(args) == "invariants"
@@ -209,7 +233,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
 
     if args.offline:
         from adapters.kinematic_sim import KinematicSim
-        adapter_cm = KinematicSim({vid: (drone.start.x_m, drone.start.y_m)}, speedup=timing.k)
+        adapter_cm = KinematicSim({vid: (drone.start.x_m, drone.start.y_m)}, speedup=timing.k,
+                                  obstacles=getattr(args, "obstacle", None) or ())
     else:
         from adapters.projectairsim_adapter import ProjectAirSimAdapter
         adapter_cm = ProjectAirSimAdapter(vehicle_ids=[vid], scene=args.scene)
@@ -270,6 +295,9 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
                 log(f"  victim detected by {vid} in {d.sector_id} at sim {d.sim_time_s:.1f} s")
                 if mission.termination.stop_on_detection:
                     sector_ex.interrupt("victim detected")
+            def impact(info):
+                if planner.on_impact(info):
+                    sector_ex.interrupt("impact")
             sensor = VictimSensor(adapter, vid, (victim.x_m, victim.y_m), mission.sensor.footprint_m,
                                   mission.flight.altitude_m, grid=mission.grid,
                                   on_detection=detected, recorder=recorder)
@@ -279,7 +307,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir, timing, log, llm
                   asyncio.create_task(sensor.run(timing.hz(SENSOR_HZ), stop)),
                   asyncio.create_task(_sample_truth(adapter, vid, mission, recorder, stop,
                                                     1.0 / timing.hz(TRUTH_HZ),
-                                                    lambda: sector_ex.interrupt("geofence"))),
+                                                    lambda: sector_ex.interrupt("geofence"),
+                                                    impact)),
                   asyncio.create_task(_watch_time(adapter, vid, mission, planner, sector_ex,
                                                   stop, timing.poll(1.0)))]
             try:
@@ -336,7 +365,7 @@ def run_failures(m: dict, full_sweep: bool,
     why = []
     if not m["victim_found"]:
         why.append("victim not found")
-    if m.get("ended_by") in ("failed", "aborted", None):
+    if m.get("ended_by") in ("failed", "aborted", "lost", None):
         why.append(f"search ended by {m.get('ended_by')}")
     if m.get("return_home") != "home_reached":
         why.append(f"return home: {m.get('return_home')}")
@@ -434,6 +463,12 @@ async def main(args) -> int:
                "time_to_find_s": {"mean": round(sum(found) / len(found), 2) if found else None,
                                   "min": min(found, default=None), "max": max(found, default=None)}}
     (out_dir / "batch_summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+    from evaluation.evidence import write_manifest
+    mf = write_manifest(out_dir, argv=sys.argv, args=vars(args),
+                        files={"mission": args.mission, "scenario": args.scenario,
+                               **({} if args.offline else {"scene": f"sim_config/{args.scene}"})},
+                        model=llm["config"] if llm else None, results=results, passed=passed,
+                        runs_planned=runs)
     print("\n================ BATCH ================")
     print(f"{'run':>3} {'outcome':<13} {'found':<5} {'victim':<6} {'t_find_s':>9} {'sectors':>7} "
           f"{'coverage':>8} {'landed':<6} pass")
@@ -442,6 +477,8 @@ async def main(args) -> int:
               f"{str(m['victim_sector']):<6} {str(m['time_to_find_s']):>9} "
               f"{m['sectors_swept']:>3}/{m['sector_count']:<3} {m['area_coverage']:>8.1%} "
               f"{str(m['landed']):<6} {'PASS' if p else 'FAIL: ' + '; '.join(m['fail_reasons'])}")
+    print(f"evidence: {out_dir / 'manifest.json'} (commit {mf['git']['commit_short']}"
+          f"{' DIRTY' if mf['git']['dirty'] else ''})")
     print(f"\nlongest streak of passing runs: {best} of {runs}"
           f"\nRESULT: {'PASS' if all(passed) else 'FAIL'}   ({out_dir / 'batch_summary.json'})")
     return 0 if all(passed) else 1
@@ -505,6 +542,9 @@ def parse_args(argv=None):
     ap.add_argument("--full-sweep", action="store_true",
                     help="keep sweeping after the detection (checks 'sweeps every sector')")
     ap.add_argument("--scene", default="scene_sar_one_drone.jsonc", help="sim_config scene (live)")
+    ap.add_argument("--obstacle", type=parse_obstacle, action="append", default=None,
+                    help="offline only: NAME:N_MIN,N_MAX,E_MIN,E_MAX,TOP_M box the drone "
+                         "cannot fly through (repeatable), to exercise obstacle recovery")
     ap.add_argument("--out", default=str(REPO_ROOT / "runs" / "sar"))
     return ap.parse_args(argv)
 

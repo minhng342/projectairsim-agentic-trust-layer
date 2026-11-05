@@ -211,9 +211,77 @@ the paired ratios are the useful part until live batches exist.
   (`separation.pairs`) and `unmeasured_pairs`. 2 Hz sampling with this rule is still a
   sampled approximation, not proof of continuous-flight safety.
 - Not done here (Phase 4 work, in the review's order): attack-aware metrics (honest-only
-  time to find, deception tied to attack message ids), the frozen threat-model contract,
-  archived evidence for each batch, and a matched 3-drone static-partition condition. The
+  time to find, deception tied to attack message ids) and the frozen threat-model contract.
+  Archived evidence and the static-partition condition were added afterwards (below). The
   live baseline is still preliminary: one clean 3-drone pass, one run lost to a sim freeze.
+
+## Completing Phase 3 (2026-11-05)
+
+### Obstacles: a wall hit no longer stalls the run
+
+Before: nothing reacted to a collision in flight. A drone pressed against a building kept
+commanding its sweep until the path timeout (3x the expected time + 60 s), then its search
+ended. Now, in every runner (Phase 1, 2 and 3 alike):
+
+- **Stuck detector** (`executor/path_follower.py`): in cruise, if progress along the path grows
+  by less than `stuck_min_progress_m` (1 m) for `stuck_after_s` (10 s) of sim time, away from
+  the end of the path, the follower hovers and returns `blocked`; the sector executor reports
+  `path_blocked`. This catches being wedged without any collision report.
+- **Impact hook**: the runners' truth sampler already logged collisions; an impact (fast, or a
+  non-supporting surface: `_is_impact`) now calls `planner.on_impact()` and interrupts the
+  sweep at once.
+- **Recovery** (`agent/sector_planner.py`, so every planner has it): the drone is hovering; it
+  climbs `recovery_climb_m` (10 m) above where it is (the guard allows exactly that climb), marks
+  the sector it was flying as **blocked** for itself (never offered or allowed again:
+  `blocked_by_obstacle`), and carries on. If the flight home is blocked or hits something, it
+  climbs 10 m and flies home at that height, once.
+- **Drop-out**: after `max_recoveries` (2) recoveries, the third incident (or a failed recovery
+  climb) ends the drone's search as `lost`: no return flight across the city, the runner lands
+  it where it is. In the swarm it broadcasts `mission_state: lost`, so its teammates stop
+  counting it and share out its cells. A swarm drone with only blocked sectors left steals
+  other work first, then heads home (`blocked_sectors`), and its blocked sectors pass to the
+  others.
+- **Report**: per drone, `impacts`, `impact_objects`, `obstacle_incidents`,
+  `obstacles_recovered`, `blocked_sectors`, `lost`; the batch adds `impacts_total` and
+  `drones_lost_total`; the console prints a line per drone that hit something. An impact
+  **still fails the run's acceptance**, as does a lost drone: recovery keeps the mission and
+  the program going, it does not make a collision acceptable.
+- **Testing offline**: `--obstacle NAME:N_MIN,N_MAX,E_MIN,E_MAX,TOP_M` (repeatable, offline
+  only) puts a box in the kinematic sim: flying into a side stops the drone and logs a wall
+  impact; over it, its roof is the floor. For example
+  `python run_sar_swarm.py --offline --runs 1 --obstacle tower:60,80,60,80,165`.
+- Limits: blocked sectors are not shared on the radio (no new message type in the honest
+  phase, since Phase 4 could lie with it), so a wall every drone meets costs each of them its
+  own incidents; a drone that has climbed descends back to its layer on the next sweep; the
+  live numbers (10 s, 10 m, 2 recoveries) are first guesses to check on zeus-g.
+
+### Static split: the matched comparison condition
+
+`--allocation static` (`swarm.allocation: static`): the grid is split once before takeoff
+(Voronoi over the staging points, recorded as `static_split`) and each drone sweeps only its
+own part. No claims, no clears, no re-split when a drone drops out, no work stealing. Finds
+are still reported, so the team stops on the first find in both conditions. It separates the
+gain from three airframes with a sensible split from the gain from live cooperation.
+
+### Paired speedup with a confidence interval
+
+Run i of every dev batch has the same victim (seed 42 + i), so the comparison is per victim.
+`--reference <one-drone batch>` adds `paired_vs_reference` to `batch_summary.json`: pairs
+matched on victim position, speedup = reference time / batch time, mean and median with 95%
+percentile-bootstrap intervals (10,000 resamples over the pairs, fixed seed), time saved,
+how many pairs were faster, and the per-run table. `python -m evaluation.compare REF BATCH ...`
+prints the whole comparison table (`evaluation/compare.py`).
+
+### Evidence
+
+Every batch (both runners) ends by writing `manifest.json`: git commit and branch, whether
+the tree had uncommitted changes, the command and arguments, sha256 of the mission, scenario
+and (live) scene files plus one `config_sha256`, the model and its inference settings
+(thinking, extra body), each run's seed and victim sector, planned / attempted / valid /
+stalled / passed counts, Python, platform, host, package versions, and a sha256 per file of
+the batch. `python -m evaluation.archive BATCH ... [--reference REF]` checks each batch
+against its manifest (refuses a changed one), writes `EVIDENCE.md` (one line per batch plus
+the paired table) and packs everything into `runs/evidence/<time>.tar.gz`.
 
 ## Ready for Phase 4
 

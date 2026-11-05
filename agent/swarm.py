@@ -148,6 +148,9 @@ class SwarmCoordinator:
         self._victim_msg: VictimDetected | None = None
         self._last_cells: list[str] | None = None
         self.state = "searching"            # broadcast as Remote ID mission_state
+        # swarm.allocation == "static": this drone's fixed part of the grid, set by the
+        # runner before takeoff (the pre-mission split); no claims or clears are sent
+        self.static_cells: list[str] | None = None
 
     # ------------------------------------------------------------ incoming
     def on_message(self, msg, received_sim_s: float | None) -> None:
@@ -236,11 +239,25 @@ class SwarmCoordinator:
         return out
 
     # ------------------------------------------------------------ allocation
-    def my_sectors(self, my_xy, now) -> list[str]:
-        """This drone's open sectors in coverage order, from a fresh partition."""
+    def my_sectors(self, my_xy, now, exclude=()) -> list[str]:
+        """This drone's open sectors in coverage order, from a fresh partition. `exclude`:
+        sectors this drone cannot fly (blocked by an obstacle); left out of its picture so
+        it steals other work instead. Peers still count them as open, and take them once
+        this drone stops searching."""
+        skip = set(exclude)
+        if self.static_cells is not None:
+            order = coverage_order(self.mission.grid,
+                                   [s for s in self.static_cells
+                                    if not self.belief.is_done(s) and s not in skip],
+                                   tuple(my_xy))
+            if order != self._last_cells:
+                self._last_cells = order
+                self._record("sar_allocation", sim_s=now, allocation="static", order=order,
+                             open=len(order))
+            return order
         peers = self.live_peers(now)
         positions = {self.vehicle_id: tuple(my_xy), **peers}
-        open_s = self.belief.unsearched()
+        open_s = [s for s in self.belief.unsearched() if s not in skip]
         a = allocate(self.mission.grid, self.vehicle_id, positions, open_s,
                      self.live_claims(now, peers))
         mine = [s for s in a["cells"].get(self.vehicle_id, []) if s in set(open_s)]
@@ -255,6 +272,8 @@ class SwarmCoordinator:
 
     # ------------------------------------------------------------ outgoing (own facts only)
     def claim(self, sid: str, est_s: float) -> None:
+        if self.static_cells is not None:
+            return                  # static split: nothing to coordinate
         now = self.sim_clock() or 0.0
         exp = now + min(est_s, self.swarm.max_claim_s)
         self.own_claim = (sid, exp)
@@ -268,6 +287,8 @@ class SwarmCoordinator:
             raise ValueError(f"{sid} is not swept by {self.vehicle_id}: not emitting a clear")
         if self.own_claim and self.own_claim[0] == sid:
             self.own_claim = None
+        if self.static_cells is not None:
+            return                  # static split: no clears on the radio
         if any(d.sector_id == sid for d in self.belief.detections):
             return                  # the sweep found the victim there: it is not clear
         self.messenger.send(SectorCleared(sender_id=self.vehicle_id,
@@ -339,7 +360,8 @@ class SwarmPlannerMixin:
         if self.guard is not None:
             self.guard.start_sim_s, self.guard.cells = self.start_sim_s, set(order)
         peers = self.swarm.live_peers(state.sim_time_s)
-        self._record("sar_plan", allocation="voronoi_swarm",
+        self._record("sar_plan", allocation=("static" if self.swarm.static_cells is not None
+                                             else "voronoi_swarm"),
                      fleet=sorted([self.vehicle_id, *peers]), cells=order, order=order,
                      start={"x_m": state.x_m, "y_m": state.y_m}, derived=self.mission.derived(),
                      altitude_m=self.mission.flight.altitude_m)
@@ -349,7 +371,7 @@ class SwarmPlannerMixin:
         xy, now = self._here()
         if xy is None:
             return []
-        order = self.swarm.my_sectors(xy, now)
+        order = self.swarm.my_sectors(xy, now, exclude=self.blocked)
         if self.guard is not None:
             self.guard.cells = set(order)
         return order
@@ -370,6 +392,13 @@ class SwarmPlannerMixin:
     def _nothing_left(self):
         if not self.belief.unsearched():
             return "all_swept", "every sector swept or cleared by a peer"
+        stuck = sorted(set(self.belief.unsearched()) & self.blocked)
+        if stuck:
+            return "blocked_sectors", (f"nothing reachable left; blocked for this drone: "
+                                       f"{', '.join(stuck)} (teammates take them once it "
+                                       f"heads home)")
+        if self.swarm.static_cells is not None:
+            return "all_swept", "every sector of this drone's fixed part swept"
         return "nothing_assigned", (f"{len(self.belief.unsearched())} open sector(s), all "
                                     f"claimed by or nearer to a peer")
 
@@ -386,6 +415,10 @@ class SwarmPlannerMixin:
         self.swarm.state = "returning"
         self.swarm.own_claim = None
         return await super()._finish(outcome, reason)
+
+    def _on_lost(self):
+        self.swarm.state = "lost"           # peers stop counting it: its cells are shared out
+        self.swarm.own_claim = None
 
     def _peer_stop(self):
         v = self.swarm.peer_victim
@@ -407,6 +440,7 @@ class SwarmPlannerMixin:
                            "sweeping": next((s for s, who in claims.items() if who == p), None)}
                           for p, (x, y) in sorted(peers.items())],
             "assigned_to_you": sorted(self.guard.cells) if self.guard and self.guard.cells else [],
+            "blocked_for_you": sorted(self.blocked),
             "cleared_by_teammates": {s: sorted(set(v)) for s, v in sorted(cleared.items())},
         }
 

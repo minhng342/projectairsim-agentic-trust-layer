@@ -13,6 +13,17 @@ Phase 1 planner: one drone, no LLM. Plain code decides the next sector from a fi
        mission time (sim seconds) is used up, or a sweep fails
     5. ReturnHome through the port
 
+Obstacles (wall hits, a blocked path): the runner reports an impact the simulator saw
+(on_impact, which also interrupts the sweep), and the path follower gives up a path it
+cannot make progress on ("path_blocked"). Either way the planner recovers instead of
+grinding on: the drone is already hovering; it climbs recovery_climb_m above where it is,
+marks the sector it was flying to as blocked for itself (never chosen again, the guard
+refuses it), and carries on with the rest. After max_recoveries recoveries, or if the
+climb fails, the drone drops out of the search ("lost": no return flight over the city;
+the runner lands it where it is) and, in the swarm, stops taking cells so its teammates
+share them out. An impact still fails the run's acceptance: recovery keeps the mission
+going, it does not make a collision acceptable.
+
 Every action is a typed Pydantic action (models/sar.py) converted to a ProposedAction and
 submitted with the observation it was decided from, exactly like an LLM agent's would be,
 so Phase 2 only swaps step 3's "next in the list" for the agent's choice: the port, the
@@ -36,7 +47,8 @@ STALE = object()        # _submit: the `before` check withdrew the action
 
 @dataclass
 class PlannerResult:
-    outcome: str                 # victim_found | all_swept | time_limit | returned | failed | aborted
+    outcome: str                 # victim_found | all_swept | time_limit | returned | failed |
+                                 # aborted | lost | blocked_sectors
                                  # (victim_found whenever the sensor detected the victim)
     reason: str
     order: list[str]
@@ -45,11 +57,14 @@ class PlannerResult:
     actions: list[dict] = field(default_factory=list)   # (action, feedback code) per submission
     ended_by: str = ""           # what ended the search, never overwritten by a detection
     return_home: str | None = None   # feedback code of the final return home
+    recoveries: int = 0              # obstacle recoveries (impacts / blocked paths)
+    blocked: list[str] = field(default_factory=list)   # sectors it could not get through
 
     @property
     def healthy(self) -> bool:
         """No failure along the way and the drone made it home."""
-        return self.ended_by not in ("failed", "aborted") and self.return_home == "home_reached"
+        return (self.ended_by not in ("failed", "aborted", "lost")
+                and self.return_home == "home_reached")
 
 
 class FixedSectorPlanner:
@@ -79,6 +94,14 @@ class FixedSectorPlanner:
         self.max_flight_failures_in_row = 2
         self.return_outcome = "returned"     # outcome when choose() returns ReturnHome
         self.stale_choices = 0
+        # Obstacle recovery (see the module docstring).
+        self.phase = "starting"              # starting | search | ended
+        self.blocked: set[str] = set()       # sectors this drone could not get through
+        self.recoveries = 0
+        self.max_recoveries = 2
+        self.recovery_climb_m = 10.0
+        self._impact: dict | None = None     # set by on_impact, handled by the loop
+        self.impacts_reported = 0
 
     # ------------------------------------------------------------ events from outside
     def on_detection(self, d: Detection) -> None:
@@ -88,6 +111,17 @@ class FixedSectorPlanner:
 
     def on_time_up(self) -> None:
         self.time_up = True
+
+    def on_impact(self, info: dict) -> bool:
+        """The simulator reported an impact (runner, ground truth). True if the planner will
+        recover from it (it is searching); the caller then interrupts the sweep. Impacts
+        while climbing, staging or flying home are only recorded."""
+        self.impacts_reported += 1
+        if self.phase not in ("search", "returning"):
+            return False
+        if self._impact is None:
+            self._impact = dict(info)
+        return True
 
     # ------------------------------------------------------------ run
     async def run(self) -> PlannerResult:
@@ -108,7 +142,12 @@ class FixedSectorPlanner:
         if failed:
             return await self._finish("failed", failed)
 
+        self.phase = "search"
         while True:
+            if self._impact is not None:          # a hit between sweeps (or while deciding)
+                lost = await self._recover(None, "impact")
+                if lost is not None:
+                    return lost
             stop = self._should_stop()
             if stop:
                 return await self._finish(*stop)
@@ -145,7 +184,7 @@ class FixedSectorPlanner:
                 self._on_sector_swept(sid, fb.request_id)
                 self.gate_refusals_in_row = 0
                 self.flight_failures_in_row = 0
-                continue
+                continue                    # an impact at the very end: the loop top recovers
             if fb.stage.value in ("port", "gate"):
                 # Refused before anything flew: the sector is untouched; decide again.
                 self.belief.mark_partial(sid, sim, 0.0, fb.request_id)
@@ -156,6 +195,12 @@ class FixedSectorPlanner:
                 continue
             progress = self._sweep_progress() if self._sweep_progress else 0.0
             self.belief.mark_partial(sid, sim, progress, fb.request_id)
+            if self._impact is not None or fb.code == "path_blocked":
+                lost = await self._recover(sid, "impact" if self._impact is not None
+                                           else "path_blocked")
+                if lost is not None:
+                    return lost
+                continue
             if fb.code == "sweep_stopped":
                 stop = self._should_stop()
                 return await self._finish(*(stop or ("aborted", f"{sid}: sweep stopped")))
@@ -205,14 +250,19 @@ class FixedSectorPlanner:
         return order
 
     def _remaining(self) -> list[str]:
-        """This drone's sectors still to search, in the order to fly them."""
-        return [sid for sid in self.order if not self.belief.is_done(sid)]
+        """This drone's sectors still to search, in the order to fly them (blocked ones
+        left out)."""
+        return [sid for sid in self.order if not self.belief.is_done(sid)
+                and sid not in self.blocked]
 
     def _still_open(self, sid: str) -> bool:
         """Right before submitting: is the chosen sector still this drone's to sweep?"""
         return True
 
     def _nothing_left(self) -> tuple[str, str]:
+        if self.blocked and any(not self.belief.is_done(s) for s in self.blocked):
+            return "blocked_sectors", (f"every reachable sector swept; blocked: "
+                                       f"{', '.join(sorted(self.blocked))}")
         return "all_swept", "every sector swept"
 
     async def _after_climb(self) -> str | None:
@@ -230,6 +280,93 @@ class FixedSectorPlanner:
         """(outcome, reason) when peers ended the search (Phase 3), else None."""
         return None
 
+    def _on_lost(self) -> None:
+        """The drone dropped out (Phase 3: stop taking cells)."""
+
+    # ------------------------------------------------------------ obstacle recovery
+    async def _recover(self, sid: str | None, cause: str):
+        """After an impact or a blocked path: climb clear, block the sector, carry on.
+        Returns a PlannerResult if the drone drops out, else None."""
+        info, self._impact = self._impact or {}, None
+        self.recoveries += 1
+        if sid is not None:
+            self.blocked.add(sid)
+            if self.guard is not None:
+                self.guard.blocked.add(sid)
+        self._record("obstacle", cause=cause, sector_id=sid, recovery=self.recoveries,
+                     object_name=info.get("object_name"),
+                     impact_speed_mps=info.get("impact_speed_mps"),
+                     blocked=sorted(self.blocked))
+        self._log(f"  [{time.strftime('%H:%M:%S')}] {self.vehicle_id}: {cause}"
+                  + (f" in {sid}" if sid else "")
+                  + (f" ({info['object_name']})" if info.get("object_name") else "")
+                  + f"; recovery {self.recoveries}/{self.max_recoveries}")
+        if self.recoveries > self.max_recoveries:
+            return await self._lost(f"{self.recoveries} obstacle incidents (last: {cause}"
+                                    + (f" in {sid}" if sid else "") + ")")
+        _, state = await self._observe()
+        if state is None:
+            return await self._lost(f"{cause}: no observation to recover from")
+        target = round(state.altitude_m + self.recovery_climb_m, 2)
+        if self.guard is not None:
+            self.guard.recovery_alt_m = target
+        try:
+            fb = await self._submit(ProposedAction(
+                vehicle_id=self.vehicle_id, action_type=ActionType.CHANGE_ALTITUDE,
+                altitude_m=target, reason=f"{cause}: climb {self.recovery_climb_m:g} m clear"))
+        finally:
+            if self.guard is not None:
+                self.guard.recovery_alt_m = None
+        if fb is None or fb.code != "completed":
+            return await self._lost(f"{cause}: recovery climb "
+                                    f"{fb.code if fb else 'had no observation'}")
+        self.flight_failures_in_row = 0
+        self._record("obstacle_recovered", cause=cause, sector_id=sid, altitude_m=target,
+                     recovery=self.recoveries)
+        return None
+
+    async def _return_higher(self, fb):
+        """The flight home was blocked (or hit something): climb recovery_climb_m and fly
+        home at that height, once. Returns the second attempt's feedback, or None."""
+        info, self._impact = self._impact or {}, None
+        self.recoveries += 1
+        self._record("obstacle", cause="impact" if info else "path_blocked", sector_id=None,
+                     during="return_home", recovery=self.recoveries,
+                     object_name=info.get("object_name"), blocked=sorted(self.blocked))
+        _, state = await self._observe()
+        if state is None:
+            return None
+        target = round(state.altitude_m + self.recovery_climb_m, 2)
+        if self.guard is not None:
+            self.guard.recovery_alt_m = target
+        try:
+            climb = await self._submit(ProposedAction(
+                vehicle_id=self.vehicle_id, action_type=ActionType.CHANGE_ALTITUDE,
+                altitude_m=target, reason="return home blocked: climb clear"))
+            if climb is None or climb.code != "completed":
+                return None
+            again = await self._submit(ProposedAction(
+                vehicle_id=self.vehicle_id, action_type=ActionType.RETURN_HOME,
+                altitude_m=target, reason=f"return home {self.recovery_climb_m:g} m higher"))
+        finally:
+            if self.guard is not None:
+                self.guard.recovery_alt_m = None
+        self._record("obstacle_recovered" if again is not None and again.code == "home_reached"
+                     else "obstacle_not_recovered", during="return_home", altitude_m=target,
+                     code=again.code if again else None, recovery=self.recoveries)
+        return again
+
+    async def _lost(self, reason: str) -> PlannerResult:
+        """Drop out of the search: no return flight across the city after repeated hits;
+        the runner descends and lands the drone where it is."""
+        self._log(f"  [{time.strftime('%H:%M:%S')}] {self.vehicle_id}: dropping out of the "
+                  f"search ({reason})")
+        self._record("drone_lost", reason=reason, recoveries=self.recoveries,
+                     blocked=sorted(self.blocked))
+        self._on_lost()
+        self.return_code = "not_attempted"
+        return self._done("lost", reason)
+
     # ------------------------------------------------------------ helpers
     def _should_stop(self):
         if self.detection is not None and self.mission.termination.stop_on_detection:
@@ -243,23 +380,31 @@ class FixedSectorPlanner:
         return None
 
     async def _finish(self, outcome: str, reason: str) -> PlannerResult:
+        self.phase = "returning"
+        self._impact = None              # one met before the search ended: already handled
         fb = await self._submit(ReturnHome(reason=f"mission over: {outcome}").to_proposed(
             self.vehicle_id))
+        if fb is not None and (fb.code == "path_blocked" or self._impact is not None):
+            fb = await self._return_higher(fb) or fb
+        self.phase = "ended"
         self.return_code = fb.code if fb else None
         self._record("return_home", code=self.return_code)
         return self._done(outcome, reason)
 
     def _done(self, outcome, reason) -> PlannerResult:
+        self.phase = "ended"
         ended_by = outcome
         if self.detection is not None and outcome != "victim_found":
             outcome, reason = "victim_found", f"victim detected; then {reason}"
         r = PlannerResult(outcome=outcome, reason=reason, order=self.order,
                           swept=self.belief.swept(), detection=self.detection,
                           actions=self.actions, ended_by=ended_by,
-                          return_home=self.return_code)
+                          return_home=self.return_code, recoveries=self.recoveries,
+                          blocked=sorted(self.blocked))
         self._record("planner_end", outcome=outcome, ended_by=ended_by, reason=reason,
                      return_home=self.return_code, healthy=r.healthy, swept=len(r.swept),
-                     sectors=len(self.belief.sectors))
+                     sectors=len(self.belief.sectors), recoveries=self.recoveries,
+                     blocked=sorted(self.blocked))
         return r
 
     async def _observe(self):
