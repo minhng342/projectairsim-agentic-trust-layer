@@ -300,8 +300,27 @@ then, once the zone is free, in to the pad. The zone is held until that drone ha
 so a transit never shares it with a descent. A drone that lands inside the zone for another
 reason (it dropped out there) takes the zone first too. Waits are logged
 (`pad_zone_enter` with `was_held_by`, `pad_zone_leave`; the run summary counts
-`pad_zone_waits`). Waiting gives up after 600 s of sim time so a stuck holder cannot strand
-the others. Agents never see it: it is a local stand-in for a vertiport manager.
+`pad_zone_waits`). Agents never see it: it is a local stand-in for a vertiport manager.
+
+Waiting gives up after `PAD_WAIT_S` (600 s of sim time) so a stuck holder cannot strand the
+others, and giving up is never permission to go in (fixed after the 359eb49 review, which
+found both callers ignored the timeout):
+
+- the return home ends `pad_zone_timeout` with the drone holding 2 m outside the zone's
+  edge on its own layer; no inward leg is flown. A drone that is inside the zone when a
+  teammate holds it flies out to the edge before it waits. Its waiting point stays inside the
+  geofence: straight out if that is allowed, else the nearest allowed point on the circle
+  (the pads sit on the area's edge, so straight out can leave it);
+- the runner then descends and lands that drone where it is, outside the zone, and records
+  a `contingency_landing` (reason, who held the zone). Any descent goes through the same
+  check, including the one after an error, so the `finally` landing cannot happen inside
+  the zone without holding it;
+- the zone is released only once the holder's landing is confirmed. If it is not, the zone
+  stays held (`pad_zone_held_unconfirmed`) and the others land outside;
+- every pad zone timeout, contingency landing and unconfirmed hold fails acceptance.
+
+Known limit: live, a contingency landing outside the zone can come down on a roof. It is a
+last resort, so it fails the run rather than being tuned away.
 
 ### Dropout: the condition where cooperation should pay
 

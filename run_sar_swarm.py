@@ -75,6 +75,7 @@ from trust.assessor import NoTrustAssessor
 from utils.flight_safety import safe_shutdown
 
 REMOTE_ID_HZ = 1.0
+PAD_WAIT_S = 600.0          # sim seconds a drone waits for the pad zone before landing outside it
 SIM_STALL_S = 30.0          # live: host seconds with no sim-clock progress before a run is ended
 
 
@@ -276,7 +277,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                                            follower_config=timing.follower(),
                                            on_event=recorder.recorder_for(source="mission"),
                                            pad_zone=pads if len(drones) > 1 else None,
-                                           pad_wait_s=600.0 / timing.k)
+                                           pad_wait_s=PAD_WAIT_S / timing.k)
                 guard = SarGuard(m, belief, home_xy)
                 gate = SarInvariantGate(guard) if gate_on else BypassGate()
                 port = ActionPort(vid, sector_ex, feed, gate=gate, recorder=recorder,
@@ -384,6 +385,31 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                 adapter, vids, missions, recorder, stop, 1.0 / timing.hz(TRUTH_HZ),
                 lambda vid: team[vid]["sector_ex"].interrupt("geofence"), impact))))
 
+            async def clear_pads(vid, t, res):
+                """Before any descent: hold the pad zone, or be outside it. A drone inside
+                that cannot get the zone flies out to its edge; a drone that lands without
+                the zone is a recorded contingency landing (it fails acceptance)."""
+                if len(team) < 2 or pads.holder == vid:
+                    return
+                snap = adapter.get_snapshot(vid)
+                xy = (snap.position_ned_m.x, snap.position_ned_m.y) if snap is not None else None
+                if xy is not None and pads.inside(xy):
+                    if await pads.acquire(vid, timeout_s=PAD_WAIT_S / timing.k):
+                        return                                    # landing on its pad
+                    if not await t["sector_ex"].leave_pad_zone():
+                        recorder.record("pad_zone_exit_failed", vehicle_id=vid,
+                                        held_by=pads.holder)
+                    snap = adapter.get_snapshot(vid)
+                    xy = (snap.position_ned_m.x, snap.position_ned_m.y) if snap else xy
+                if res.get("contingency") is None:
+                    pr = res.get("planner")
+                    why = ("pad_zone_timeout" if (pr and pr.return_home == "pad_zone_timeout")
+                           or pads.holder not in (None, vid) else "not_home")
+                    res["contingency"] = why
+                    recorder.record("contingency_landing", vehicle_id=vid, reason=why,
+                                    held_by=pads.holder, inside_zone=bool(xy and pads.inside(xy)),
+                                    position=xy)
+
             async def fly(vid):
                 t, res = team[vid], results[vid]
                 try:
@@ -391,10 +417,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                     res["planner"] = pr = await t["planner"].run()
                     log(f"  [{time.strftime('%H:%M:%S')}] {vid}: search ended: {pr.outcome} "
                         f"({pr.reason}); return home: {pr.return_home}")
-                    snap = adapter.get_snapshot(vid)
-                    if len(team) > 1 and pads.inside((snap.position_ned_m.x,
-                                                      snap.position_ned_m.y)):
-                        await pads.acquire(vid, timeout_s=600.0 / timing.k)   # landing here
+                    await clear_pads(vid, t, res)
                     r = await flight.change_altitude(
                         vid, round(t["launch_alt"] + DESCEND_ABOVE_LAUNCH_M, 2),
                         reason="setup: descend before landing")
@@ -405,12 +428,21 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                     recorder.record("error", vehicle_id=vid, error=res["error"])
                     log(f"  {vid} ERROR: {res['error']}")
                 finally:
+                    if "descend" not in res or res["descend"] is None:
+                        try:                       # an error before the descent: same rule
+                            await clear_pads(vid, t, res)
+                        except Exception as err:
+                            recorder.record("error", vehicle_id=vid,
+                                            error=f"clear_pads: {type(err).__name__}: {err}")
                     res["shutdown"] = await safe_shutdown(
                         adapter.drone(vid), adapter=adapter, vehicle_id=vid,
                         log=lambda s: log(f"[{vid}] {s}"), confirm_poll_s=timing.poll(0.1))
                     recorder.record("shutdown", vehicle_id=vid, report=res["shutdown"])
                     t["coord"].state = "landed"
-                    pads.release(vid)
+                    if pads.holder == vid and not res["shutdown"].grounded_confirmed:
+                        recorder.record("pad_zone_held_unconfirmed", vehicle_id=vid)
+                    else:
+                        pads.release(vid)
 
             try:
                 await asyncio.gather(*(fly(v) for v in vids))
@@ -450,6 +482,12 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
     metrics["dropout"] = getattr(args, "dropout", None)
     metrics["pad_zone_waits"] = sum(1 for e in read_run(recorder.path).of_kind("pad_zone_enter")
                                     if e.get("was_held_by"))
+    log_ = read_run(recorder.path)
+    metrics["pad_zone_timeouts"] = len(log_.of_kind("pad_zone_timeout"))
+    metrics["contingency_landings"] = {e["vehicle_id"]: e.get("reason")
+                                       for e in log_.of_kind("contingency_landing")}
+    metrics["pad_zone_held_unconfirmed"] = [e["vehicle_id"] for e in
+                                            log_.of_kind("pad_zone_held_unconfirmed")]
     metrics["all_landed"] = all(d.get("landed") for d in metrics["drones"].values())
     stem.with_suffix(".summary.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
     try:
@@ -496,6 +534,14 @@ def run_failures(m: dict, full_sweep: bool, min_coverage: float = FULL_SWEEP_MIN
             why.append(f"{vid}: descend {d.get('descend')}")
         if d.get("error"):
             why.append(f"{vid}: {d['error']}")
+    if m.get("pad_zone_timeouts"):
+        why.append(f"{m['pad_zone_timeouts']} pad zone timeout(s)")
+    for vid, reason in sorted((m.get("contingency_landings") or {}).items()):
+        if not (vid == dropped and reason == "not_home"):
+            why.append(f"{vid}: contingency landing outside the pads ({reason})")
+    if m.get("pad_zone_held_unconfirmed"):
+        why.append(f"pad zone kept: landing not confirmed for "
+                   f"{', '.join(m['pad_zone_held_unconfirmed'])}")
     msgs = m.get("messages") or {}
     if msgs.get("processing_errors"):
         why.append(f"peer message processing failed {msgs['processing_errors']} time(s)")
