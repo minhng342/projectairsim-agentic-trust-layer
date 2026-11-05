@@ -67,6 +67,7 @@ OPTIONAL: dict[ActionType, set[str]] = {
     ActionType.HOLD: {"duration_s"},               # without it: hold until resume
     ActionType.CHANGE_ALTITUDE: {"speed_mps"},     # vertical speed
     ActionType.MOVE_TO_POSITION: {"speed_mps"},    # cruise speed
+    ActionType.RETURN_HOME: {"altitude_m"},        # SAR obstacle recovery: home higher up
 }
 
 

@@ -205,10 +205,40 @@ def test_grounded_fails():
 
 
 def test_timeout_fails_and_hovers():
-    f, world, drone, *_ = make()
+    f, world, drone, *_ = make(config=FollowerConfig(poll_interval_s=0.0, hover_timeout_s=0.5,
+                                                     stuck_after_s=None))
     world.stuck = True
     r = run(f, timeout_s=0.2)
     assert r.mode == FollowMode.FAILED and "within" in r.reason and drone.calls[-1] == "hover"
+    assert not f.blocked
+
+
+def test_no_progress_in_cruise_is_blocked_long_before_the_timeout():
+    """Pressed against a wall: sim time runs, the drone does not move. The follower gives
+    up after stuck_after_s of SIM time (100 ms per snapshot here) and hovers, instead of
+    grinding on until the whole-path timeout."""
+    f, world, drone, events, _ = make()
+    world.stuck = True
+    r = run(f, timeout_s=600)
+    assert r.mode == FollowMode.FAILED and r.reason.startswith("blocked")
+    assert f.blocked and drone.calls[-1] == "hover"
+    (b,) = [d for k, d in events if k == "follower_blocked"]
+    assert b["stalled_s"] >= FAST.stuck_after_s
+
+
+def test_a_long_hold_is_not_blocked():
+    box = {}
+
+    def do_hold():
+        box["f"].hold()
+
+    def do_resume():
+        box["f"].resume()
+    # held for ~200 snapshots = 20 s of sim time, twice stuck_after_s
+    f, world, drone, events, _ = make(at={5: do_hold, 205: do_resume})
+    box["f"] = f
+    r = run(f)
+    assert r.mode == FollowMode.DONE and not f.blocked
 
 
 def test_command_error_fails_and_hovers():

@@ -217,9 +217,145 @@ the paired ratios are the useful part until live batches exist.
   (`separation.pairs`) and `unmeasured_pairs`. 2 Hz sampling with this rule is still a
   sampled approximation, not proof of continuous-flight safety.
 - Not done here (Phase 4 work, in the review's order): attack-aware metrics (honest-only
-  time to find, deception tied to attack message ids), the frozen threat-model contract,
-  archived evidence for each batch, and a matched 3-drone static-partition condition. The
+  time to find, deception tied to attack message ids) and the frozen threat-model contract.
+  Archived evidence and the static-partition condition were added afterwards (below). The
   live baseline is still preliminary: one clean 3-drone pass, one run lost to a sim freeze.
+
+## Completing Phase 3 (2026-11-05)
+
+### Obstacles: a wall hit no longer stalls the run
+
+Before: nothing reacted to a collision in flight. A drone pressed against a building kept
+commanding its sweep until the path timeout (3x the expected time + 60 s), then its search
+ended. Now, in every runner (Phase 1, 2 and 3 alike):
+
+- **Stuck detector** (`executor/path_follower.py`): in cruise, if progress along the path grows
+  by less than `stuck_min_progress_m` (1 m) for `stuck_after_s` (10 s) of sim time, away from
+  the end of the path, the follower hovers and returns `blocked`; the sector executor reports
+  `path_blocked`. This catches being wedged without any collision report.
+- **Impact hook**: the runners' truth sampler already logged collisions; an impact (fast, or a
+  non-supporting surface: `_is_impact`) now calls `planner.on_impact()` and interrupts the
+  sweep at once.
+- **Recovery** (`agent/sector_planner.py`, so every planner has it): the drone is hovering; it
+  climbs `recovery_climb_m` (10 m) above where it is (the guard allows exactly that climb), marks
+  the sector it was flying as **blocked** for itself (never offered or allowed again:
+  `blocked_by_obstacle`), and carries on. If the flight home is blocked or hits something, it
+  climbs 10 m and flies home at that height, once.
+- **Drop-out**: after `max_recoveries` (2) recoveries, the third incident (or a failed recovery
+  climb) ends the drone's search as `lost`: no return flight across the city, the runner lands
+  it where it is. In the swarm it broadcasts `mission_state: lost`, so its teammates stop
+  counting it and share out its cells. A swarm drone with only blocked sectors left steals
+  other work first, then heads home (`blocked_sectors`), and its blocked sectors pass to the
+  others.
+- **Report**: per drone, `impacts`, `impact_objects`, `obstacle_incidents`,
+  `obstacles_recovered`, `blocked_sectors`, `lost`; the batch adds `impacts_total` and
+  `drones_lost_total`; the console prints a line per drone that hit something. An impact
+  **still fails the run's acceptance**, as does a lost drone: recovery keeps the mission and
+  the program going, it does not make a collision acceptable.
+- **Testing offline**: `--obstacle NAME:N_MIN,N_MAX,E_MIN,E_MAX,TOP_M` (repeatable, offline
+  only) puts a box in the kinematic sim: flying into a side stops the drone and logs a wall
+  impact; over it, its roof is the floor. For example
+  `python run_sar_swarm.py --offline --runs 1 --obstacle tower:60,80,60,80,165`.
+- Limits: blocked sectors are not shared on the radio (no new message type in the honest
+  phase, since Phase 4 could lie with it), so a wall every drone meets costs each of them its
+  own incidents; a drone that has climbed descends back to its layer on the next sweep; the
+  live numbers (10 s, 10 m, 2 recoveries) are first guesses to check on zeus-g.
+
+### Static split: the matched comparison condition
+
+`--allocation static` (`swarm.allocation: static`): the grid is split once before takeoff
+(Voronoi over the staging points, recorded as `static_split`) and each drone sweeps only its
+own part. No claims, no clears, no re-split when a drone drops out, no work stealing. Finds
+are still reported, so the team stops on the first find in both conditions. It separates the
+gain from three airframes with a sensible split from the gain from live cooperation.
+
+### Paired speedup with a confidence interval
+
+Run i of every dev batch has the same victim (seed 42 + i), so the comparison is per victim.
+`--reference <one-drone batch>` adds `paired_vs_reference` to `batch_summary.json`: pairs
+matched on victim position, speedup = reference time / batch time, mean and median with 95%
+percentile-bootstrap intervals (10,000 resamples over the pairs, fixed seed), time saved,
+how many pairs were faster, and the per-run table. `python -m evaluation.compare REF BATCH ...`
+prints the whole comparison table (`evaluation/compare.py`).
+
+### Evidence
+
+Every batch (both runners) ends by writing `manifest.json`: git commit and branch, whether
+the tree had uncommitted changes, the command and arguments, sha256 of the mission, scenario
+and (live) scene files plus one `config_sha256`, the model and its inference settings
+(thinking, extra body), each run's seed and victim sector, planned / attempted / valid /
+stalled / passed counts, Python, platform, host, package versions, and a sha256 per file of
+the batch. `python -m evaluation.archive BATCH ... [--reference REF]` checks each batch
+against its manifest (refuses a changed one), writes `EVIDENCE.md` (one line per batch plus
+the paired table) and packs everything into `runs/evidence/<time>.tar.gz`.
+
+### Pad area: one drone at a time
+
+The layers keep drones apart in cruise but not around the pads: a drone coming down from
+170 m crosses 160 and 150, and a teammate flying home on one of those layers can pass right
+over its pad (the no-radio run 15 near miss, 0.55 m). Now the runner keeps one pad zone for
+the team (`executor/pad_zone.py`: every pad's `pad_zone_m` circle plus 5 m; dev: 18 m around
+the pads). A return home is flown in two legs: to the zone's edge at the drone's own layer,
+then, once the zone is free, in to the pad. The zone is held until that drone has landed,
+so a transit never shares it with a descent. A drone that lands inside the zone for another
+reason (it dropped out there) takes the zone first too. Waits are logged
+(`pad_zone_enter` with `was_held_by`, `pad_zone_leave`; the run summary counts
+`pad_zone_waits`). Waiting gives up after 600 s of sim time so a stuck holder cannot strand
+the others. Agents never see it: it is a local stand-in for a vertiport manager.
+
+### Dropout: the condition where cooperation should pay
+
+`--dropout DRONE@SECONDS` fails that drone SECONDS of sim time after the mission starts (the
+plan; the climb to 150 m and the staging flight take about 2 minutes of that): it drops out
+(as `lost`) and lands where it is, and in the dynamic condition broadcasts
+`mission_state: lost` so the others take over its cells. The injected drop-out is the
+experiment, so it does not fail the run by itself (the victim still has to be found and
+everyone has to land).
+
+### Comparison table (offline, commit 9c38d9b, 2026-11-05)
+
+Dev mission, seed 42, 20 runs per condition, the same 20 victims in every row, kinematic sim
+x50. Paired speedup per victim against the one-drone row, 95% bootstrap intervals
+(`python -m evaluation.compare`), over the pairs where both found the victim. Each batch has
+its `manifest.json`. The dropout rows fail Drone2 200 s of sim time into the mission (about
+80 s after the team starts searching; the climb and staging take the rest).
+
+| Condition | Found | Passed | Time to find, mean / median (s) | min / max (s) | Paired speedup, mean (95% CI) | Median speedup (95% CI) | Faster | Coverage | Duplicate sweeps | Delivery |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 drone (Phase 1 planner) | 20/20 | 20/20 | 633.8 / 627.5 | 160.75 / 1320.56 | 1.0 (reference) | 1.0 (reference) | n/a | 45.9% | n/a | n/a |
+| 3 drones, full cooperation | 20/20 | 20/20 | 322.4 / 318.6 | 131.82 / 625.21 | 1.824x (1.638-2.006x) | 1.852x (1.582-2.072x) | 19/20 | 46.3% | 1 | 83.2% |
+| 3 drones, static split | 20/20 | 20/20 | 292.6 / 261.4 | 135.03 / 492.55 | 2.007x (1.772-2.238x) | 2.057x (1.837-2.275x) | 20/20 | 42.6% | 0 | 81.9% |
+| 3 drones, full cooperation, Drone2 drops out at 200 s | 20/20 | 20/20 | 389.4 / 390.9 | 132.74 / 712.06 | 1.554x (1.44-1.674x) | 1.497x (1.416-1.742x) | 19/20 | 46.1% | 8 | 69.8% |
+| 3 drones, static split, Drone2 drops out at 200 s | 13/20 | 13/20 | 293.2 / 305.1 | 134.98 / 488.03 | 1.809x (1.528-2.094x) | 1.976x (1.231-2.119x) | 13/13 | 54.3% | 0 | 80.4% |
+| 3 drones, no messages heard (radio 1 m) | 20/20 | 20/20 | 621.4 / 646.4 | 154.96 / 1212.27 | 1.021x (0.967-1.092x) | 0.965x (0.956-1.022x) | 7/20 | 51.9% | 980 | 0.0% |
+| 3 drones, Pydantic AI planners (scripted model) | 20/20 | 20/20 | 312.5 / 278.6 | 133.1 / 585.46 | 2.429x (1.791-3.075x) | 2.513x (1.267-3.546x) | 16/20 | 56.4% | 0 | 86.1% |
+
+What it says:
+
+- Three drones that share the work find the victim about twice as fast as one; the interval
+  excludes 1x. Three drones that cannot hear each other gain nothing (the interval covers 1x)
+  and sweep the same sectors 980 times.
+- **When nothing goes wrong, a split agreed before takeoff is as good as live cooperation**
+  (overlapping intervals). Every drone flies at the same speed, so fixed thirds are already
+  near ideal and the live re-split only adds transit.
+- **When a drone drops out, only cooperation still finds every victim.** With the static
+  split the victim is never found in 7 of 20 runs (it was in Drone2's part, which nobody
+  takes over); its speedup is computed on the 13 runs it did find, so it looks better than it
+  is. With cooperation all 20 are found: the others take Drone2's cells once it reports
+  `lost`, at the cost of time (1.55x instead of 1.82x) and 8 duplicate sweeps over the batch
+  (sectors Drone2 had partly flown). This is the case the cooperation layer exists for, and
+  the layer Phase 4 attacks.
+- With the pad zone (below) the no-radio batch now passes 20 of 20: the run 15 near miss
+  (0.55 m, before the fix) is gone.
+- Peer-message delivery in these batches (about 83% for full cooperation, 99% earlier in the
+  day) is a counting artefact, checked in the logs: with one landing at a time the runs last
+  longer and the finder kept repeating its find every 2 s until the run ended (1,690 repeats
+  in the first batch, 4,355 here); of 1,827 undelivered peer messages, 1,100 went to drones
+  already landed and out of range and nearly all the rest to drones heading home or waiting
+  at the pad edge. Lost claims and clears were unchanged (27 vs 34) and every drone heard the
+  find within 1.5 s. Fixed after these batches: the finder stops repeating once no peer's
+  last Remote ID report says it is searching (`victim_repeat_stopped`); a 5-run check gives
+  98.4% delivery again.
 
 ## Ready for Phase 4
 

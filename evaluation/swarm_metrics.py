@@ -27,7 +27,9 @@ Team (the research question's metrics):
                             columns line up
 Per drone (`drones`): outcome, ended_by, return_home, own sweeps, accepted peer clears,
 distance flown at its layer, its own footprint coverage, LLM decisions / fallbacks /
-guard refusals.
+guard refusals, and the obstacle report: impacts (and what was hit), obstacle incidents
+(impacts or blocked paths the planner reacted to), recoveries, blocked sectors, lost
+(dropped out of the search).
 """
 import itertools
 import math
@@ -99,6 +101,15 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
             "guard_rejections": sum(len(e.get("guard_rejections") or []) for e in decisions),
             "allocations": len(by("sar_allocation", v)),
             "stolen": sum(1 for e in by("sar_allocation", v) if e.get("stolen")),
+            # obstacle report: hits the simulator saw, recoveries, drop-out
+            "impacts": sum(1 for e in by("collision", v) if _is_impact(e.get("collision") or {})),
+            "impact_objects": sorted({str((e.get("collision") or {}).get("object_name"))
+                                      for e in by("collision", v)
+                                      if _is_impact(e.get("collision") or {})})[:10],
+            "obstacle_incidents": len(by("obstacle", v)),
+            "obstacles_recovered": len(by("obstacle_recovered", v)),
+            "blocked_sectors": (end.get("blocked") or []) if end else [],
+            "lost": bool(by("drone_lost", v)),
         }
 
     hear = {}
@@ -292,6 +303,8 @@ def batch_baseline(runs: list[dict]) -> dict:
         "area_coverage": _stats([r["area_coverage"] for r in runs]),
         "sectors_swept": _stats([r["sectors_swept"] for r in runs]),
         "duplicate_sweeps_total": sum(r["duplicate_sweeps"] for r in runs),
+        "impacts_total": sum(r.get("impacts") or 0 for r in runs),
+        "drones_lost_total": sum(1 for r in runs for d in r["drones"].values() if d.get("lost")),
         "delivery_ratio": round(got / sent, 4) if sent else 1.0,
         "min_separation_m": min((r["min_separation_m"] for r in runs
                                  if r["min_separation_m"] is not None), default=None),

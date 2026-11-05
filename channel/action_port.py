@@ -77,6 +77,8 @@ _EXECUTOR_FEEDBACK = {
     "position_reached": ("position_reached", "The drone is at the target position."),
     "unknown_sector": ("unknown_sector", "That sector is not part of the mission grid; nothing "
                                          "was sent."),
+    "path_blocked": ("path_blocked", "The drone could not make progress along the path "
+                                     "(blocked by an obstacle); it is hovering."),
     "path_failed": ("failed", "The flight controller could not complete the path; the drone "
                               "was told to hover."),
 }

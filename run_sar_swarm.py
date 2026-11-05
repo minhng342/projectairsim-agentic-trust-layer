@@ -62,9 +62,14 @@ from gate.sar_guard import SarGuard, SarInvariantGate
 from models.belief import LocalBelief
 from models.sar import PlanFileError, load_mission, load_scenario
 from observability import span
+from evaluation.compare import load_batch, paired_comparison
+from evaluation.evidence import write_manifest
+from evaluation.sar_metrics import _is_impact
 from run_sar_mission import (DESCEND_ABOVE_LAUNCH_M, FULL_SWEEP_MIN_COVERAGE, MAX_OBSERVATION_AGE_S,
                              OBSERVATION_HZ, SENSOR_HZ, SPAWN_TOLERANCE_M, TRUTH_HZ, Timing,
-                             _takeoff, prepare_llm)
+                             _takeoff, collision_dict, parse_obstacle, prepare_llm)
+from executor.pad_zone import PadZone
+from search.voronoi import voronoi_partition
 from search.detection import VictimSensor
 from trust.assessor import NoTrustAssessor
 from utils.flight_safety import safe_shutdown
@@ -73,7 +78,8 @@ REMOTE_ID_HZ = 1.0
 SIM_STALL_S = 30.0          # live: host seconds with no sim-clock progress before a run is ended
 
 
-async def _sample_truth(adapter, vids, missions, recorder, stop, period_s, on_breach):
+async def _sample_truth(adapter, vids, missions, recorder, stop, period_s, on_breach,
+                        on_impact=None):
     breached, seen = set(), {}
     while not stop.is_set():
         for vid in vids:
@@ -83,6 +89,9 @@ async def _sample_truth(adapter, vids, missions, recorder, stop, period_s, on_br
                         recorder.record("collision", vehicle_id=vid, collision=c,
                                         sim_time_ns=c.sim_time_ns)
                         seen[vid] = c.sim_time_ns
+                        info = collision_dict(c)
+                        if on_impact is not None and _is_impact(info):
+                            on_impact(vid, info)
             except Exception:
                 pass
         poses = adapter.latest_poses()
@@ -187,12 +196,15 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
         "seed": scenario.run_seed(run_index), "victim": victim.model_dump(),
         "victim_sector": victim_sector, "full_sweep_override": args.full_sweep,
         "scene": None if args.offline else args.scene,
+        "obstacles": (getattr(args, "obstacle", None) or []) if args.offline else None,
+        "dropout": getattr(args, "dropout", None),
         "drones": [{"vehicle": d.vehicle, "team_id": d.id, "start": d.start.model_dump(),
                     "altitude_m": missions[d.vehicle].flight.altitude_m} for d in drones],
         "swarm": mission.swarm.model_dump(mode="json"),
         "insider_enabled": scenario.insider.enabled,
         "pipeline": {"planner": (SwarmLLMPlanner if llm else SwarmFixedPlanner).name,
-                     "allocation": "voronoi_swarm", "peer_rules": PeerClaimRules.name,
+                     "allocation": ("static" if mission.swarm.allocation == "static"
+                                    else "voronoi_swarm"), "peer_rules": PeerClaimRules.name,
                      "trust_assessor": NoTrustAssessor.name,
                      "action_gate": SarInvariantGate.name if gate_on else BypassGate.name,
                      "model": llm["config"] if llm else None, "observation_hz": OBSERVATION_HZ,
@@ -211,7 +223,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
     if args.offline:
         from adapters.kinematic_sim import KinematicSim
         adapter_cm = KinematicSim({d.vehicle: (d.start.x_m, d.start.y_m) for d in drones},
-                                  speedup=timing.k)
+                                  speedup=timing.k,
+                                  obstacles=getattr(args, "obstacle", None) or ())
     else:
         from adapters.projectairsim_adapter import ProjectAirSimAdapter
         adapter_cm = ProjectAirSimAdapter(vehicle_ids=vids, scene=args.scene)
@@ -233,6 +246,15 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                                                                        mission.swarm.radio_range_m))
             team = {}
             stop = asyncio.Event()
+            pads = PadZone.around([(d.start.x_m, d.start.y_m) for d in drones],
+                                  mission.swarm.pad_zone_m, recorder=recorder,
+                                  sim_clock=lambda: (lambda p: None if p is None else p[0] / 1e9)(
+                                      next(iter(adapter.latest_poses().values()), None)))
+            recorder.record("pad_zone", center=pads.center, radius_m=round(pads.radius_m, 2))
+            static = static_split(mission, drones) if mission.swarm.allocation == "static" else None
+            if static is not None:
+                recorder.record("static_split", cells=static,
+                                sizes={v: len(c) for v, c in static.items()})
             for d in drones:
                 vid, m = d.vehicle, missions[d.vehicle]
                 feed = ObservationFeed(adapter, vid, assessor=NoTrustAssessor(), recorder=recorder)
@@ -252,7 +274,9 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                                      on_change=recorder.recorder_for(source="belief"))
                 sector_ex = SectorExecutor(adapter, vid, m, home_xy, flight,
                                            follower_config=timing.follower(),
-                                           on_event=recorder.recorder_for(source="mission"))
+                                           on_event=recorder.recorder_for(source="mission"),
+                                           pad_zone=pads if len(drones) > 1 else None,
+                                           pad_wait_s=600.0 / timing.k)
                 guard = SarGuard(m, belief, home_xy)
                 gate = SarInvariantGate(guard) if gate_on else BypassGate()
                 port = ActionPort(vid, sector_ex, feed, gate=gate, recorder=recorder,
@@ -261,6 +285,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                 messenger = PeerMessenger(vid, bus, recorder=recorder)
                 coord = SwarmCoordinator(vid, m, belief, rid_rx, messenger, sim_clock_of(vid),
                                          guard=guard, recorder=recorder, log=log)
+                if static is not None:
+                    coord.static_cells = list(static[vid])
                 bus.attach(SwarmReceiver(vid, rid_rx, coord.on_message, sim_clock_of(vid),
                                          recorder=recorder,
                                          authenticated=m.swarm.identity == "authenticated"))
@@ -303,7 +329,37 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                                  coord=coord, sensor=sensor, bcast=bcast, mission=m,
                                  launch_alt=home.altitude_m)
 
+            def impact(vid, info):
+                t = team[vid]
+                if t["planner"].on_impact(info):
+                    log(f"  [{time.strftime('%H:%M:%S')}] {vid}: IMPACT with "
+                        f"{info.get('object_name')}; stopping to recover")
+                    t["sector_ex"].interrupt("impact")
+
             bg = []
+            drop = getattr(args, "dropout", None)
+            if drop:
+                dvid, dat = drop["vehicle"], drop["at_s"]
+                if dvid not in team:
+                    raise RuntimeError(f"--dropout {dvid}: not a drone of this run")
+
+                async def dropout(t=team[dvid]):
+                    while not stop.is_set():
+                        st = t["planner"].start_sim_s
+                        p = adapter.latest_poses().get(dvid)
+                        if st is not None and p is not None and p[0] / 1e9 - st >= dat:
+                            if t["planner"].on_dropout(f"injected dropout at {dat:g} s"):
+                                log(f"  [{time.strftime('%H:%M:%S')}] {dvid}: DROPOUT injected "
+                                    f"at {dat:g} s of mission time")
+                                recorder.record("dropout_injected", vehicle_id=dvid, at_s=dat)
+                                t["sector_ex"].interrupt("dropout")
+                            return
+                        try:
+                            async with asyncio.timeout(timing.poll(0.5)):
+                                await stop.wait()
+                        except asyncio.TimeoutError:
+                            pass
+                bg.append(("dropout", asyncio.create_task(dropout())))
             for vid, t in team.items():
                 bg += [(f"{vid}.feed", asyncio.create_task(t["feed"].sample(
                             timing.hz(OBSERVATION_HZ), stop))),
@@ -326,7 +382,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                     adapter, stop, SIM_STALL_S, 1.0, stalled))))
             bg.append(("truth", asyncio.create_task(_sample_truth(
                 adapter, vids, missions, recorder, stop, 1.0 / timing.hz(TRUTH_HZ),
-                lambda vid: team[vid]["sector_ex"].interrupt("geofence")))))
+                lambda vid: team[vid]["sector_ex"].interrupt("geofence"), impact))))
 
             async def fly(vid):
                 t, res = team[vid], results[vid]
@@ -335,6 +391,10 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                     res["planner"] = pr = await t["planner"].run()
                     log(f"  [{time.strftime('%H:%M:%S')}] {vid}: search ended: {pr.outcome} "
                         f"({pr.reason}); return home: {pr.return_home}")
+                    snap = adapter.get_snapshot(vid)
+                    if len(team) > 1 and pads.inside((snap.position_ned_m.x,
+                                                      snap.position_ned_m.y)):
+                        await pads.acquire(vid, timeout_s=600.0 / timing.k)   # landing here
                     r = await flight.change_altitude(
                         vid, round(t["launch_alt"] + DESCEND_ABOVE_LAUNCH_M, 2),
                         reason="setup: descend before landing")
@@ -350,6 +410,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                         log=lambda s: log(f"[{vid}] {s}"), confirm_poll_s=timing.poll(0.1))
                     recorder.record("shutdown", vehicle_id=vid, report=res["shutdown"])
                     t["coord"].state = "landed"
+                    pads.release(vid)
 
             try:
                 await asyncio.gather(*(fly(v) for v in vids))
@@ -381,9 +442,14 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
         d["descend"] = r["descend"]
         d["error"] = r["error"]
         d["planner_reason"] = r["planner"].reason if r["planner"] else None
+        d["recoveries"] = r["planner"].recoveries if r["planner"] else None
+        d["blocked"] = r["planner"].blocked if r["planner"] else []
     metrics["background_errors"] = bg_errors
     metrics["sim_stalled"] = getattr(adapter_cm, "stalled", None)
     metrics["run_error"] = run_error
+    metrics["dropout"] = getattr(args, "dropout", None)
+    metrics["pad_zone_waits"] = sum(1 for e in read_run(recorder.path).of_kind("pad_zone_enter")
+                                    if e.get("was_held_by"))
     metrics["all_landed"] = all(d.get("landed") for d in metrics["drones"].values())
     stem.with_suffix(".summary.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
     try:
@@ -393,14 +459,36 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
     return metrics
 
 
+def parse_dropout(text: str) -> dict:
+    try:
+        vid, at = text.split("@")
+        at_s = float(at)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--dropout wants DRONE@SECONDS, got {text!r}")
+    if not vid or at_s < 0:
+        raise argparse.ArgumentTypeError(f"--dropout {text!r}: needs a drone and seconds >= 0")
+    return {"vehicle": vid, "at_s": at_s}
+
+
+def static_split(mission, drones) -> dict[str, list[str]]:
+    """The static-allocation condition's pre-mission split: Voronoi of the whole grid over
+    the staging points (else the pads), fixed for the run."""
+    stage = mission.swarm.staging or []
+    gens = {d.vehicle: ((stage[i].x_m, stage[i].y_m) if i < len(stage)
+                        else (d.start.x_m, d.start.y_m)) for i, d in enumerate(drones)}
+    return voronoi_partition(mission.grid, gens)
+
+
 def run_failures(m: dict, full_sweep: bool, min_coverage: float = FULL_SWEEP_MIN_COVERAGE):
     why = []
     if not m["victim_found"]:
         why.append("victim not found")
+    dropped = (m.get("dropout") or {}).get("vehicle")
     for vid, d in sorted(m["drones"].items()):
-        if d.get("ended_by") in ("failed", "aborted", None):
+        injected = vid == dropped and d.get("ended_by") == "lost"   # the experiment, not a bug
+        if d.get("ended_by") in ("failed", "aborted", "lost", None) and not injected:
             why.append(f"{vid}: search ended by {d.get('ended_by')}")
-        if d.get("return_home") != "home_reached":
+        if d.get("return_home") != "home_reached" and not injected:
             why.append(f"{vid}: return home {d.get('return_home')}")
         if not d.get("landed"):
             why.append(f"{vid}: not landed")
@@ -464,6 +552,8 @@ async def main(args) -> int:
         sw["peer_clear_rule"] = args.peer_clear_rule
     if args.layer_spacing is not None:
         sw["layer_spacing_m"] = args.layer_spacing
+    if args.allocation:
+        sw["allocation"] = args.allocation
     if sw:
         mission = mission.model_copy(update={"swarm": mission.swarm.model_copy(update=sw)})
     if args.full_sweep:
@@ -471,6 +561,16 @@ async def main(args) -> int:
             update={"stop_on_detection": False})})
     if args.drones:
         scenario = scenario.model_copy(update={"drones": scenario.drones[:args.drones]})
+    if args.obstacle and not args.offline:
+        print("--obstacle is for the offline kinematic sim only (live, the buildings are real)")
+        return 2
+    reference = None
+    if args.reference:
+        try:
+            reference = load_batch(args.reference)
+        except (OSError, ValueError) as err:
+            print(f"--reference {args.reference}: {err}")
+            return 2
     runs = args.runs or scenario.runs
     timing = Timing(args.speedup if args.offline else 1.0)
     llm = None
@@ -489,7 +589,7 @@ async def main(args) -> int:
           f"({', '.join(d.vehicle for d in scenario.drones)}), radio range "
           f"{s.radio_range_m if s.radio_range_m else 'unlimited'} m, layers "
           f"{mission.flight.altitude_m:g} m + {s.layer_spacing_m:g} m, peer clears: "
-          f"{s.peer_clear_rule}; {runs} run(s), "
+          f"{s.peer_clear_rule}, allocation {s.allocation}; {runs} run(s), "
           f"{'offline x' + format(timing.k, 'g') if args.offline else 'live'}; output {out_dir}")
     results = []
     for i in range(runs):
@@ -500,6 +600,11 @@ async def main(args) -> int:
               f"mission {m['mission_time_s']} s, {m['sectors_swept']}/{m['sector_count']} sectors "
               f"(dup {m['duplicate_sweeps']}), coverage {m['area_coverage']:.1%}, msgs "
               f"{m['messages']['peer_sent']} sent / {m['messages']['out_of_range']} out of range"
+              + "".join(f"; {v}: {d['impacts']} impact(s) ({', '.join(d['impact_objects'])}), "
+                        f"{d['obstacles_recovered']}/{d['obstacle_incidents']} recovered"
+                        + (", LOST" if d.get("lost") else "")
+                        for v, d in sorted(m["drones"].items())
+                        if d.get("impacts") or d.get("obstacle_incidents"))
               + ("" if not m["fail_reasons"] else f"; FAIL: {'; '.join(m['fail_reasons'])}"))
         if m.get("sim_stalled"):
             print("  the simulator stalled: stopping the batch. Restart CityEnviron, then rerun "
@@ -514,7 +619,18 @@ async def main(args) -> int:
                "baseline": batch_baseline([m for m in results if not m.get("sim_stalled")]),
                "stalled_runs": [m["run_index"] for m in results if m.get("sim_stalled")], "passed": passed,
                "all_passed": all(passed), "runs": results}
+    valid = [m for m in results if not m.get("sim_stalled")]
+    if reference is not None:
+        summary["paired_vs_reference"] = paired_comparison(reference, valid,
+                                                           reference_label=args.reference)
+
     (out_dir / "batch_summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+    # last, so it hashes every file of the batch, batch_summary.json included
+    mf = write_manifest(out_dir, argv=sys.argv, args=vars(args),
+                        files={"mission": args.mission, "scenario": args.scenario,
+                               **({} if args.offline else {"scene": f"sim_config/{args.scene}"})},
+                        model=llm["config"] if llm else None, results=results, passed=passed,
+                        runs_planned=runs)
     print("\n================ BATCH ================")
     print(f"{'run':>3} {'victim':<6} {'finder':<8} {'t_find_s':>9} {'mission_s':>9} "
           f"{'sectors':>7} {'dup':>3} {'coverage':>8} pass")
@@ -528,6 +644,18 @@ async def main(args) -> int:
           f"mean {b['time_to_find_s']['mean']} s / median {b['time_to_find_s']['median']} s, "
           f"coverage at the end mean {b['area_coverage']['mean']:.1%}, duplicate sweeps "
           f"{b['duplicate_sweeps_total']}, message delivery {b['delivery_ratio']:.1%}")
+    pc = summary.get("paired_vs_reference")
+    if pc:
+        r = pc["speedup"]
+        ci = f" (95% CI {r['ci95'][0]}-{r['ci95'][1]}x)" if r["ci95"] else ""
+        print(f"paired vs {args.reference}: {pc['pairs']} pairs, speedup mean {r['mean']}x"
+              f"{ci}, median {r['median']}x, faster in "
+              f"{pc['faster']}/{pc['pairs']}"
+              + (f"; {pc['unpaired']} unpaired" if pc["unpaired"] else ""))
+    print(f"evidence: {out_dir / 'manifest.json'} (commit {mf['git']['commit_short']}"
+          f"{' DIRTY' if mf['git']['dirty'] else ''}; {mf['counts']['attempted']} attempted, "
+          f"{mf['counts']['valid']} valid, {mf['counts']['stalled']} stalled, "
+          f"{mf['counts']['passed']} passed)")
     print(f"RESULT: {'PASS' if all(passed) else 'FAIL'}   ({out_dir / 'batch_summary.json'})")
     return 0 if all(passed) else 1
 
@@ -552,6 +680,17 @@ def parse_args(argv=None):
                     help="override swarm.layer_spacing_m")
     ap.add_argument("--peer-clear-rule", choices=("single", "corroborated", "self_only"),
                     default=None, help="override swarm.peer_clear_rule")
+    ap.add_argument("--allocation", choices=("dynamic", "static"), default=None,
+                    help="override swarm.allocation (static: fixed split, no claims or clears)")
+    ap.add_argument("--reference", default=None,
+                    help="batch_summary.json (or its folder) of a reference batch on the same "
+                         "victims, e.g. one drone: adds the paired speedup with a 95%% "
+                         "bootstrap interval")
+    ap.add_argument("--obstacle", type=parse_obstacle, action="append", default=None,
+                    help="offline only: NAME:N_MIN,N_MAX,E_MIN,E_MAX,TOP_M box (repeatable)")
+    ap.add_argument("--dropout", type=parse_dropout, default=None, metavar="DRONE@SECONDS",
+                    help="experiment: DRONE fails SECONDS into the search (drops out and lands "
+                         "where it is), e.g. Drone2@120")
     ap.add_argument("--offline", action="store_true", help="kinematic sim instead of AirSim")
     ap.add_argument("--speedup", type=float, default=50.0)
     ap.add_argument("--full-sweep", action="store_true")
