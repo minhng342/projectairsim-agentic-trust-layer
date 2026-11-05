@@ -306,36 +306,45 @@ plan; the climb to 150 m and the staging flight take about 2 minutes of that): i
 experiment, so it does not fail the run by itself (the victim still has to be found and
 everyone has to land).
 
-### Comparison table (offline, commit f257a03, 2026-11-05)
+### Comparison table (offline, commit 9c38d9b, 2026-11-05)
 
 Dev mission, seed 42, 20 runs per condition, the same 20 victims in every row, kinematic sim
 x50. Paired speedup per victim against the one-drone row, 95% bootstrap intervals
-(`python -m evaluation.compare`). Each batch has its `manifest.json`.
+(`python -m evaluation.compare`), over the pairs where both found the victim. Each batch has
+its `manifest.json`. The dropout rows fail Drone2 200 s of sim time into the mission (about
+80 s after the team starts searching; the climb and staging take the rest).
 
 | Condition | Found | Passed | Time to find, mean / median (s) | min / max (s) | Paired speedup, mean (95% CI) | Median speedup (95% CI) | Faster | Coverage | Duplicate sweeps | Delivery |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 drone (Phase 1 planner) | 20/20 | 20/20 | 635 / 626 | 158 / 1311 | 1.0 (reference) | 1.0 (reference) | n/a | 45.9% | n/a | n/a |
-| 3 drones, full cooperation (fixed planner) | 20/20 | 20/20 | 319 / 329 | 132 / 543 | 1.85x (1.63-2.08x) | 1.78x (1.54-2.05x) | 19/20 | 46.0% | 0 | 99.3% |
-| 3 drones, static split | 20/20 | 20/20 | 292 / 267 | 135 / 499 | 2.01x (1.77-2.25x) | 2.08x (1.83-2.24x) | 20/20 | 42.6% | 0 | 99.9% |
-| 3 drones, no messages heard (radio 1 m) | 20/20 | 19/20 | 619 / 644 | 154 / 1214 | 1.03x (0.97-1.09x) | 0.97x (0.96-1.03x) | 7/20 | 51.8% | 980 | 0% |
-| 3 drones, Pydantic AI planners (scripted model) | 20/20 | 20/20 | 311 / 280 | 133 / 586 | 2.43x (1.80-3.08x) | 2.52x (1.28-3.50x) | 16/20 | 56.3% | 0 | 99.8% |
+| 1 drone (Phase 1 planner) | 20/20 | 20/20 | 633.8 / 627.5 | 160.75 / 1320.56 | 1.0 (reference) | 1.0 (reference) | n/a | 45.9% | n/a | n/a |
+| 3 drones, full cooperation | 20/20 | 20/20 | 322.4 / 318.6 | 131.82 / 625.21 | 1.824x (1.638-2.006x) | 1.852x (1.582-2.072x) | 19/20 | 46.3% | 1 | 83.2% |
+| 3 drones, static split | 20/20 | 20/20 | 292.6 / 261.4 | 135.03 / 492.55 | 2.007x (1.772-2.238x) | 2.057x (1.837-2.275x) | 20/20 | 42.6% | 0 | 81.9% |
+| 3 drones, full cooperation, Drone2 drops out at 200 s | 20/20 | 20/20 | 389.4 / 390.9 | 132.74 / 712.06 | 1.554x (1.44-1.674x) | 1.497x (1.416-1.742x) | 19/20 | 46.1% | 8 | 69.8% |
+| 3 drones, static split, Drone2 drops out at 200 s | 13/20 | 13/20 | 293.2 / 305.1 | 134.98 / 488.03 | 1.809x (1.528-2.094x) | 1.976x (1.231-2.119x) | 13/13 | 54.3% | 0 | 80.4% |
+| 3 drones, no messages heard (radio 1 m) | 20/20 | 20/20 | 621.4 / 646.4 | 154.96 / 1212.27 | 1.021x (0.967-1.092x) | 0.965x (0.956-1.022x) | 7/20 | 51.9% | 980 | 0.0% |
+| 3 drones, Pydantic AI planners (scripted model) | 20/20 | 20/20 | 312.5 / 278.6 | 133.1 / 585.46 | 2.429x (1.791-3.075x) | 2.513x (1.267-3.546x) | 16/20 | 56.4% | 0 | 86.1% |
 
 What it says:
 
-- Three drones that share the work find the victim about twice as fast as one, and the
-  interval excludes 1x. Three drones that cannot hear each other gain nothing (the interval
-  covers 1x) and sweep the same sectors 980 times.
-- **The static split is as fast as live cooperation here** (the intervals overlap; its mean is
-  slightly better). Offline nothing goes wrong: no drone drops out, no sector is blocked,
-  every drone flies at the same speed, so a fixed thirds split is already near ideal and the
-  live re-split only adds transit. Live cooperation's value has to show where the static plan
-  breaks: a drone lost or slowed, blocked sectors, uneven speeds. That condition (for example
-  one drone dropping out mid-search) is the one to add next.
-- The no-radio batch's one failure is a real near miss, not noise: in run 15 Drone3 came down
-  over its pad from its 170 m layer while Drone2 flew home along the pad row at 160 m and
-  passed over Drone3's pad (0.55 m apart). A return path can cross another drone's pad column
-  while that drone descends; nothing deconflicts the pad area yet. It showed up here because
-  both drones found the victim and headed home at the same moment.
+- Three drones that share the work find the victim about twice as fast as one; the interval
+  excludes 1x. Three drones that cannot hear each other gain nothing (the interval covers 1x)
+  and sweep the same sectors 980 times.
+- **When nothing goes wrong, a split agreed before takeoff is as good as live cooperation**
+  (overlapping intervals). Every drone flies at the same speed, so fixed thirds are already
+  near ideal and the live re-split only adds transit.
+- **When a drone drops out, only cooperation still finds every victim.** With the static
+  split the victim is never found in 7 of 20 runs (it was in Drone2's part, which nobody
+  takes over); its speedup is computed on the 13 runs it did find, so it looks better than it
+  is. With cooperation all 20 are found: the others take Drone2's cells once it reports
+  `lost`, at the cost of time (1.55x instead of 1.82x) and 8 duplicate sweeps over the batch
+  (sectors Drone2 had partly flown). This is the case the cooperation layer exists for, and
+  the layer Phase 4 attacks.
+- With the pad zone (below) the no-radio batch now passes 20 of 20: the run 15 near miss
+  (0.55 m, before the fix) is gone.
+- Peer-message delivery is lower than in the first batch of the day (about 83% instead of
+  99% for full cooperation). The likely cause is that landings now happen one at a time, so
+  the finder keeps repeating its find to teammates that have already landed. I have not
+  checked this in the logs.
 
 ## Ready for Phase 4
 
