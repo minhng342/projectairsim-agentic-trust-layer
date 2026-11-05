@@ -50,7 +50,8 @@ MAX_INTERPOLATION_GAP_S = 3.0   # truth samples further apart are not joined (2 
 
 def coverage_raster(mission: Mission, track, altitude_tolerance_m: float = 5.0,
                     cells_per_footprint: int = 10,
-                    max_gap_s: float = MAX_INTERPOLATION_GAP_S):
+                    max_gap_s: float = MAX_INTERPOLATION_GAP_S,
+                    altitude_m: float | None = None):
     """(covered cells, total cells, cell size): cells whose center fell inside the square
     footprint around the track while at search altitude; segments between samples are
     interpolated at half-cell steps, but only across gaps of at most max_gap_s (a longer
@@ -62,7 +63,7 @@ def coverage_raster(mission: Mission, track, altitude_tolerance_m: float = 5.0,
     ny = max(1, round(a.size_m.height / cell))
     cx, cy = a.size_m.width / nx, a.size_m.height / ny
     x0, y0, half = a.origin.x_m, a.origin.y_m, f / 2
-    alt = mission.flight.altitude_m
+    alt = mission.flight.altitude_m if altitude_m is None else altitude_m   # a drone's layer
     covered: set[tuple[int, int]] = set()
 
     def mark(x, y):

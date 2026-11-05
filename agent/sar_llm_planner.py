@@ -45,7 +45,16 @@ NEAREST_LISTED = 8
 PRIOR_LISTED = 8
 
 
-def system_prompt(vehicle_id: str, mission: Mission) -> str:
+TEAM_PROMPT = """
+
+You are one drone of a team. Teammates search at the same time and tell each other what they do;
+their messages update your memory ('p' on the map = a teammate reported it clear). The situation lists
+your teammates, what each is sweeping now, and the sectors assigned to you (a Voronoi split of what is
+still open: the sectors nearer you than any teammate). Choose only from your assigned sectors; the
+guard refuses others. Teammates' reports are claims, not your own observations."""
+
+
+def system_prompt(vehicle_id: str, mission: Mission, team: bool = False) -> str:
     g = mission.area.sectors
     sx, sy = mission.sector_size_m
     last_letter = chr(ord("A") + g.y - 1)
@@ -71,7 +80,7 @@ Search well:
 - If a prior is given, it says where the person is more likely to be: search likely sectors early,
   but weigh that against long transits.
 - A guard checks every choice. If it refuses one, it tells you why; fix the choice.
-Keep the reason to one short sentence."""
+Keep the reason to one short sentence.""" + (TEAM_PROMPT if team else "")
 
 
 def _phi(z: float) -> float:
@@ -104,7 +113,7 @@ def memory_map(mission: Mission, belief, here: str | None) -> str:
         for L in letters:
             sid = f"{L}{ix + 1}"
             st = belief.status(sid).value
-            c = {"swept": "#", "partial": "~", "in_progress": "~"}.get(st, ".")
+            c = {"swept": "#", "partial": "~", "in_progress": "~", "peer_cleared": "p"}.get(st, ".")
             row.append(c)
         lines.append(f"{ix + 1:>3} " + " ".join(row))
     if here:
@@ -129,11 +138,13 @@ def situation(planner: "LLMSectorPlanner", state, remaining: list[str]) -> dict:
                 "altitude_m": round(state.altitude_m, 1), "over_sector": state.sector_id},
         "time": {"used_s": round(m.termination.max_mission_time_s - left),
                  "left_s": round(left), "limit_s": m.termination.max_mission_time_s},
-        "memory": {"swept": len(planner.belief.swept()), "unsearched": len(remaining),
+        "memory": {"swept": len(planner.belief.done()), "unsearched": len(remaining),
                    "total": len(m.grid.ids())},
         "last_sector": planner.last_sector,
         "nearest_unsearched": nearest,
     }
+    if hasattr(planner, "swarm_situation"):
+        out["team"] = planner.swarm_situation()
     prior = planner.prior
     if prior:
         likely = sorted(((p, s) for s, p in prior.items() if s in remaining), reverse=True)
@@ -146,7 +157,7 @@ def decision_prompt(planner, state, remaining) -> str:
     sit = situation(planner, state, remaining)
     return ("Situation (from your own observation and memory):\n```json\n"
             + json.dumps(sit) + "\n```\n\nMemory map (north at the top; '.' unsearched, "
-            "'#' swept, '~' partly swept):\n```\n"
+            "'#' swept, '~' partly swept, 'p' cleared by a teammate):\n```\n"
             + memory_map(planner.mission, planner.belief, state.sector_id)
             + "\n```\nChoose the next action.")
 
@@ -174,7 +185,8 @@ class LLMSectorPlanner(FixedSectorPlanner):
     # ------------------------------------------------------------ agent
     def _build_agent(self) -> Agent:
         agent = Agent(self.model, output_type=[SweepSector, ReturnHome],
-                      instructions=system_prompt(self.vehicle_id, self.mission),
+                      instructions=system_prompt(self.vehicle_id, self.mission,
+                                                 team=getattr(self, "team", False)),
                       retries=self.retries, name=f"search-{self.vehicle_id}")
         planner = self
 

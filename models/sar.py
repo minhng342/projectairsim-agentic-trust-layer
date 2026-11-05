@@ -24,8 +24,8 @@ Derived in code, not written in YAML (deck slide 13):
 
 Validation (Pydantic, at load time): an area size not divisible into whole-meter sectors,
 a footprint larger than a sector, and a start sector outside the grid are rejected, and
-every error names the field. Radio range and message types arrive in Phase 3 with
-defaults, so Phase 1 files stay valid.
+every error names the field. The swarm section (Phase 3: radio range, layers, peer-claim
+rules) has defaults, so Phase 1 and 2 files stay valid and a one-drone run ignores it.
 """
 import math
 import random
@@ -123,6 +123,36 @@ class Limits(_Strict):
     geofence_margin_m: float = Field(ge=0)
 
 
+class Swarm(_Strict):
+    """Phase 3: how the drones of a team work together. Ignored with one drone.
+
+    radio_range_m     a message reaches a peer only if the TRUE sender is within this
+                      3D distance of it (the bus decides from ground truth; None = unlimited)
+    layer_spacing_m   drone i of the scenario flies at altitude_m + i * layer_spacing_m, so
+                      cooperation never becomes a collision problem
+    peer_timeout_s    a peer not heard for this many sim seconds has dropped out: its
+                      position no longer counts in the Voronoi partition and its claims lapse
+    max_claim_s       a SectorClaimed lasts until its expiry, capped at this many seconds
+                      after it was received
+    peer_clear_rule   when a peer's SectorCleared marks a sector done in this drone's memory:
+                      single (one peer is enough: the Phase 3 cooperation baseline),
+                      corroborated (corroboration_n different peers), self_only (never; peer
+                      clears are recorded but this drone sweeps everything itself)
+    peer_victim_rule  accept: a peer's VictimDetected ends this drone's search (Phase 3
+                      baseline); ignore: recorded only
+    victim_repeat_s   the finder repeats its VictimDetected this often until it lands, so a
+                      peer out of range at the moment of the find still hears it later
+    """
+    radio_range_m: float | None = Field(default=500.0, gt=0)
+    layer_spacing_m: float = Field(default=10.0, ge=0)
+    peer_timeout_s: float = Field(default=10.0, gt=0)
+    max_claim_s: float = Field(default=600.0, gt=0)
+    peer_clear_rule: Literal["single", "corroborated", "self_only"] = "single"
+    corroboration_n: int = Field(default=2, ge=2)
+    peer_victim_rule: Literal["accept", "ignore"] = "accept"
+    victim_repeat_s: float = Field(default=2.0, gt=0)
+
+
 class Mission(_Strict):
     mission_id: str = Field(min_length=1)
     area: Area
@@ -132,6 +162,7 @@ class Mission(_Strict):
     prior: Prior = Prior()
     termination: Termination
     limits: Limits
+    swarm: Swarm = Swarm()
 
     @model_validator(mode="after")
     def _consistent(self):
@@ -168,6 +199,16 @@ class Mission(_Strict):
         return {"sector_size_m": [sx, sy], "lane_spacing_m": round(self.lane_spacing_m, 3),
                 "passes_per_sector": self.passes_per_sector,
                 "sector_count": self.area.sectors.x * self.area.sectors.y}
+
+    def for_layer(self, layer: int) -> "Mission":
+        """This mission as flown by drone number `layer` of the team: the same plan at its
+        own altitude (flight.altitude_m + layer * swarm.layer_spacing_m). Layer 0 is the
+        mission itself."""
+        if layer == 0:
+            return self
+        alt = self.flight.altitude_m + layer * self.swarm.layer_spacing_m
+        return self.model_copy(update={"flight": self.flight.model_copy(
+            update={"altitude_m": alt})})
 
     def geofence_excursion_m(self, x: float, y: float) -> float:
         """How far (x, y) lies outside the area (0 inside). Compare with

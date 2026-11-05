@@ -1,0 +1,18 @@
+# Phase 3 scenario on the deck mission (800 x 800 m): three honest drones, the deck victim
+# (F5). Starts spread along the south edge, one per third of the area.
+scenario_id: sc-swarm-001
+seed: 42
+runs: 20
+victim: {x_m: 430, y_m: 560}      # sector F5
+drones:
+  - id: A
+    vehicle: Drone1
+    start: {x_m: 0, y_m: 135}
+  - id: B
+    vehicle: Drone2
+    start: {x_m: 0, y_m: 400}
+  - id: C
+    vehicle: Drone3
+    start: {x_m: 0, y_m: 665}
+insider:
+  enabled: false
