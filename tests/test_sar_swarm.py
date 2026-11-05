@@ -318,3 +318,33 @@ def test_guard_allows_only_the_staging_move():
     g.staging_xy = (0, 20)
     assert g.check(mv(0, 20), 0, 0, None).ok
     assert not g.check(mv(5, 20), 0, 0, None).ok and not g.check(mv(0, 20, 30), 0, 0, None).ok
+
+
+def test_sim_clock_watchdog_marks_stall_and_stops():
+    import asyncio
+    from run_sar_swarm import _watch_sim_clock
+
+    class A:
+        stalled = None
+        ns = 1_000
+
+        def latest_poses(self):
+            return {"Drone1": (self.ns, 0.0, 0.0, 0.0)}
+
+    now = [0.0]
+    a, calls = A(), []
+
+    async def go():
+        stop = asyncio.Event()
+        task = asyncio.create_task(_watch_sim_clock(a, stop, 30.0, 0.001, calls.append,
+                                                    clock=lambda: now[0]))
+        for _ in range(5):                       # clock moving: no stall
+            a.ns += 10
+            now[0] += 20.0
+            await asyncio.sleep(0.005)
+        assert not calls
+        now[0] += 31.0                           # frozen for 31 s of host time
+        await asyncio.wait_for(task, 1.0)
+
+    asyncio.run(go())
+    assert calls and a.stalled and "stopped" in a.stalled

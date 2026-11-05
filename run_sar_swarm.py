@@ -41,6 +41,7 @@ import asyncio
 import json
 import math
 import sys
+import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +70,7 @@ from trust.assessor import NoTrustAssessor
 from utils.flight_safety import safe_shutdown
 
 REMOTE_ID_HZ = 1.0
+SIM_STALL_S = 30.0          # live: host seconds with no sim-clock progress before a run is ended
 
 
 async def _sample_truth(adapter, vids, missions, recorder, stop, period_s, on_breach):
@@ -101,6 +103,31 @@ async def _sample_truth(adapter, vids, missions, recorder, stop, period_s, on_br
         if snap:
             recorder.record("truth", sim_time_ns=max(v["sim_time_ns"] for v in snap.values()),
                             poses=snap)
+        try:
+            async with asyncio.timeout(period_s):
+                await stop.wait()
+        except asyncio.TimeoutError:
+            pass
+
+
+async def _watch_sim_clock(adapter, stop, stall_s, period_s, on_stall, clock=time.monotonic):
+    """Live only: if the sim clock (pose push topic) has not moved for stall_s of host
+    time, mark the adapter stalled (every later snapshot raises SimStalled) and stop the
+    sweeps, so the run winds down instead of waiting on a frozen sim. A pull request that
+    never answers is caught by the adapter itself (request_timeout_s)."""
+    last_ns, since = None, clock()
+    while not stop.is_set():
+        ns = max((p[0] for p in adapter.latest_poses().values()), default=None)
+        if ns is not None and ns != last_ns:
+            last_ns, since = ns, clock()
+        elif clock() - since > stall_s and not getattr(adapter, "stalled", None):
+            adapter.stalled = (f"sim clock stopped at {(last_ns or 0) / 1e9:.1f} s for "
+                               f"{clock() - since:.0f} s")
+            on_stall(adapter.stalled)
+            return
+        if getattr(adapter, "stalled", None):
+            on_stall(adapter.stalled)
+            return
         try:
             async with asyncio.timeout(period_s):
                 await stop.wait()
@@ -287,6 +314,14 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                        (f"{vid}.time_watch", asyncio.create_task(_watch_time(
                            adapter, vid, t["mission"], t["planner"], t["sector_ex"], stop,
                            timing.poll(1.0))))]
+            if not args.offline:
+                def stalled(why):
+                    log(f"  [{time.strftime('%H:%M:%S')}] SIM STALLED: {why}; ending the run")
+                    recorder.record("sim_stalled", reason=why)
+                    for t in team.values():
+                        t["sector_ex"].interrupt("sim stalled")
+                bg.append(("sim_clock", asyncio.create_task(_watch_sim_clock(
+                    adapter, stop, SIM_STALL_S, 1.0, stalled))))
             bg.append(("truth", asyncio.create_task(_sample_truth(
                 adapter, vids, missions, recorder, stop, 1.0 / timing.hz(TRUTH_HZ),
                 lambda vid: team[vid]["sector_ex"].interrupt("geofence")))))
@@ -295,7 +330,9 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                 t, res = team[vid], results[vid]
                 try:
                     await _takeoff(adapter, vid, recorder, timeout_s=30.0)
-                    res["planner"] = await t["planner"].run()
+                    res["planner"] = pr = await t["planner"].run()
+                    log(f"  [{time.strftime('%H:%M:%S')}] {vid}: search ended: {pr.outcome} "
+                        f"({pr.reason}); return home: {pr.return_home}")
                     r = await flight.change_altitude(
                         vid, round(t["launch_alt"] + DESCEND_ABOVE_LAUNCH_M, 2),
                         reason="setup: descend before landing")
@@ -343,6 +380,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
         d["error"] = r["error"]
         d["planner_reason"] = r["planner"].reason if r["planner"] else None
     metrics["background_errors"] = bg_errors
+    metrics["sim_stalled"] = getattr(adapter_cm, "stalled", None)
     metrics["run_error"] = run_error
     metrics["all_landed"] = all(d.get("landed") for d in metrics["drones"].values())
     stem.with_suffix(".summary.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
@@ -376,6 +414,8 @@ def run_failures(m: dict, full_sweep: bool, min_coverage: float = FULL_SWEEP_MIN
         why.append("run log incomplete")
     if m.get("run_log_outcome") in (None, "aborted"):
         why.append(f"run log ended {m.get('run_log_outcome')}")
+    if m.get("sim_stalled"):
+        why.insert(0, f"SIM STALLED ({m['sim_stalled']})")
     if m.get("run_error"):
         why.append(f"run error: {m['run_error']}")
     if m.get("background_errors"):
@@ -439,13 +479,18 @@ async def main(args) -> int:
               f"(dup {m['duplicate_sweeps']}), coverage {m['area_coverage']:.1%}, msgs "
               f"{m['messages']['peer_sent']} sent / {m['messages']['out_of_range']} out of range"
               + ("" if not m["fail_reasons"] else f"; FAIL: {'; '.join(m['fail_reasons'])}"))
+        if m.get("sim_stalled"):
+            print("  the simulator stalled: stopping the batch. Restart CityEnviron, then rerun "
+                  "(stalled runs are left out of the baseline).")
+            break
     passed = [not m["fail_reasons"] for m in results]
     summary = {"batch": batch, "mission_file": args.mission, "scenario_file": args.scenario,
                "planner": args.planner, "model": llm["label"] if llm else None,
                "drones": [d.vehicle for d in scenario.drones], "swarm": s.model_dump(mode="json"),
                "mode": "offline" if args.offline else "live", "speedup": timing.k,
                "full_sweep": args.full_sweep, "gate": args.gate,
-               "baseline": batch_baseline(results), "passed": passed,
+               "baseline": batch_baseline([m for m in results if not m.get("sim_stalled")]),
+               "stalled_runs": [m["run_index"] for m in results if m.get("sim_stalled")], "passed": passed,
                "all_passed": all(passed), "runs": results}
     (out_dir / "batch_summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     print("\n================ BATCH ================")

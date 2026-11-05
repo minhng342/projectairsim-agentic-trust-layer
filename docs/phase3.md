@@ -166,6 +166,16 @@ the paired ratios are the useful part until live batches exist.
 - Layers 150 / 160 / 170 m stay above the rooftops that forced 150 m in Phase 1.
 - With `--planner llm` three agents share one Ollama server; decisions are at sector
   boundaries only, so with qwen3.5:9b `--thinking off` (~4 s per decision) the load is light.
+- First full 3-drone pass (2026-11-05, qwen3.5:9b, thinking off): victim in A6 found by Drone3
+  at 550 s, mission 578 s, 58/64 sectors, 0 duplicates, 195 messages (2 out of range), all
+  landed. LLM decisions took about 0.7-2.5 s each.
+- Second run froze: CityEnviron stopped stepping (sim time moved 0.16 s in 757 s of host time),
+  and because telemetry pulls are synchronous on the one asyncio loop, every drone and the
+  60 s decision timeout froze with it. Now the adapter bounds each pull
+  (`request_timeout_s`, 20 s) and then raises `SimStalled` at once, and the runner watches
+  the sim clock: no progress for `SIM_STALL_S` (30 s) ends the run with `SIM STALLED`, stops
+  the batch, and leaves the run out of the baseline. Restart CityEnviron and rerun.
+- The console now prints why each drone's search ended (`search ended: ...`).
 
 ## Ready for Phase 4
 
