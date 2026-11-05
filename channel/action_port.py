@@ -79,6 +79,9 @@ _EXECUTOR_FEEDBACK = {
                                          "was sent."),
     "path_blocked": ("path_blocked", "The drone could not make progress along the path "
                                      "(blocked by an obstacle); it is hovering."),
+    "pad_zone_timeout": ("pad_zone_timeout", "A teammate kept the airspace over the pads "
+                                             "too long; the drone did not go in and is "
+                                             "holding outside it."),
     "path_failed": ("failed", "The flight controller could not complete the path; the drone "
                               "was told to hover."),
 }

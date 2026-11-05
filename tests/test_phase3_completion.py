@@ -340,3 +340,109 @@ def test_finder_stops_repeating_the_find_once_no_peer_is_searching(tmp_path):
                     if e["vehicle_id"] == finder and e["msg"]["msg_type"] == "victim_detected")
     assert last_sent < stopped["event_id"]
     assert s["runs"][0]["messages"]["delivery_ratio"] == 1.0
+
+
+# ------------------------------------------------------------------ pad zone timeout
+def _airborne_at(sim, vid, north, east, alt=10.0):
+    async def go():
+        d = sim.drone(vid)
+        d.enable_api_control()
+        d.arm()
+        await (await d.takeoff_async())
+        await (await d.move_to_position_async(north, east, -alt, 5.0))
+    return go()
+
+
+def _return_home_with_zone_held(start_xy):
+    """Drone1 flies home while Drone2 keeps the pad zone past the wait (review 359eb49 P1
+    reproduction): the return must end pad_zone_timeout outside the zone, never go in."""
+    from executor.pad_zone import PadZone
+    m = _mission()
+    sim = KinematicSim({"Drone1": (0.0, 0.0)}, speedup=200)
+    flight = ProjectAirSimExecutor(sim)
+    zone = PadZone((0.0, 0.0), 10.0)
+
+    async def go():
+        await _airborne_at(sim, "Drone1", *start_xy, alt=m.flight.altitude_m)
+        assert await zone.acquire("Drone2")
+        ex = SectorExecutor(sim, "Drone1", m, (0.0, 0.0), flight, pad_zone=zone,
+                            pad_wait_s=0.001,
+                            follower_config=FollowerConfig(poll_interval_s=0.0005,
+                                                           hover_timeout_s=5.0))
+        events = []
+        ex._emit = lambda kind, **f: events.append((kind, f))
+        r = await ex.execute(ProposedAction(vehicle_id="Drone1", reason="t",
+                                            action_type=ActionType.RETURN_HOME))
+        p = sim.get_snapshot("Drone1").position_ned_m
+        return r, (p.x, p.y), events, zone
+    return asyncio.run(go())
+
+
+def test_pad_zone_timeout_never_flies_in_from_outside():
+    r, xy, events, zone = _return_home_with_zone_held((40.0, 0.0))
+    assert r.reason_code == "pad_zone_timeout" and r.status.value == "failed"
+    assert zone.holder == "Drone2"
+    assert not zone.inside(xy) and xy[0] == pytest.approx(12.0, abs=1.0)   # held at the edge
+    kinds = [k for k, _ in events]
+    assert "return_home_started" not in kinds                  # no inward leg was flown
+
+
+def test_pad_zone_timeout_from_inside_leaves_the_zone_first():
+    r, xy, events, zone = _return_home_with_zone_held((3.0, 0.0))
+    assert r.reason_code == "pad_zone_timeout"
+    assert not zone.inside(xy)                                 # out to the edge, not over the pads
+    assert "return_home_started" not in [k for k, _ in events]
+
+
+def test_approach_point_from_the_centre_is_on_the_edge():
+    from executor.pad_zone import PadZone
+    z = PadZone((1.0, 2.0), 10.0)
+    assert not z.inside(z.approach_point((1.0, 2.0)))
+
+
+def _zone_of(log):
+    (pz,) = log.of_kind("pad_zone")
+    return tuple(pz["center"]), pz["radius_m"]
+
+
+def _final_xy(log, vid):
+    last = [e["poses"][vid] for e in log.of_kind("truth") if vid in e["poses"]][-1]
+    return last["north_m"], last["east_m"]
+
+
+def test_runner_lands_outside_the_zone_when_the_wait_times_out(tmp_path, monkeypatch):
+    import run_sar_swarm
+    monkeypatch.setattr(run_sar_swarm, "PAD_WAIT_S", 0.5)
+    code, batch, s = run_swarm(tmp_path)
+    m = s["runs"][0]
+    log = read_run(batch / "run_00.jsonl")
+    assert m["pad_zone_timeouts"] >= 1 and m["contingency_landings"], m["fail_reasons"]
+    assert code != 0 and any("pad zone timeout" in w for w in m["fail_reasons"])
+    center, radius = _zone_of(log)
+    holders = {e["vehicle_id"] for e in log.of_kind("pad_zone_enter")}
+    for vid in m["contingency_landings"]:
+        assert vid not in holders
+        x, y = _final_xy(log, vid)
+        assert ((x - center[0]) ** 2 + (y - center[1]) ** 2) ** 0.5 >= radius - 0.5
+    for e in log.of_kind("contingency_landing"):
+        assert e["inside_zone"] is False
+    assert all(d["landed"] for d in m["drones"].values())
+
+
+def test_unconfirmed_landing_keeps_the_zone_held(tmp_path, monkeypatch):
+    import run_sar_swarm
+    real = run_sar_swarm.safe_shutdown
+
+    async def unconfirmed(*a, **kw):
+        rep = await real(*a, **kw)
+        rep.grounded_confirmed = False
+        return rep
+    monkeypatch.setattr(run_sar_swarm, "safe_shutdown", unconfirmed)
+    monkeypatch.setattr(run_sar_swarm, "PAD_WAIT_S", 2.0)
+    code, batch, s = run_swarm(tmp_path)
+    m = s["runs"][0]
+    log = read_run(batch / "run_00.jsonl")
+    assert not log.of_kind("pad_zone_leave")
+    assert len(log.of_kind("pad_zone_enter")) == 1            # the first lander keeps it
+    assert m["pad_zone_held_unconfirmed"] and len(m["contingency_landings"]) == 2
+    assert code != 0

@@ -13,7 +13,9 @@ action port's executor, so every action still goes proposal -> gate -> executor 
     return_home      straight back over the launch point at mission altitude (or at
                      action.altitude_m if higher: the planner's obstacle recovery). With a
                      pad_zone (swarm, executor/pad_zone.py) in two legs: to the zone's edge,
-                     wait there until no teammate is landing, then in to the pad
+                     wait there until no teammate is landing, then in to the pad. A drone
+                     that is inside the zone when a teammate holds it first flies out to
+                     the edge. If the wait times out it never goes in (pad_zone_timeout)
     move_to_position straight to (north, east) at mission altitude (Phase 3 staging);
                      result position_reached
     change_altitude  delegated to the flight executor (climb in place to mission altitude,
@@ -31,17 +33,23 @@ Result codes (CommandResult.reason_code, mapped to agent feedback by the port):
     path_blocked      the follower made no progress for stuck_after_s (an obstacle); it
                       hovered
     path_failed       the follower failed (telemetry, timeout, grounded); it hovered
+    pad_zone_timeout  return home: a teammate held the pad zone for pad_wait_s; the drone
+                      did not go in and is holding at the zone's edge
     unsupported_action, not_applicable
 Policy (which sector may be swept now, geofence) is not checked here: in Phase 2 that is
 the invariant guard's job, in the port's gate slot.
 """
 import math
 import time
+from types import SimpleNamespace as _Leg
 
 from executor.path_follower import FollowerConfig, FollowMode, PathFollower
 from models.action import ActionType, CommandResult, CommandStatus, ProposedAction
 from models.sar import Mission
 from search.boustrophedon import sweep_path
+
+
+PAD_EDGE_MARGIN_M = 2.0     # wait this far outside the pad zone (the follower stops ~0.1 m short)
 
 
 class SectorExecutor:
@@ -131,8 +139,10 @@ class SectorExecutor:
             waypoints = [here, self.home_xy]
             z = self.pad_zone
             if z is not None and z.holder != self.vehicle_id:
-                if not z.inside(here):          # leg 1: to the zone's edge on this layer
-                    edge = z.approach_point(here)
+                # leg 1: to the zone's edge on this layer. A drone already inside (its
+                # search ended near the pads) waits at the edge too, not over the pads.
+                if not (z.inside(here) and z.holder is None):
+                    edge = z.approach_point(here, PAD_EDGE_MARGIN_M)
                     r = await self._fly([here, edge], fly_alt, action)
                     if r is not None:
                         return result(*r)
@@ -141,7 +151,16 @@ class SectorExecutor:
                             else edge)
                     waypoints = [here, self.home_xy]
                 self._emit("pad_zone_wait", request_id=action.request_id, held_by=z.holder)
-                await z.acquire(self.vehicle_id, timeout_s=self.pad_wait_s)
+                if not await z.acquire(self.vehicle_id, timeout_s=self.pad_wait_s):
+                    # never fly in without the zone: hold outside it; the runner lands
+                    # the drone here, outside the zone (a recorded contingency landing)
+                    self.current_sector = None
+                    self._emit("return_home_failed", sector_id=None,
+                               request_id=action.request_id, reason="pad_zone_timeout",
+                               held_by=z.holder, position=here)
+                    return result(CommandStatus.FAILED, "pad_zone_timeout",
+                                  f"the pad zone stayed held by {z.holder} for "
+                                  f"{self.pad_wait_s:g} s; holding outside it", True)
             self.current_sector = None
             self._emit("return_home_started", home=self.home_xy, request_id=action.request_id)
 
@@ -177,6 +196,21 @@ class SectorExecutor:
                    blocked=blocked)
         return result(CommandStatus.FAILED, "path_blocked" if blocked else "path_failed",
                       f"{r.mode.value}: {r.reason}", True)
+
+    async def leave_pad_zone(self) -> bool:
+        """Fly straight out to the pad zone's edge on this drone's layer (the runner, when a
+        drone must land without holding the zone). True once outside it."""
+        z, snap = self.pad_zone, self._truth()
+        if z is None or snap is None:
+            return z is None
+        here = (snap.position_ned_m.x, snap.position_ned_m.y)
+        if not z.inside(here):
+            return True
+        edge = z.approach_point(here, PAD_EDGE_MARGIN_M)
+        self._emit("pad_zone_exit", position=here, edge=edge)
+        r = await self._fly([here, edge], self.mission.flight.altitude_m,
+                            _Leg(request_id=None))
+        return r is None
 
     async def _fly(self, waypoints, alt, action):
         """One leg (the return home's approach to the pad zone). None when it got there,

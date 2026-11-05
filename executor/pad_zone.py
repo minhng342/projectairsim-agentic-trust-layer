@@ -22,6 +22,11 @@ climbing together, already covered by the pad separation floor).
 
 acquire(timeout_s) gives up waiting after timeout_s host seconds (returns False, recorded
 as pad_zone_timeout) so a holder that never releases cannot strand the others in the air.
+A False is never permission to go in: the sector executor then holds at the zone's edge
+(pad_zone_timeout) and the runner lands that drone where it is, outside the zone, as a
+recorded contingency landing. The runner releases the zone only once the holder's landing
+is confirmed; an unconfirmed landing keeps it held (pad_zone_held_unconfirmed), so the
+others land outside rather than descend next to a drone still in the air.
 """
 import asyncio
 import math
@@ -49,13 +54,13 @@ class PadZone:
     def inside(self, xy) -> bool:
         return math.dist(self.center, xy) < self.radius_m - 1e-6
 
-    def approach_point(self, from_xy) -> tuple[float, float]:
-        """The point on the zone's edge on the way in from from_xy."""
+    def approach_point(self, from_xy, margin_m: float = 0.0) -> tuple[float, float]:
+        """The point on the zone's edge (margin_m outside it) on the way in from from_xy."""
         dx, dy = from_xy[0] - self.center[0], from_xy[1] - self.center[1]
-        d = math.hypot(dx, dy)
-        if d < 1e-6:
-            return tuple(from_xy)
-        return (self.center[0] + dx / d * self.radius_m, self.center[1] + dy / d * self.radius_m)
+        d, r = math.hypot(dx, dy), self.radius_m + margin_m
+        if d < 1e-6:                       # over the centre: any way out will do
+            return (self.center[0] + r, self.center[1])
+        return (self.center[0] + dx / d * r, self.center[1] + dy / d * r)
 
     async def acquire(self, vid: str, timeout_s: float | None = None) -> bool:
         if self.holder == vid:
