@@ -142,6 +142,22 @@ class Swarm(_Strict):
                       baseline); ignore: recorded only
     victim_repeat_s   the finder repeats its VictimDetected this often until it lands, so a
                       peer out of range at the moment of the find still hears it later
+    identity          how a receiver knows who sent a message. authenticated (default, the
+                      professor's authenticated-insider model): the radio link authenticates
+                      the transmitter (a simulated stand-in for a signed link), and a peer
+                      message or Remote ID report whose claimed sender_id / uas_id is not
+                      that transmitter is dropped (identity_mismatch). A liar can lie about
+                      content, never about who it is, so corroboration counts real senders.
+                      unverified: the claimed id is taken at face value; one transmitter can
+                      pose as many (a separately labelled spoofing condition)
+    separation_cruise_m  acceptance: two airborne drones never closer than this (3D), except
+    separation_pad_m     near the pads: while either drone is within pad_zone_m (horizontal)
+    pad_zone_m           of any launch point, the floor is separation_pad_m instead (pads are
+                         3 m apart and the team climbs and lands in place). Airborne = at
+                         least 1 m above that drone's own launch altitude. Measured from the
+                         2 Hz truth samples (a close approach between samples can be missed);
+    max_truth_gap_s      a gap longer than this in the samples makes separation unmeasured,
+                         which fails the run too
     staging           optional: drone i first flies (at its layer) to staging[i], then starts
                       searching. Lets the team launch from one known-clear pad area while the
                       first Voronoi split still starts from spread-out generators (drones on
@@ -156,6 +172,11 @@ class Swarm(_Strict):
     peer_victim_rule: Literal["accept", "ignore"] = "accept"
     victim_repeat_s: float = Field(default=2.0, gt=0)
     staging: list[Point] | None = None
+    identity: Literal["authenticated", "unverified"] = "authenticated"
+    separation_cruise_m: float = Field(default=5.0, ge=0)
+    separation_pad_m: float = Field(default=1.5, ge=0)
+    pad_zone_m: float = Field(default=10.0, ge=0)
+    max_truth_gap_s: float = Field(default=2.0, gt=0)
 
 
 class Mission(_Strict):

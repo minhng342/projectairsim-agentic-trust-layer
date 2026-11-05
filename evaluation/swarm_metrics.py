@@ -17,6 +17,9 @@ Team (the research question's metrics):
     time_to_hear_s          per other drone: sim seconds from the find until it accepted the
                             finder's VictimDetected (None = never heard it)
     min_separation_m        smallest 3D distance between two airborne drones (truth samples)
+    separation              the acceptance check (Swarm.separation_*): smallest distance in
+                            the pad zone and in cruise, violations of each floor, samples,
+                            largest gap between samples, measured (False = a gap too long)
     messages                peer messages sent by type, valid deliveries, invalid dropped,
                             deliveries lost to radio range, delivery ratio (valid deliveries /
                             (sent x other drones)), peer clears accepted
@@ -108,17 +111,8 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
             t = got[0].get("sim_time_ns") if got else None
             hear[v] = round(t / 1e9 - t_det, 2) if t is not None else None
 
-    # separation between airborne drones, from truth samples that hold several drones
-    min_sep = None
-    for e in log.of_kind("truth"):
-        poses = e.get("poses") or {}
-        for a, b in itertools.combinations(sorted(poses), 2):
-            pa, pb = poses[a], poses[b]
-            if pa["altitude_m"] < 2.0 or pb["altitude_m"] < 2.0:
-                continue
-            d = math.dist((pa["north_m"], pa["east_m"], pa["altitude_m"]),
-                          (pb["north_m"], pb["east_m"], pb["altitude_m"]))
-            min_sep = d if min_sep is None else min(min_sep, d)
+    sep = separation(log, mission, drones, speedup=float(cfg.get("speedup") or 1.0))
+    min_sep = sep["min_m"]
 
     peer_tx = {e["tx_id"] for e in log.of_kind("rid_transmit")
                if isinstance(e.get("payload"), dict) and "msg_type" in e["payload"]}
@@ -137,6 +131,7 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
     own_total = sum(len(v) for v in swept_by.values())
     return {
         "run_index": cfg.get("run_index"), "seed": cfg.get("seed"),
+        "insider_enabled": bool(cfg.get("insider_enabled")),
         "drone_count": len(vids),
         "victim": cfg.get("victim"), "victim_sector": cfg.get("victim_sector"),
         "victim_found": first is not None, "finder": finder,
@@ -150,9 +145,12 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
         "area_coverage": round(len(union_cov) / total_cells, 4) if total_cells else 0.0,
         "distance_flown_m": round(sum(d["distance_flown_m"] for d in per.values()), 1),
         "min_separation_m": round(min_sep, 2) if min_sep is not None else None,
+        "separation": sep,
         "messages": {"peer_sent": len(sent), "peer_sent_by_type": by_type,
                      "peer_delivered": received,
                      "peer_dropped_invalid": len(log.of_kind("peer_message_dropped")),
+                     "identity_mismatch": len(log.of_kind("identity_mismatch")),
+                     "processing_errors": len(log.of_kind("peer_message_error")),
                      "out_of_range": oor, "remote_id_out_of_range": rid_oor,
                      "delivery_ratio": round(received / expected, 4) if expected else None},
         "agents_deceived": 0,
@@ -162,6 +160,58 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
         "drones": per,
         "run_complete": log.complete, "run_log_outcome": log.outcome,
     }
+
+
+def separation(log: RunLog, mission: Mission, drones: list[dict], speedup: float = 1.0) -> dict:
+    """Closest approach between airborne drones, split into the pad zone and cruise, against
+    the mission's floors (Swarm.separation_*). Truth samples are 2 Hz: a closer approach
+    between two samples can be missed. A pair whose two pose times differ by more than half
+    a second is skipped (counted as skewed). The allowed gap between samples is
+    max_truth_gap_s plus 0.25 host seconds of jitter at the run speedup (offline x100 turns
+    a 20 ms host hiccup into 2 sim seconds)."""
+    sw = mission.swarm
+    pads = [(d["start"]["x_m"], d["start"]["y_m"]) for d in drones if d.get("start")]
+    launch: dict[str, float] = {}
+    out = {"min_m": None, "min_pad_m": None, "min_cruise_m": None, "samples": 0,
+           "skewed_pairs": 0, "max_gap_s": None, "pad_violations": 0, "cruise_violations": 0,
+           "floors": {"cruise_m": sw.separation_cruise_m, "pad_m": sw.separation_pad_m,
+                      "pad_zone_m": sw.pad_zone_m}, "sample_hz": 2.0}
+    worst: list = []
+    prev_t = None
+    for e in log.of_kind("truth"):
+        poses = e.get("poses") or {}
+        t = (e.get("sim_time_ns") or 0) / 1e9
+        if prev_t is not None:
+            out["max_gap_s"] = round(max(out["max_gap_s"] or 0.0, t - prev_t), 3)
+        prev_t = t
+        out["samples"] += 1
+        for v, p in poses.items():
+            launch.setdefault(v, p["altitude_m"])
+        for a, b in itertools.combinations(sorted(poses), 2):
+            pa, pb = poses[a], poses[b]
+            if pa["altitude_m"] - launch[a] < 1.0 or pb["altitude_m"] - launch[b] < 1.0:
+                continue
+            if abs((pa.get("sim_time_ns") or 0) - (pb.get("sim_time_ns") or 0)) > 5e8:
+                out["skewed_pairs"] += 1
+                continue
+            d = math.dist((pa["north_m"], pa["east_m"], pa["altitude_m"]),
+                          (pb["north_m"], pb["east_m"], pb["altitude_m"]))
+            near = any(math.hypot(p["north_m"] - x, p["east_m"] - y) <= sw.pad_zone_m
+                       for p in (pa, pb) for x, y in pads)
+            key, floor = ("pad", sw.separation_pad_m) if near else ("cruise",
+                                                                    sw.separation_cruise_m)
+            k = f"min_{key}_m"
+            out[k] = round(d, 2) if out[k] is None else min(out[k], round(d, 2))
+            out["min_m"] = d if out["min_m"] is None else min(out["min_m"], d)
+            if d < floor:
+                out[f"{key}_violations"] += 1
+                if len(worst) < 5:
+                    worst.append({"t_s": round(t, 1), "pair": [a, b], "zone": key,
+                                  "distance_m": round(d, 2)})
+    out["violations"] = worst
+    out["allowed_gap_s"] = round(sw.max_truth_gap_s + 0.25 * speedup, 3)
+    out["measured"] = out["samples"] > 1 and (out["max_gap_s"] or 0.0) <= out["allowed_gap_s"]
+    return out
 
 
 def _stats(xs):
