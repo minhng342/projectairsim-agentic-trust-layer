@@ -302,6 +302,9 @@ class FixedSectorPlanner:
     def _on_lost(self) -> None:
         """The drone dropped out (Phase 3: stop taking cells)."""
 
+    def _on_blocked(self, sid: str, cause: str) -> None:
+        """An obstacle stopped this drone flying to sid (Phase 3: tell the team)."""
+
     # ------------------------------------------------------------ obstacle recovery
     async def _recover(self, sid: str | None, cause: str):
         """After an impact or a blocked path: climb clear, block the sector, carry on.
@@ -312,6 +315,7 @@ class FixedSectorPlanner:
             self.blocked.add(sid)
             if self.guard is not None:
                 self.guard.blocked.add(sid)
+            self._on_blocked(sid, cause)
         self._record("obstacle", cause=cause, sector_id=sid, recovery=self.recoveries,
                      object_name=info.get("object_name"),
                      impact_speed_mps=info.get("impact_speed_mps"),

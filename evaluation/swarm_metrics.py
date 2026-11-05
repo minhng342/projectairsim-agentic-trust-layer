@@ -28,7 +28,8 @@ Team (the research question's metrics):
 Per drone (`drones`): outcome, ended_by, return_home, own sweeps, accepted peer clears,
 distance flown at its layer, its own footprint coverage, LLM decisions / fallbacks /
 guard refusals, and the obstacle report: impacts (and what was hit), obstacle incidents
-(impacts or blocked paths the planner reacted to), recoveries, blocked sectors, lost
+(impacts or blocked paths the planner reacted to), recoveries, blocked sectors (its own) and
+blocked_heard (a teammate's report kept it out), lost
 (dropped out of the search).
 """
 import itertools
@@ -109,6 +110,7 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
             "obstacle_incidents": len(by("obstacle", v)),
             "obstacles_recovered": len(by("obstacle_recovered", v)),
             "blocked_sectors": (end.get("blocked") or []) if end else [],
+            "blocked_heard": sorted({e["sector_id"] for e in by("peer_blocked_heard", v)}),
             "lost": bool(by("drone_lost", v)),
         }
 
@@ -122,6 +124,8 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
             t = got[0].get("sim_time_ns") if got else None
             hear[v] = round(t / 1e9 - t_det, 2) if t is not None else None
 
+    team_blocked = sorted({e["sector_id"] for e in log.of_kind("obstacle") if e.get("sector_id")})
+    unreachable = sorted(s for s in team_blocked if s not in swept_by)
     sep = separation(log, mission, drones, speedup=float(cfg.get("speedup") or 1.0))
     min_sep = sep["min_m"]
 
@@ -151,6 +155,10 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
         "mission_time_s": round(max(t_ends) - t0, 2) if (t_ends and t0 is not None) else None,
         "time_to_hear_s": hear,
         "sectors_swept": len(swept_by), "sector_count": len(mission.grid.ids()),
+        "blocked_shared": len({(e.get("msg") or {}).get("msg_id") for e in sent
+                               if (e.get("msg") or {}).get("msg_type") == "sector_blocked"}),
+        "unreachable_sectors": unreachable,
+        "victim_unreachable": first is None and cfg.get("victim_sector") in unreachable,
         "duplicate_sweeps": own_total - len(swept_by),
         "duplicated_sectors": sorted(s for s, v in swept_by.items() if len(v) > 1),
         "area_coverage": round(len(union_cov) / total_cells, 4) if total_cells else 0.0,

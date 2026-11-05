@@ -3,6 +3,7 @@ Peer messages (Phase 3): what one drone tells the others on the swarm bus.
 
     SectorClaimed    "I am sweeping this sector now" (until expires_sim_s)
     SectorCleared    "I swept this sector and did not see the victim"
+    SectorBlocked    "an obstacle stopped me flying this sector" (not a clear: it stays unsearched)
     VictimDetected   "my sensor saw the victim here" (the finder's position, like Detection)
 
 Every message is a Pydantic model with a sender_id (deck slide 16). A payload that does
@@ -53,6 +54,13 @@ class SectorCleared(_PeerMessage):
     sector_id: str = Field(pattern=SECTOR_ID_PATTERN)
 
 
+class SectorBlocked(_PeerMessage):
+    msg_type: Literal["sector_blocked"] = "sector_blocked"
+    sector_id: str = Field(pattern=SECTOR_ID_PATTERN)
+    altitude_m: float                   # the sender's layer when it was stopped
+    cause: Literal["impact", "path_blocked"]
+
+
 class VictimDetected(_PeerMessage):
     msg_type: Literal["victim_detected"] = "victim_detected"
     sector_id: str | None = Field(default=None, pattern=SECTOR_ID_PATTERN)
@@ -61,10 +69,10 @@ class VictimDetected(_PeerMessage):
     footprint_m: float = Field(gt=0)
 
 
-PeerMessage = Annotated[Union[SectorClaimed, SectorCleared, VictimDetected],
+PeerMessage = Annotated[Union[SectorClaimed, SectorCleared, SectorBlocked, VictimDetected],
                         Field(discriminator="msg_type")]
 PEER_MESSAGE = TypeAdapter(PeerMessage)
-MESSAGE_TYPES = ("sector_claimed", "sector_cleared", "victim_detected")
+MESSAGE_TYPES = ("sector_claimed", "sector_cleared", "sector_blocked", "victim_detected")
 
 
 def is_peer_message(payload) -> bool:

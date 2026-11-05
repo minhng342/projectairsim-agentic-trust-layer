@@ -520,7 +520,9 @@ def static_split(mission, drones) -> dict[str, list[str]]:
 def run_failures(m: dict, full_sweep: bool, min_coverage: float = FULL_SWEEP_MIN_COVERAGE):
     why = []
     if not m["victim_found"]:
-        why.append("victim not found")
+        why.append(f"victim not found (its sector {m.get('victim_sector')} is blocked by an "
+                   f"obstacle: unreachable)" if m.get("victim_unreachable")
+                   else "victim not found")
     dropped = (m.get("dropout") or {}).get("vehicle")
     for vid, d in sorted(m["drones"].items()):
         injected = vid == dropped and d.get("ended_by") == "lost"   # the experiment, not a bug

@@ -32,8 +32,8 @@ from channel.remote_id import RidContext, _apply_hooks, _hook_name
 from gate.peer_rules import PeerClaimRules
 from models.belief import Detection, LocalBelief, PeerClaim
 from models.sar import Mission
-from models.swarm import (PEER_MESSAGE, SectorClaimed, SectorCleared, VictimDetected,
-                          is_peer_message)
+from models.swarm import (PEER_MESSAGE, SectorBlocked, SectorClaimed, SectorCleared,
+                          VictimDetected, is_peer_message)
 from search.allocation import allocate
 from search.voronoi import coverage_order
 
@@ -148,6 +148,8 @@ class SwarmCoordinator:
         self._victim_msg: VictimDetected | None = None
         self._victim_repeats = 0
         self._last_cells: list[str] | None = None
+        self.peer_blocked: dict[str, str] = {}      # sector -> the peer that reported it
+        self._blocked_msgs: list[SectorBlocked] = []     # own reports, repeated like the find
         self.state = "searching"            # broadcast as Remote ID mission_state
         # swarm.allocation == "static": this drone's fixed part of the grid, set by the
         # runner before takeoff (the pre-mission split); no claims or clears are sent
@@ -192,6 +194,28 @@ class SwarmCoordinator:
                          accepted=v.accepted, code=v.code, message=v.message,
                          sector_id=msg.sector_id, sender_id=msg.sender_id,
                          evidence=list(v.evidence), belief_changed=changed)
+            return
+        if isinstance(msg, SectorBlocked):
+            claim = PeerClaim(**base)
+            v = self.rules.on_blocked(self.belief, claim)
+            self.belief.add_peer_claim(claim.model_copy(update={"accepted": v.accepted,
+                                                                "rule": v.code}))
+            held = self._claims.get(msg.sender_id)
+            if held and held[0].sector_id == msg.sector_id:
+                self._claims.pop(msg.sender_id)         # it is not sweeping there any more
+            self._record("peer_rule", msg_id=msg.msg_id, msg_type=msg.msg_type,
+                         accepted=v.accepted, code=v.code, message=v.message,
+                         sector_id=msg.sector_id, sender_id=msg.sender_id,
+                         evidence=list(v.evidence))
+            if v.accepted and msg.sector_id not in self.peer_blocked:
+                self.peer_blocked[msg.sector_id] = msg.sender_id
+                if self.guard is not None:
+                    self.guard.blocked.add(msg.sector_id)
+                self._record("peer_blocked_heard", sector_id=msg.sector_id,
+                             sender_id=msg.sender_id, altitude_m=msg.altitude_m,
+                             cause=msg.cause)
+                self._log(f"  {self.vehicle_id}: {msg.sender_id} was stopped by an obstacle "
+                          f"in {msg.sector_id}; staying out of it")
             return
         if isinstance(msg, VictimDetected):
             claim = PeerClaim(**base, x_m=msg.x_m, y_m=msg.y_m)
@@ -242,9 +266,8 @@ class SwarmCoordinator:
     # ------------------------------------------------------------ allocation
     def my_sectors(self, my_xy, now, exclude=()) -> list[str]:
         """This drone's open sectors in coverage order, from a fresh partition. `exclude`:
-        sectors this drone cannot fly (blocked by an obstacle); left out of its picture so
-        it steals other work instead. Peers still count them as open, and take them once
-        this drone stops searching."""
+        sectors this drone cannot fly (it or a peer was stopped by an obstacle there); left
+        out of its picture so it steals other work instead."""
         skip = set(exclude)
         if self.static_cells is not None:
             order = coverage_order(self.mission.grid,
@@ -295,6 +318,18 @@ class SwarmCoordinator:
         self.messenger.send(SectorCleared(sender_id=self.vehicle_id,
                                           sim_time_s=self.sim_clock() or 0.0, sector_id=sid))
 
+    def blocked(self, sid: str, cause: str, altitude_m: float) -> None:
+        """This drone was stopped by an obstacle flying to sid: tell the team, so that one
+        obstacle costs one incident. Not a clear: the sector stays unsearched."""
+        if self.own_claim and self.own_claim[0] == sid:
+            self.own_claim = None
+        if self.static_cells is not None:
+            return                  # static split: no sector talk on the radio
+        msg = SectorBlocked(sender_id=self.vehicle_id, sim_time_s=self.sim_clock() or 0.0,
+                            sector_id=sid, altitude_m=altitude_m, cause=cause)
+        self._blocked_msgs.append(msg)
+        self.messenger.send(msg)
+
     def own_detection(self, d: Detection) -> None:
         if self._victim_msg is None:
             self._victim_msg = VictimDetected(sender_id=self.vehicle_id, sim_time_s=d.sim_time_s,
@@ -316,14 +351,21 @@ class SwarmCoordinator:
         """Repeat this drone's own VictimDetected (same msg_id) so peers that were out of
         range at the find hear it when they come back in range, until no peer is still
         searching by its last report (then nobody needs it: repeats to drones flying home or
-        landed only inflated the undelivered count), or until stop."""
+        landed only inflated the undelivered count), or until stop. Own SectorBlocked reports
+        repeat the same way (same msg_id, deduplicated by the receivers), for peers that were
+        out of range when this drone hit the obstacle."""
         while not stop.is_set():
             try:
                 async with asyncio.timeout(period_s):
                     await stop.wait()
             except asyncio.TimeoutError:
                 pass
-            if self._victim_msg is None or stop.is_set():
+            if stop.is_set():
+                continue
+            if self._blocked_msgs and self.peers_still_searching():
+                for msg in self._blocked_msgs:
+                    self.messenger.send(msg)
+            if self._victim_msg is None:
                 continue
             if not self.peers_still_searching():
                 self._record("victim_repeat_stopped", reason="no peer is still searching",
@@ -390,15 +432,22 @@ class SwarmPlannerMixin:
         xy, now = self._here()
         if xy is None:
             return []
-        order = self.swarm.my_sectors(xy, now, exclude=self.blocked)
+        order = self.swarm.my_sectors(xy, now, exclude=self._all_blocked())
         if self.guard is not None:
             self.guard.cells = set(order)
         return order
 
+    def _all_blocked(self) -> set[str]:
+        """Sectors this drone stays out of: its own obstacle incidents and its peers'."""
+        return self.blocked | set(self.swarm.peer_blocked)
+
+    def _on_blocked(self, sid, cause):
+        self.swarm.blocked(sid, cause, self.mission.flight.altitude_m)
+
     def _still_open(self, sid):
-        """No await between this check and the claim, so a peer's claim or clear that
-        arrived while this drone was deciding is never overridden."""
-        if self.belief.is_done(sid):
+        """No await between this check and the claim, so a peer's claim, clear or obstacle
+        report that arrived while this drone was deciding is never overridden."""
+        if self.belief.is_done(sid) or sid in self.swarm.peer_blocked:
             return False
         _, now = self._here()
         peers = self.swarm.live_peers(now)
@@ -411,11 +460,10 @@ class SwarmPlannerMixin:
     def _nothing_left(self):
         if not self.belief.unsearched():
             return "all_swept", "every sector swept or cleared by a peer"
-        stuck = sorted(set(self.belief.unsearched()) & self.blocked)
+        stuck = sorted(set(self.belief.unsearched()) & self._all_blocked())
         if stuck:
-            return "blocked_sectors", (f"nothing reachable left; blocked for this drone: "
-                                       f"{', '.join(stuck)} (teammates take them once it "
-                                       f"heads home)")
+            return "blocked_sectors", (f"nothing reachable left; blocked by obstacles: "
+                                       f"{', '.join(stuck)}")
         if self.swarm.static_cells is not None:
             return "all_swept", "every sector of this drone's fixed part swept"
         return "nothing_assigned", (f"{len(self.belief.unsearched())} open sector(s), all "
@@ -460,6 +508,7 @@ class SwarmPlannerMixin:
                           for p, (x, y) in sorted(peers.items())],
             "assigned_to_you": sorted(self.guard.cells) if self.guard and self.guard.cells else [],
             "blocked_for_you": sorted(self.blocked),
+            "blocked_by_teammates": dict(sorted(self.swarm.peer_blocked.items())),
             "cleared_by_teammates": {s: sorted(set(v)) for s, v in sorted(cleared.items())},
         }
 

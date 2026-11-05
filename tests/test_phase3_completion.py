@@ -157,6 +157,69 @@ def test_swarm_carries_on_when_one_drone_drops_out(tmp_path):
     assert "lost" in states
 
 
+def _incidents(log):
+    out = {}
+    for e in log.of_kind("obstacle"):
+        if e.get("sector_id"):
+            out.setdefault(e["sector_id"], []).append(e["vehicle_id"])
+    return out
+
+
+def test_a_tall_obstacle_costs_the_team_one_incident_per_sector(tmp_path):
+    """A wall too tall to climb over in the west column: however many sectors it stops,
+    no second drone enters a sector a teammate reported, and the victim is still found."""
+    code, batch, s = run_swarm(tmp_path, "--obstacle", "wall:8,40,0,9,100")
+    m = s["runs"][0]
+    log = read_run(batch / "run_00.jsonl")
+    incidents = _incidents(log)
+    assert incidents and all(len(v) == 1 for v in incidents.values()), incidents
+    assert m["victim_found"] and sum(d["lost"] for d in m["drones"].values()) <= 1
+    assert m["blocked_shared"] == len(incidents)
+    assert set(m["unreachable_sectors"]) <= set(incidents)
+    assert any(d["blocked_heard"] for d in m["drones"].values())
+    sent = [e["msg"] for e in log.of_kind("peer_message_sent")
+            if e["msg"]["msg_type"] == "sector_blocked"]
+    assert {x["cause"] for x in sent} <= {"impact", "path_blocked"}
+
+
+def test_ignoring_peer_reports_lets_a_teammate_enter(tmp_path):
+    code, batch, s = run_swarm(tmp_path, "--obstacle", "wall:8,40,0,9,100",
+                               peer_blocked_rule="ignore")
+    m = s["runs"][0]
+    assert not any(d["blocked_heard"] for d in m["drones"].values())
+
+
+def test_a_victim_in_a_blocked_sector_fails_as_unreachable():
+    from run_sar_swarm import run_failures
+    base = {"victim_found": False, "victim_unreachable": True, "victim_sector": "A1", "drones": {},
+            "geofence_breaches": 0, "impacts": 0, "run_complete": True,
+            "run_log_outcome": "searched", "messages": {}}
+    assert any("A1 is blocked" in w for w in run_failures(base, False))
+    assert "victim not found" in run_failures(dict(base, victim_unreachable=False), False)
+
+
+def test_receiver_stays_out_of_a_sector_a_peer_reported_and_keeps_it_unsearched():
+    from agent.swarm import PeerMessenger, SwarmCoordinator, SwarmReceiver
+    from channel.remote_id import RemoteIdBus, RemoteIdReceiver
+    from models.swarm import SectorBlocked
+    m = _mission()
+    clock = lambda: 100.0
+    bus = RemoteIdBus()
+    rid = RemoteIdReceiver("Drone1", clock=clock)
+    guard = SarGuard(m, LocalBelief("Drone1", m), (0.0, 0.0))
+    belief = LocalBelief("Drone1", m)
+    coord = SwarmCoordinator("Drone1", m, belief, rid, PeerMessenger("Drone1", bus), clock,
+                             guard=guard, log=lambda s: None)
+    msg = SectorBlocked(sender_id="Drone2", sim_time_s=1, sector_id="B2", altitude_m=10,
+                        cause="impact")
+    coord.on_message(msg, 100.0)
+    coord.on_message(msg, 101.0)                          # a repeat: same msg_id, no effect
+    assert coord.peer_blocked == {"B2": "Drone2"} and "B2" in guard.blocked
+    assert belief.status("B2").value == "unsearched"      # blocked is not cleared
+    assert len([c for c in belief.peer_claims if c.msg_type == "sector_blocked"]) == 1
+    assert "B2" not in coord.my_sectors((0.0, 0.0), 100.0, exclude=set(coord.peer_blocked))
+
+
 # ------------------------------------------------------------------ static split
 def test_static_split_sends_no_claims_or_clears_and_keeps_to_fixed_parts(tmp_path):
     code, batch, s = run_swarm(tmp_path, "--allocation", "static", "--full-sweep")

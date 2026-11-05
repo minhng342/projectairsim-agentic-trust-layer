@@ -138,6 +138,9 @@ class Swarm(_Strict):
                       single (one peer is enough: the Phase 3 cooperation baseline),
                       corroborated (corroboration_n different peers), self_only (never; peer
                       clears are recorded but this drone sweeps everything itself)
+    peer_blocked_rule accept: a peer's SectorBlocked keeps this drone out of that sector too, so
+                      one obstacle costs the team one incident (the sector stays unsearched,
+                      never cleared); ignore: recorded only, each drone finds out for itself
     peer_victim_rule  accept: a peer's VictimDetected ends this drone's search (Phase 3
                       baseline); ignore: recorded only
     victim_repeat_s   the finder repeats its VictimDetected this often until it lands, so a
@@ -176,6 +179,7 @@ class Swarm(_Strict):
     max_claim_s: float = Field(default=600.0, gt=0)
     peer_clear_rule: Literal["single", "corroborated", "self_only"] = "single"
     corroboration_n: int = Field(default=2, ge=2)
+    peer_blocked_rule: Literal["accept", "ignore"] = "accept"
     peer_victim_rule: Literal["accept", "ignore"] = "accept"
     victim_repeat_s: float = Field(default=2.0, gt=0)
     allocation: Literal["dynamic", "static"] = "dynamic"
