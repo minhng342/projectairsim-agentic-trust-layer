@@ -176,6 +176,10 @@ the paired ratios are the useful part until live batches exist.
   the sim clock: no progress for `SIM_STALL_S` (30 s) ends the run with `SIM STALLED`, stops
   the batch, and leaves the run out of the baseline. Restart CityEnviron and rerun.
 - The console now prints why each drone's search ended (`search ended: ...`).
+- In that run Drone3's G2 sweep came back `path_failed` (the flight controller could not
+  finish the path, likely the same sim hitching) and the planner ended its whole search, a
+  Phase 1 rule. Now a failed sweep is recorded (`sweep_failed`), the sector stays partly
+  swept, and the drone decides again; only 2 failures in a row end its search.
 
 ## Ready for Phase 4
 
