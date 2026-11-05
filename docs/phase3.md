@@ -299,7 +299,8 @@ the others. Agents never see it: it is a local stand-in for a vertiport manager.
 
 ### Dropout: the condition where cooperation should pay
 
-`--dropout DRONE@SECONDS` fails that drone that many seconds into the search: it drops out
+`--dropout DRONE@SECONDS` fails that drone SECONDS of sim time after the mission starts (the
+plan; the climb to 150 m and the staging flight take about 2 minutes of that): it drops out
 (as `lost`) and lands where it is, and in the dynamic condition broadcasts
 `mission_state: lost` so the others take over its cells. The injected drop-out is the
 experiment, so it does not fail the run by itself (the victim still has to be found and

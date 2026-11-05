@@ -115,8 +115,9 @@ class FixedSectorPlanner:
 
     def on_dropout(self, reason: str) -> bool:
         """Experiment: the drone fails mid-search (the dropout condition). True if it was
-        searching; the caller then interrupts the sweep and the drone drops out as lost."""
-        if self.phase != "search" or self._dropout is not None:
+        still airborne before or in the search (a climb in progress finishes first); the
+        caller then interrupts the move and the drone drops out as lost."""
+        if self.phase not in ("starting", "search") or self._dropout is not None:
             return False
         self._dropout = reason
         return True

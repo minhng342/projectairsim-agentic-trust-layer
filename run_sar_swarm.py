@@ -350,7 +350,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                         if st is not None and p is not None and p[0] / 1e9 - st >= dat:
                             if t["planner"].on_dropout(f"injected dropout at {dat:g} s"):
                                 log(f"  [{time.strftime('%H:%M:%S')}] {dvid}: DROPOUT injected "
-                                    f"at {dat:g} s of search")
+                                    f"at {dat:g} s of mission time")
                                 recorder.record("dropout_injected", vehicle_id=dvid, at_s=dat)
                                 t["sector_ex"].interrupt("dropout")
                             return
