@@ -164,36 +164,81 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
 
 def separation(log: RunLog, mission: Mission, drones: list[dict], speedup: float = 1.0) -> dict:
     """Closest approach between airborne drones, split into the pad zone and cruise, against
-    the mission's floors (Swarm.separation_*). Truth samples are 2 Hz: a closer approach
-    between two samples can be missed. A pair whose two pose times differ by more than half
-    a second is skipped (counted as skewed). The allowed gap between samples is
-    max_truth_gap_s plus 0.25 host seconds of jitter at the run speedup (offline x100 turns
-    a 20 ms host hiccup into 2 sim seconds)."""
+    the mission's floors (Swarm.separation_*), and whether every PAIR was actually observed.
+
+    Truth samples are 2 Hz: a closer approach between two samples can be missed (a sampled
+    approximation, not continuous-flight safety). Per pair of configured drones, a sample is
+    usable when both poses are present with a sim timestamp, each newer than that drone's
+    previous pose (not stale), and the two timestamps are within 0.5 s; it is then either a distance (both airborne) or a known "not jointly airborne"
+    state (at least one at its launch altitude). Anything else (a drone missing, a missing
+    timestamp, skewed times) is a gap FOR THAT PAIR; samples of other drones never fill it.
+    measured requires every pair's longest gap (including from the first truth sample to its
+    first usable one and from its last to the end) to be within max_truth_gap_s plus 0.25
+    host seconds of jitter at the run's speedup (offline x100 turns a 20 ms hiccup into 2 sim
+    seconds). Airborne = at least 1 m above that drone's first observed altitude."""
     sw = mission.swarm
+    vids = [d["vehicle"] for d in drones]
     pads = [(d["start"]["x_m"], d["start"]["y_m"]) for d in drones if d.get("start")]
+    allowed = round(sw.max_truth_gap_s + 0.25 * speedup, 3)
     launch: dict[str, float] = {}
+    pairs = {f"{a}-{b}": {"usable": 0, "airborne": 0, "not_jointly_airborne": 0,
+                          "unusable": 0, "skewed": 0, "stale": 0, "max_gap_s": None,
+                          "_last": None}
+             for a, b in itertools.combinations(sorted(vids), 2)}
     out = {"min_m": None, "min_pad_m": None, "min_cruise_m": None, "samples": 0,
-           "skewed_pairs": 0, "max_gap_s": None, "pad_violations": 0, "cruise_violations": 0,
+           "samples_without_time": 0, "skewed_pairs": 0, "pad_violations": 0,
+           "cruise_violations": 0, "allowed_gap_s": allowed, "sample_hz": 2.0,
            "floors": {"cruise_m": sw.separation_cruise_m, "pad_m": sw.separation_pad_m,
-                      "pad_zone_m": sw.pad_zone_m}, "sample_hz": 2.0}
+                      "pad_zone_m": sw.pad_zone_m}}
     worst: list = []
-    prev_t = None
+    t_first = t_end = None
+    last_pose: dict[str, int] = {}
+
+    def gap(pr, t):
+        if pr["_last"] is not None or t_first is not None:
+            start = pr["_last"] if pr["_last"] is not None else t_first
+            pr["max_gap_s"] = round(max(pr["max_gap_s"] or 0.0, t - start), 3)
+
     for e in log.of_kind("truth"):
         poses = e.get("poses") or {}
-        t = (e.get("sim_time_ns") or 0) / 1e9
-        if prev_t is not None:
-            out["max_gap_s"] = round(max(out["max_gap_s"] or 0.0, t - prev_t), 3)
-        prev_t = t
+        if e.get("sim_time_ns") is None:
+            out["samples_without_time"] += 1
+            continue
+        t = e["sim_time_ns"] / 1e9
+        if t_first is None:
+            t_first = t
+        t_end = t if t_end is None else max(t_end, t)
         out["samples"] += 1
+        fresh = set()
         for v, p in poses.items():
-            launch.setdefault(v, p["altitude_m"])
-        for a, b in itertools.combinations(sorted(poses), 2):
-            pa, pb = poses[a], poses[b]
-            if pa["altitude_m"] - launch[a] < 1.0 or pb["altitude_m"] - launch[b] < 1.0:
+            if p.get("sim_time_ns") is not None and p.get("altitude_m") is not None:
+                launch.setdefault(v, p["altitude_m"])
+                if last_pose.get(v) is None or p["sim_time_ns"] > last_pose[v]:
+                    fresh.add(v)
+                last_pose[v] = p["sim_time_ns"]
+        for a, b in itertools.combinations(sorted(vids), 2):
+            pr = pairs[f"{a}-{b}"]
+            pa, pb = poses.get(a), poses.get(b)
+            if (pa is None or pb is None or pa.get("sim_time_ns") is None
+                    or pb.get("sim_time_ns") is None or a not in launch or b not in launch):
+                pr["unusable"] += 1
                 continue
-            if abs((pa.get("sim_time_ns") or 0) - (pb.get("sim_time_ns") or 0)) > 5e8:
+            if a not in fresh or b not in fresh:            # a repeated (stale) pose
+                pr["unusable"] += 1
+                pr["stale"] += 1
+                continue
+            if abs(pa["sim_time_ns"] - pb["sim_time_ns"]) > 5e8:
+                pr["unusable"] += 1
+                pr["skewed"] += 1
                 out["skewed_pairs"] += 1
                 continue
+            gap(pr, t)
+            pr["_last"] = t
+            pr["usable"] += 1
+            if pa["altitude_m"] - launch[a] < 1.0 or pb["altitude_m"] - launch[b] < 1.0:
+                pr["not_jointly_airborne"] += 1
+                continue
+            pr["airborne"] += 1
             d = math.dist((pa["north_m"], pa["east_m"], pa["altitude_m"]),
                           (pb["north_m"], pb["east_m"], pb["altitude_m"]))
             near = any(math.hypot(p["north_m"] - x, p["east_m"] - y) <= sw.pad_zone_m
@@ -208,9 +253,18 @@ def separation(log: RunLog, mission: Mission, drones: list[dict], speedup: float
                 if len(worst) < 5:
                     worst.append({"t_s": round(t, 1), "pair": [a, b], "zone": key,
                                   "distance_m": round(d, 2)})
+    unmeasured = []
+    for name, pr in pairs.items():
+        if t_end is not None:
+            gap(pr, t_end)                       # from the pair's last usable sample to the end
+        last = pr.pop("_last")
+        if last is None or (pr["max_gap_s"] or 0.0) > allowed:
+            unmeasured.append(name)
     out["violations"] = worst
-    out["allowed_gap_s"] = round(sw.max_truth_gap_s + 0.25 * speedup, 3)
-    out["measured"] = out["samples"] > 1 and (out["max_gap_s"] or 0.0) <= out["allowed_gap_s"]
+    out["pairs"] = pairs
+    out["unmeasured_pairs"] = unmeasured
+    out["max_gap_s"] = max((pr["max_gap_s"] or 0.0 for pr in pairs.values()), default=None)
+    out["measured"] = out["samples"] > 1 and not unmeasured and len(vids) >= 1
     return out
 
 
