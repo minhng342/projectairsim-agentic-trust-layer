@@ -190,7 +190,7 @@ def test_ignoring_peer_reports_lets_a_teammate_enter(tmp_path):
 
 
 def test_a_victim_in_a_blocked_sector_fails_as_unreachable():
-    from atal.runtime.run_team import run_failures
+    from atal.runtime.acceptance import team_run_failures as run_failures
     base = {"victim_found": False, "victim_unreachable": True, "victim_sector": "A1", "drones": {},
             "geofence_breaches": 0, "impacts": 0, "run_complete": True,
             "run_log_outcome": "searched", "messages": {}}
@@ -508,8 +508,8 @@ def _final_xy(log, vid):
 
 
 def test_runner_lands_outside_the_zone_when_the_wait_times_out(tmp_path, monkeypatch):
-    from atal.runtime import run_team
-    monkeypatch.setattr(run_team, "PAD_WAIT_S", 0.5)
+    from atal.runtime import rates
+    monkeypatch.setattr(rates, "PAD_WAIT_S", 0.5)
     code, batch, s = run_swarm(tmp_path)
     m = s["runs"][0]
     log = read_run(batch / "run_00.jsonl")
@@ -527,15 +527,15 @@ def test_runner_lands_outside_the_zone_when_the_wait_times_out(tmp_path, monkeyp
 
 
 def test_unconfirmed_landing_keeps_the_zone_held(tmp_path, monkeypatch):
-    from atal.runtime import run_team
-    real = run_team.safe_shutdown
+    from atal.runtime import landing, rates
+    real = landing.safe_shutdown
 
     async def unconfirmed(*a, **kw):
         rep = await real(*a, **kw)
         rep.grounded_confirmed = False
         return rep
-    monkeypatch.setattr(run_team, "safe_shutdown", unconfirmed)
-    monkeypatch.setattr(run_team, "PAD_WAIT_S", 2.0)
+    monkeypatch.setattr(landing, "safe_shutdown", unconfirmed)
+    monkeypatch.setattr(rates, "PAD_WAIT_S", 2.0)
     code, batch, s = run_swarm(tmp_path)
     m = s["runs"][0]
     log = read_run(batch / "run_00.jsonl")

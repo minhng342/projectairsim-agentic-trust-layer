@@ -1,8 +1,8 @@
 # Walkthrough: how a search and rescue run works
 
 This is the reading guide for the code **as it is today**: the files are in their new
-folders (restructuring step 3), and the functions inside them are unchanged from commit
-`5a06556`. It answers eight questions with the real file and function names, then follows
+folders (restructuring step 3) and the run is split into small files in `atal/runtime/`
+(step 4). The planners, guard, channels and flight code are unchanged from commit `5a06556`. It answers eight questions with the real file and function names, then follows
 one real decision through a recorded run. It is updated with every restructuring step, so it
 always describes the code in front of you. The folders are listed in the
 [README](../README.md#layout).
@@ -35,29 +35,31 @@ python run_sar_swarm.py --offline            # three drones, offline simulator
 python run_sar_mission.py --offline          # one drone
 ```
 
-For the team runner, in `atal/runtime/run_team.py`:
+For the team run, in `atal/runtime/run_team.py`:
 
 | Function | Job |
 |---|---|
 | `parse_args()` | Reads the command-line flags. |
 | `main()` | Loads the mission and scenario YAML (`atal/core/sar.py: load_mission`, `load_scenario`), loops over the seeded runs, writes `batch_summary.json` and `manifest.json`. |
 | `run_one()` / `_run_one()` | **Owns one run from start to finish.** Everything below happens inside it. |
-| `run_failures()` | Decides whether a finished run passed, and lists the reasons if not. |
 
-Inside `_run_one()`, in order:
+`_run_one()` is six numbered steps. Each step calls one small file in `atal/runtime/`:
 
-1. Open the simulator: `KinematicSim` (offline) or `ProjectAirSimAdapter` (live).
-2. Create the shared pieces: the recorder, the flight executor, the radio bus, the pad zone.
-3. For each drone (the `for d in drones:` loop), build its parts: observation feed, memory,
-   sector executor, guard, gate, action port, radio receiver, messenger, coordinator,
-   planner, victim sensor, Remote ID broadcaster.
-4. Start the background tasks: observation sampling, sensor, Remote ID broadcast, victim
-   repeat, time-limit watch, ground-truth sampling, and (live only) the sim-stall watch.
-5. Fly every drone at once: `asyncio.gather(fly(v) for v in vids)`.
-6. Stop the background tasks, record errors, close the run log, compute metrics.
+| Step | What happens | Where |
+|---|---|---|
+| 1 | Open the simulator: `KinematicSim` (offline) or `ProjectAirSimAdapter` (live). Create the recorder and the flight executor. | `simulator.py: open_simulator` |
+| 2 | Build what the team shares: the radio bus, the pad zone, the static split if that condition is on. | `run_team.py` |
+| 3 | Build each drone: observation feed, memory, sector executor, guard, gate, action port, radio receiver, messenger, coordinator, planner, victim sensor, Remote ID broadcaster. | `build_drone.py: build_team_drone` |
+| 4 | Start the background tasks: observation sampling, sensor, Remote ID broadcast, victim repeat, time-limit watch, truth record, and (live only) the sim-stall watch. | `run_team.py: start_background`, `watchers.py` |
+| 5 | Fly every drone at once. Then always stop the background tasks. | `landing.py: fly_team_drone`, `watchers.py: stop_background` |
+| 6 | Close the run log, compute the metrics from it, save them. | `run_team.py` |
 
-The one-drone runner `atal/runtime/run_single.py` has the same shape with one drone and no bus.
-`run_team.py` imports several helpers from it.
+Whether a finished run passed is decided by `team_run_failures()` in
+`atal/runtime/acceptance.py`, which lists the reasons if it did not.
+
+The one-drone run `atal/runtime/run_single.py` has the same six steps with one drone and no
+bus (`build_single_drone`, `single_run_failures`). The rates and time limits used by both
+are in `atal/runtime/rates.py`.
 
 ## 2. What does one drone receive, and what is withheld?
 
@@ -92,7 +94,7 @@ Only three callers change it:
 |---|---|---|
 | The planner (`atal/agents/sector_planner.py`) | `mark_started`, `mark_swept`, `mark_partial` | Before and after its own sweeps. These are marked `verified_by_self`. |
 | The coordinator (`atal/agents/swarm.py: SwarmCoordinator.on_message`) | `add_peer_claim`, `mark_peer_cleared` | When a peer message arrives. A cleared sector gets status `peer_cleared`, with the sender as source and `verified_by_self` false. |
-| The runner's `detected()` callback (`atal/runtime/run_team.py`) | `add_detection` | When this drone's own sensor sees the victim. |
+| The `detected()` callback set up in `atal/runtime/build_drone.py` | `add_detection` | When this drone's own sensor sees the victim. |
 
 The difference between "I swept it" and "a peer said it is clear" is kept in the memory and
 shown to the LLM planner.
@@ -141,8 +143,8 @@ is not already over. The full list with codes is at the top of `atal/trust_layer
 
 Every action a planner proposes reaches the simulator through the executors, and nothing
 else flies the drone during the search. Two things outside the planner's reach also send
-simulator commands directly: the run's setup (arm and take off, `atal/runtime/run_single.py:
-_takeoff`) and `safe_shutdown()` (`atal/flight/shutdown.py`: hover, land, disarm).
+simulator commands directly: the run's setup (arm and take off, `atal/runtime/landing.py:
+takeoff`) and `safe_shutdown()` (`atal/flight/shutdown.py`: hover, land, disarm).
 
 - `SectorExecutor.execute()` (`atal/flight/sector_sweep.py`) handles the SAR actions. For a
   sweep it computes the lanes (`atal/search/sweep_lanes.py: sweep_path`) and flies them with
@@ -182,22 +184,23 @@ accepted, it ends this drone's search.
 
 ## 8. Who stops tasks, lands the drones and closes the record after an error?
 
-All inside `_run_one()` in `atal/runtime/run_team.py`:
-
-- **Each drone** runs in the nested function `fly()`. Its `finally` block always calls
-  `safe_shutdown()` (`atal/flight/shutdown.py`): hover, land, and disarm only once the drone
-  is confirmed on the ground. If landing cannot be confirmed, it does not disarm and
-  reports the drone as unresolved.
-- **The pads.** Before any descent, `clear_pads()` makes sure the drone holds the pad zone
-  or is outside it (`atal/flight/pad_zone.py`). The zone is released only after a confirmed
-  landing. A timeout never lets a drone in.
-- **Background tasks.** After every drone's `fly()` has ended, the `finally` after
-  `asyncio.gather` sets the `stop` event, waits for every background task, and records any
-  that failed as `background_error`.
+- **Each drone** flies inside `fly_team_drone()` (`atal/runtime/landing.py`). Its `finally`
+  block always calls `shut_down()`, which calls `safe_shutdown()`
+  (`atal/flight/shutdown.py`): hover, land, and disarm only once the drone is confirmed on
+  the ground. If landing cannot be confirmed, it does not disarm and reports the drone as
+  unresolved.
+- **The pads.** Before any descent, `clear_pads()` (`atal/runtime/landing.py`) makes sure
+  the drone holds the pad zone or is outside it (`atal/flight/pad_zone.py`). The zone is
+  released only after a confirmed landing. A timeout never lets a drone in.
+- **Background tasks.** After every drone's flight has ended, the `finally` in step 5 of
+  `_run_one()` calls `stop_background()` (`atal/runtime/watchers.py`). It sets the `stop`
+  event, waits for every background task, and records any that failed as
+  `background_error`.
 - **The record.** The outermost `finally` calls `recorder.close(outcome)`
   (`atal/evaluation/recorder.py`), so the run log is complete even after an error.
-- **Watchdogs** that can end a run early: `_watch_time` (mission time limit),
-  `_sample_truth` (geofence breach or impact), `_watch_sim_clock` (live simulator froze).
+- **Watchdogs** that can end a run early: `watch_mission_time` (mission time limit),
+  `sample_truth` (geofence breach or impact), `watch_sim_clock` (live simulator froze), all in
+  `atal/runtime/watchers.py`.
 
 ## One real decision, followed end to end
 

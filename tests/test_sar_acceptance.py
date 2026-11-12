@@ -11,7 +11,8 @@ from atal.core.sar import Mission
 from atal.evaluation.recorder import read_run
 from atal.evaluation.sar_metrics import coverage_raster
 from atal.flight.sector_sweep import SectorExecutor
-from atal.runtime.run_single import run_failures, run_passes
+from atal.runtime.acceptance import single_run_failures as run_failures
+from atal.runtime.acceptance import single_run_passes as run_passes
 from tests.test_sar_pipeline import MISSION, run
 
 

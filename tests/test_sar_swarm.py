@@ -329,7 +329,7 @@ def test_guard_allows_only_the_staging_move():
 def test_sim_clock_watchdog_marks_stall_and_stops():
     import asyncio
 
-    from atal.runtime.run_team import _watch_sim_clock
+    from atal.runtime.watchers import watch_sim_clock as _watch_sim_clock
 
     class A:
         stalled = None
@@ -493,7 +493,7 @@ def test_separation_floors_split_pad_zone_and_cruise(tmp_path):
 
 
 def test_acceptance_fails_on_separation_errors_and_identity_mismatches():
-    from atal.runtime.run_team import run_failures
+    from atal.runtime.acceptance import team_run_failures as run_failures
     base = {"victim_found": True, "drones": {}, "geofence_breaches": 0, "impacts": 0,
             "run_complete": True, "run_log_outcome": "victim_found",
             "messages": {}, "separation": {"measured": True, "pad_violations": 0,
