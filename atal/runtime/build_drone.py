@@ -24,12 +24,11 @@ from atal.channels.observation_feed import ObservationFeed
 from atal.channels.peer_link import PeerMessenger, SwarmReceiver
 from atal.channels.radio import RemoteIdBroadcaster, RemoteIdReceiver
 from atal.core.belief import LocalBelief
+from atal.core.contracts import BypassGate, NoTrustAssessor
 from atal.flight.recovery import DroneFlight, Recovery
 from atal.flight.sector_sweep import SectorExecutor
 from atal.runtime import rates
 from atal.simulation.victim_sensor import VictimSensor
-from atal.trust_layer.action_gate import BypassGate
-from atal.trust_layer.assessor import NoTrustAssessor
 from atal.trust_layer.invariant_guard import SarGuard, SarInvariantGate
 
 

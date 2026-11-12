@@ -5,7 +5,7 @@ Per-vehicle observation channel: the ONLY way an agent learns about its drone.
         -> strip the adapter's validation verdict          (see atal/core/observation.py)
         -> attack hooks, in order (may modify or drop)      (atal/attacks/hooks.py)
         -> receiver stamps id / channel / sequence / receipt time
-        -> trust assessor (sees only what was delivered)    (atal/trust_layer/assessor.py)
+        -> trust assessor (sees only what was delivered)    (atal/core/contracts.py)
         -> authoritative record kept by the feed; the agent gets a deep COPY
         -> recorder (evaluation side): delivered payload + assessment, and, only
            there, which hooks changed it and the clean payload
@@ -43,9 +43,8 @@ import time
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 
-from atal.attacks.hooks import HookContext
+from atal.core.contracts import HookContext, NoTrustAssessor
 from atal.core.observation import Observation, TrustAssessment, TrustStatus
-from atal.trust_layer.assessor import NoTrustAssessor
 
 # Adapter-computed verdict fields: computed on CLEAN data, so never delivered.
 VERDICT_FIELDS = {"validation_status", "validation_errors", "validation_warnings"}

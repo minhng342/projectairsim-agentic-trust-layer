@@ -4,7 +4,7 @@ search when a limit is reached."""
 import asyncio
 import time
 
-from atal.evaluation.sar_metrics import _is_impact
+from atal.evaluation.sar_metrics import is_impact
 
 
 async def wait_or_stop(stop: asyncio.Event, period_s: float) -> None:
@@ -34,7 +34,7 @@ async def sample_truth(adapter, missions: dict, recorder, stop, period_s, on_bre
                                         sim_time_ns=c.sim_time_ns)
                         seen[vid] = c.sim_time_ns
                         info = collision_dict(c)
-                        if on_impact is not None and _is_impact(info):
+                        if on_impact is not None and is_impact(info):
                             on_impact(vid, info)
             except Exception:
                 pass

@@ -38,7 +38,7 @@ import statistics
 
 from atal.core.mission import Mission
 from atal.evaluation.run_log import RunLog
-from atal.evaluation.sar_metrics import _is_impact, _tracks, coverage_raster
+from atal.evaluation.sar_metrics import coverage_raster, is_impact, truth_tracks
 
 
 def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
@@ -48,7 +48,7 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
     drones = cfg.get("drones") or []
     alt = {d["vehicle"]: d["altitude_m"] for d in drones}
     vids = [d["vehicle"] for d in drones]
-    tracks = _tracks(log)
+    tracks = truth_tracks(log)
 
     def by(kind, vid):
         return [e for e in log.of_kind(kind) if e.get("vehicle_id") == vid]
@@ -103,10 +103,10 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
             "allocations": len(by("sar_allocation", v)),
             "stolen": sum(1 for e in by("sar_allocation", v) if e.get("stolen")),
             # obstacle report: hits the simulator saw, recoveries, drop-out
-            "impacts": sum(1 for e in by("collision", v) if _is_impact(e.get("collision") or {})),
+            "impacts": sum(1 for e in by("collision", v) if is_impact(e.get("collision") or {})),
             "impact_objects": sorted({str((e.get("collision") or {}).get("object_name"))
                                       for e in by("collision", v)
-                                      if _is_impact(e.get("collision") or {})})[:10],
+                                      if is_impact(e.get("collision") or {})})[:10],
             "obstacle_incidents": len(by("obstacle", v)),
             "obstacles_recovered": len(by("obstacle_recovered", v)),
             "blocked_sectors": (end.get("blocked") or []) if end else [],
@@ -141,7 +141,7 @@ def swarm_metrics(log: RunLog, mission: Mission | None = None) -> dict:
     rid_oor = sum(1 for e in log.of_kind("rid_out_of_range") if e.get("tx_id") not in peer_tx)
     expected = len(sent) * max(len(vids) - 1, 0)
     cols = [e.get("collision") or {} for e in log.of_kind("collision")]
-    impacts = [c for c in cols if _is_impact(c)]
+    impacts = [c for c in cols if is_impact(c)]
     t_ends = [e["sim_time_ns"] / 1e9 for e in ends.values() if e and e.get("sim_time_ns")]
     own_total = sum(len(v) for v in swept_by.values())
     return {

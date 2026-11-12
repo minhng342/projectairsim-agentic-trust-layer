@@ -49,6 +49,7 @@ from pathlib import Path
 
 from atal.agents.search_loop import planner_name
 from atal.channels.radio import RemoteIdBus
+from atal.core.contracts import BypassGate, NoTrustAssessor
 from atal.core.mission import PlanFileError, load_mission
 from atal.core.paths import REPO_ROOT
 from atal.core.scenario import load_scenario
@@ -79,8 +80,6 @@ from atal.runtime.watchers import (
     watch_sim_clock,
 )
 from atal.search.voronoi import voronoi_partition
-from atal.trust_layer.action_gate import BypassGate
-from atal.trust_layer.assessor import NoTrustAssessor
 from atal.trust_layer.invariant_guard import SarInvariantGate
 from atal.trust_layer.peer_rules import PeerClaimRules
 

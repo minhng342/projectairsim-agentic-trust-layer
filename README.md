@@ -244,8 +244,6 @@ atal/
     llm/rate_limit.py         request pacing for a per-minute quota
     llm/scripted_model.py     scripted stand-in for the LLM (offline runs and tests)
   trust_layer/                what may be believed and what may be done
-    assessor.py               trust assessor interface + NoTrustAssessor placeholder
-    action_gate.py            action gate interface + BypassGate placeholder
     invariant_guard.py        SarGuard: the checks every search action must pass
     peer_rules.py             what a peer's "cleared" or "found" may change
   channels/                   the only ways in and out of a drone agent
@@ -277,6 +275,7 @@ atal/
     scenario.py               Scenario (scenario.yaml): ground truth, runner and sensor only
     sector_grid.py            SectorGrid and sector ids (A1..H8)
     events.py                 the run-log line contract
+    contracts.py              the slots: TrustAssessor, ActionGate (+ the "none" placeholders), HookContext, PeerSender
     belief.py                 LocalBelief: the drone's memory, with the source of each fact
     remote_id.py              RemoteIdReport
     peer_messages.py          SectorClaimed / SectorCleared / VictimDetected

@@ -31,9 +31,9 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from atal.core.contracts import NoTrustAssessor
 from atal.core.observation import TrustAssessment, TrustStatus
 from atal.core.remote_id import RemoteIdReport
-from atal.trust_layer.assessor import NoTrustAssessor
 
 CHANNEL = "remote_id"
 

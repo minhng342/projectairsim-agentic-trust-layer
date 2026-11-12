@@ -48,8 +48,8 @@ from atal.core.action import (
     FeedbackStage,
     ProposedAction,
 )
+from atal.core.contracts import BypassGate
 from atal.core.observation import Observation
-from atal.trust_layer.action_gate import BypassGate
 
 DEFAULT_MAX_OBSERVATION_AGE_S = 10.0
 

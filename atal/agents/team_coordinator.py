@@ -25,9 +25,9 @@ a message's sim_time_s is the sender's claim.
 import asyncio
 import math
 
-from atal.channels.peer_link import PeerMessenger
 from atal.core.action import ActionType, ProposedAction
 from atal.core.belief import Detection, LocalBelief, PeerClaim
+from atal.core.contracts import PeerSender
 from atal.core.mission import Mission
 from atal.core.peer_messages import (
     SectorBlocked,
@@ -42,7 +42,7 @@ from atal.trust_layer.peer_rules import PeerClaimRules
 
 class SwarmCoordinator:
     def __init__(self, vehicle_id: str, mission: Mission, belief: LocalBelief, rid_receiver,
-                 messenger: PeerMessenger, sim_clock, guard=None, recorder=None, log=print):
+                 messenger: PeerSender, sim_clock, guard=None, recorder=None, log=print):
         self.vehicle_id, self.mission, self.belief = vehicle_id, mission, belief
         self.swarm = mission.swarm
         self.rules = PeerClaimRules(self.swarm)
