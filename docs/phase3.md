@@ -31,19 +31,19 @@ Output per batch: `runs/sar_swarm/<batch>/run_NN.jsonl` (one log for the whole t
 
 | Piece | File | Notes |
 |---|---|---|
-| Peer messages | `models/swarm.py` | `SectorClaimed`, `SectorCleared`, `VictimDetected`, each with `msg_id`, `sender_id`, the sender's `sim_time_s`; frozen, `extra="forbid"`; a discriminated union validated by one `TypeAdapter` |
-| Swarm settings | `models/sar.py` (`Swarm`, `Mission.swarm`, `Mission.for_layer`) | radio range, layer spacing, peer timeout, claim cap, peer-claim rules, victim repeat; all with defaults, so Phase 1/2 mission files still load |
-| Radio range | `channel/remote_id.py` (`RemoteIdBus(in_range=...)`) | the existing Remote ID bus; a delivery happens only if the TRUE sender is within `radio_range_m` (3D) of the receiver; misses are recorded as `rid_out_of_range` |
-| Mission state in Remote ID | `channel/remote_id.py` (`mission_state`) | `searching` / `returning` / `landed`, so peers stop giving cells to a drone that is heading home |
-| Receiver, messenger, coordinator | `agent/swarm.py` | `SwarmReceiver` splits the bus into Remote ID reports and peer messages and drops invalid ones; `PeerMessenger` has the sender-hook slot (Phase 4's insider); `SwarmCoordinator` does incoming rules, allocation and outgoing own facts |
-| Belief: who said what | `models/belief.py` (`PeerClaim`, `peer_claims`, `mark_peer_cleared`, `is_done`, `cleared_by`) | each claim: type, claimed sender, sent and received times, message id, whether a rule acted on it |
-| Peer-claim rules | `gate/peer_rules.py` (`PeerClaimRules`) | when a peer's clear or find changes this drone's belief; see below |
-| Allocation | `search/allocation.py` (`allocate`) | Voronoi over open sectors, live peers and live claims, plus work stealing |
-| Planners | `agent/swarm.py` (`SwarmFixedPlanner`, `SwarmLLMPlanner`) | the Phase 1 and Phase 2 planners with five hooks (`agent/sector_planner.py`): plan, remaining, nothing left, before a sweep (claim), after a sweep (clear), peer stop |
-| Guard | `gate/sar_guard.py` | `already_swept` covers accepted peer clears; `search_over` covers an accepted peer find |
+| Peer messages | `atal/core/peer_messages.py` | `SectorClaimed`, `SectorCleared`, `VictimDetected`, each with `msg_id`, `sender_id`, the sender's `sim_time_s`; frozen, `extra="forbid"`; a discriminated union validated by one `TypeAdapter` |
+| Swarm settings | `atal/core/sar.py` (`Swarm`, `Mission.swarm`, `Mission.for_layer`) | radio range, layer spacing, peer timeout, claim cap, peer-claim rules, victim repeat; all with defaults, so Phase 1/2 mission files still load |
+| Radio range | `atal/channels/radio.py` (`RemoteIdBus(in_range=...)`) | the existing Remote ID bus; a delivery happens only if the TRUE sender is within `radio_range_m` (3D) of the receiver; misses are recorded as `rid_out_of_range` |
+| Mission state in Remote ID | `atal/channels/radio.py` (`mission_state`) | `searching` / `returning` / `landed`, so peers stop giving cells to a drone that is heading home |
+| Receiver, messenger, coordinator | `atal/agents/swarm.py` | `SwarmReceiver` splits the bus into Remote ID reports and peer messages and drops invalid ones; `PeerMessenger` has the sender-hook slot (Phase 4's insider); `SwarmCoordinator` does incoming rules, allocation and outgoing own facts |
+| Belief: who said what | `atal/core/belief.py` (`PeerClaim`, `peer_claims`, `mark_peer_cleared`, `is_done`, `cleared_by`) | each claim: type, claimed sender, sent and received times, message id, whether a rule acted on it |
+| Peer-claim rules | `atal/trust_layer/peer_rules.py` (`PeerClaimRules`) | when a peer's clear or find changes this drone's belief; see below |
+| Allocation | `atal/search/allocation.py` (`allocate`) | Voronoi over open sectors, live peers and live claims, plus work stealing |
+| Planners | `atal/agents/swarm.py` (`SwarmFixedPlanner`, `SwarmLLMPlanner`) | the Phase 1 and Phase 2 planners with five hooks (`atal/agents/sector_planner.py`): plan, remaining, nothing left, before a sweep (claim), after a sweep (clear), peer stop |
+| Guard | `atal/trust_layer/invariant_guard.py` | `already_swept` covers accepted peer clears; `search_over` covers an accepted peer find |
 | Runner | `run_sar_swarm.py` | N seeded runs, 3 drones, one bus, layers, `--planner fixed|llm`, `--radio-range`, `--peer-clear-rule`, `--layer-spacing`, `--drones N`, `--full-sweep` |
-| Metrics | `evaluation/swarm_metrics.py` (`swarm_metrics`, `batch_baseline`) | team and per-drone metrics, the baseline block |
-| Plot | `evaluation/plot_tracks.py` | multi-drone runs: sectors tinted by who swept them, `xN` when swept N times |
+| Metrics | `atal/evaluation/swarm_metrics.py` (`swarm_metrics`, `batch_baseline`) | team and per-drone metrics, the baseline block |
+| Plot | `atal/evaluation/plot_tracks.py` | multi-drone runs: sectors tinted by who swept them, `xN` when swept N times |
 | Scenarios, scene | `missions/sar/scenario_swarm_dev.yaml`, `scenario_swarm.yaml`, `sim_config/scene_sar_three_drones.jsonc` | starts spread along the south edge |
 
 ## Inside one drone
@@ -107,7 +107,7 @@ heard: the bus never queues messages. That is why the find is repeated.
 6. **Radio range:** dev mission 150 m (the dev grid's diagonal is 226 m, so drones on opposite
    corners don't hear each other), deck mission 500 m. Range is decided from true positions.
 
-## Metrics (evaluation/swarm_metrics.py)
+## Metrics (atal/evaluation/swarm_metrics.py)
 
 Team: `victim_found`, `finder`, `time_to_find_s` (sim seconds from the first drone's plan to
 the first detection), `mission_time_s` (to the last drone's planner end), `time_to_hear_s`
@@ -229,14 +229,14 @@ Before: nothing reacted to a collision in flight. A drone pressed against a buil
 commanding its sweep until the path timeout (3x the expected time + 60 s), then its search
 ended. Now, in every runner (Phase 1, 2 and 3 alike):
 
-- **Stuck detector** (`executor/path_follower.py`): in cruise, if progress along the path grows
+- **Stuck detector** (`atal/flight/path_follower.py`): in cruise, if progress along the path grows
   by less than `stuck_min_progress_m` (1 m) for `stuck_after_s` (10 s) of sim time, away from
   the end of the path, the follower hovers and returns `blocked`; the sector executor reports
   `path_blocked`. This catches being wedged without any collision report.
 - **Impact hook**: the runners' truth sampler already logged collisions; an impact (fast, or a
   non-supporting surface: `_is_impact`) now calls `planner.on_impact()` and interrupts the
   sweep at once.
-- **Recovery** (`agent/sector_planner.py`, so every planner has it): the drone is hovering; it
+- **Recovery** (`atal/agents/sector_planner.py`, so every planner has it): the drone is hovering; it
   climbs `recovery_climb_m` (10 m) above where it is (the guard allows exactly that climb), marks
   the sector it was flying as **blocked** for itself (never offered or allowed again:
   `blocked_by_obstacle`), and carries on. If the flight home is blocked or hits something, it
@@ -275,8 +275,8 @@ Run i of every dev batch has the same victim (seed 42 + i), so the comparison is
 `--reference <one-drone batch>` adds `paired_vs_reference` to `batch_summary.json`: pairs
 matched on victim position, speedup = reference time / batch time, mean and median with 95%
 percentile-bootstrap intervals (10,000 resamples over the pairs, fixed seed), time saved,
-how many pairs were faster, and the per-run table. `python -m evaluation.compare REF BATCH ...`
-prints the whole comparison table (`evaluation/compare.py`).
+how many pairs were faster, and the per-run table. `python -m atal.evaluation.compare REF BATCH ...`
+prints the whole comparison table (`atal/evaluation/compare.py`).
 
 ### Evidence
 
@@ -285,7 +285,7 @@ the tree had uncommitted changes, the command and arguments, sha256 of the missi
 and (live) scene files plus one `config_sha256`, the model and its inference settings
 (thinking, extra body), each run's seed and victim sector, planned / attempted / valid /
 stalled / passed counts, Python, platform, host, package versions, and a sha256 per file of
-the batch. `python -m evaluation.archive BATCH ... [--reference REF]` checks each batch
+the batch. `python -m atal.evaluation.archive BATCH ... [--reference REF]` checks each batch
 against its manifest (refuses a changed one), writes `EVIDENCE.md` (one line per batch plus
 the paired table) and packs everything into `runs/evidence/<time>.tar.gz`.
 
@@ -294,7 +294,7 @@ the paired table) and packs everything into `runs/evidence/<time>.tar.gz`.
 The layers keep drones apart in cruise but not around the pads: a drone coming down from
 170 m crosses 160 and 150, and a teammate flying home on one of those layers can pass right
 over its pad (the no-radio run 15 near miss, 0.55 m). Now the runner keeps one pad zone for
-the team (`executor/pad_zone.py`: every pad's `pad_zone_m` circle plus 5 m; dev: 18 m around
+the team (`atal/flight/pad_zone.py`: every pad's `pad_zone_m` circle plus 5 m; dev: 18 m around
 the pads). A return home is flown in two legs: to the zone's edge at the drone's own layer,
 then, once the zone is free, in to the pad. The zone is held until that drone has landed,
 so a transit never shares it with a descent. A drone that lands inside the zone for another
@@ -358,7 +358,7 @@ everyone has to land).
 
 Dev mission, seed 42, 20 runs per condition, the same 20 victims in every row, kinematic sim
 x50. Paired speedup per victim against the one-drone row, 95% bootstrap intervals
-(`python -m evaluation.compare`), over the pairs where both found the victim. Each batch has
+(`python -m atal.evaluation.compare`), over the pairs where both found the victim. Each batch has
 its `manifest.json`. The dropout rows fail Drone2 200 s of sim time into the mission (about
 80 s after the team starts searching; the climb and staging take the rest).
 

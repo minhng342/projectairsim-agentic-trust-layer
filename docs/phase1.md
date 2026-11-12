@@ -12,25 +12,25 @@ actions, so the port, executor, memory and logs carry over unchanged.
 | Deliverable (10/28 meeting) | Where |
 |---|---|
 | Repository with the simulation harness | `run_sar_mission.py` (one command, N seeded runs, live or `--offline`) |
-| Mission file and Pydantic data models | `missions/sar/*.yaml`, `models/sar.py`, `models/belief.py` |
+| Mission file and Pydantic data models | `missions/sar/*.yaml`, `atal/core/sar.py`, `atal/core/belief.py` |
 | Run logs for each mission | `runs/sar/<batch>/run_NN.jsonl` + `.memory.json` + `.summary.json` + `.svg`, `batch_summary.json` |
 | Class / module diagram | this page (below) |
 | Short demo video | to record on zeus-g, see [Demo video](#demo-video) |
 
 | Piece | File | Notes |
 |---|---|---|
-| Mission / scenario models | `models/sar.py` | Slide 13 YAML, validated by Pydantic; errors name the field |
-| Sector grid | `models/sar.py` (`SectorGrid`) | ids A1..H8, bounds, lookup, serpentine order |
-| Voronoi coverage | `search/voronoi.py` | the only search algorithm (decided 10/29) |
-| Boustrophedon lanes | `search/boustrophedon.py` | lanes from footprint and overlap |
-| Victim sensor | `search/detection.py` | footprint geometry; camera detection later |
-| Memory (local belief) | `models/belief.py` | swept sectors and detections, each with its source |
-| Typed actions | `models/sar.py` (`SweepSector`, `ReturnHome`), `models/action.py` | go through the action port like any agent action |
-| Sector executor | `executor/sector_executor.py` | sweeps with the live-tested velocity path follower |
-| Fixed-list planner | `agent/sector_planner.py` | the Phase 1 "agent" |
-| Offline simulator | `adapters/kinematic_sim.py` | point-mass stand-in for AirSim, faster than real time |
-| Metrics | `evaluation/sar_metrics.py` | time to find, coverage, sectors swept |
-| Top-down plot | `evaluation/plot_tracks.py` | SVG; also plots Phase 0 corridor runs |
+| Mission / scenario models | `atal/core/sar.py` | Slide 13 YAML, validated by Pydantic; errors name the field |
+| Sector grid | `atal/core/sar.py` (`SectorGrid`) | ids A1..H8, bounds, lookup, serpentine order |
+| Voronoi coverage | `atal/search/voronoi.py` | the only search algorithm (decided 10/29) |
+| Boustrophedon lanes | `atal/search/sweep_lanes.py` | lanes from footprint and overlap |
+| Victim sensor | `atal/simulation/victim_sensor.py` | footprint geometry; camera detection later |
+| Memory (local belief) | `atal/core/belief.py` | swept sectors and detections, each with its source |
+| Typed actions | `atal/core/sar.py` (`SweepSector`, `ReturnHome`), `atal/core/action.py` | go through the action port like any agent action |
+| Sector executor | `atal/flight/sector_sweep.py` | sweeps with the live-tested velocity path follower |
+| Fixed-list planner | `atal/agents/sector_planner.py` | the Phase 1 "agent" |
+| Offline simulator | `atal/simulation/kinematic_sim.py` | point-mass stand-in for AirSim, faster than real time |
+| Metrics | `atal/evaluation/sar_metrics.py` | time to find, coverage, sectors swept |
+| Top-down plot | `atal/evaluation/plot_tracks.py` | SVG; also plots Phase 0 corridor runs |
 
 ## Conventions
 
@@ -236,7 +236,7 @@ python run_sar_mission.py --offline --full-sweep --runs 1               # keep s
 python run_sar_mission.py --mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml --runs 1
 
 # one run's plot again, or a Phase 0 corridor run's plot
-python -m evaluation.plot_tracks runs/sar/<batch>/run_00.jsonl
+python -m atal.evaluation.plot_tracks runs/sar/<batch>/run_00.jsonl
 ```
 
 PASS for a run: the victim was detected, the search did not end in a failure (`ended_by`

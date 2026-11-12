@@ -26,14 +26,14 @@ python run_sar_mission.py --planner llm --model scripted --offline \
 
 | Piece | File | Notes |
 |---|---|---|
-| LLM planner | `agent/sar_llm_planner.py` (`LLMSectorPlanner`) | Pydantic AI, any model (`agent/model_config.py`); overrides one method of `FixedSectorPlanner` |
-| Invariant guard | `gate/sar_guard.py` (`SarGuard`, `SarInvariantGate`) | the agent's output validator AND the port's gate slot |
-| Scripted model | `agent/sar_scripted_model.py` | Pydantic AI `FunctionModel`: offline runs and tests |
+| LLM planner | `atal/agents/llm_sector_planner.py` (`LLMSectorPlanner`) | Pydantic AI, any model (`atal/agents/llm/model_config.py`); overrides one method of `FixedSectorPlanner` |
+| Invariant guard | `atal/trust_layer/invariant_guard.py` (`SarGuard`, `SarInvariantGate`) | the agent's output validator AND the port's gate slot |
+| Scripted model | `atal/agents/llm/scripted_model.py` | Pydantic AI `FunctionModel`: offline runs and tests |
 | TestModel | `--model test` | Pydantic AI `TestModel`: schema-shaped nonsense, so every decision is refused and falls back (plumbing test) |
-| Planner loop | `agent/sector_planner.py` | the loop now asks `choose()` for each next action; Phase 1's `choose()` is "next in the fixed order" |
+| Planner loop | `atal/agents/sector_planner.py` | the loop now asks `choose()` for each next action; Phase 1's `choose()` is "next in the fixed order" |
 | Runner | `run_sar_mission.py` | `--planner llm`, `--model`, `--thinking`, `--decision-timeout` |
-| Metrics | `evaluation/sar_metrics.py` | decisions, fallbacks, guard and gate refusals, decision latency |
-| Tracing | `observability.py` | Logfire spans per run and per decision when `LOGFIRE_TOKEN` is set |
+| Metrics | `atal/evaluation/sar_metrics.py` | decisions, fallbacks, guard and gate refusals, decision latency |
+| Tracing | `atal/observability.py` | Logfire spans per run and per decision when `LOGFIRE_TOKEN` is set |
 
 ## One decision
 
@@ -61,7 +61,7 @@ flowchart LR
   estimated time, and, if the mission enables a prior, the most likely unsearched sectors.
   Memory is the belief file, not the chat history, so the prompt does not grow over a long
   search and what the model knows is exactly what `run_NN.memory.json` says.
-- **Output.** A typed action, `SweepSector | ReturnHome` (`models/sar.py`). There are no tools:
+- **Output.** A typed action, `SweepSector | ReturnHome` (`atal/core/sar.py`). There are no tools:
   the model never calls the simulator.
 - **Guard.** The output validator runs the guard. A refused choice goes back to the model with
   the rule's code and message (for example `already_swept: A1 is already swept (your memory)`),
