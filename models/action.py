@@ -31,7 +31,7 @@ class ActionType(str, Enum):
     MOVE_ALONG_TRACK = "move_along_track"      # move in a direction for a time; heading unchanged
     MOVE_TO_POSITION = "move_to_position"      # go to N/E/altitude and stop
     LAND = "land"
-    # Mission-layer maneuvers (executor/mission_runner.py): change how the drone flies its
+    # Mission-layer maneuvers (legacy/corridor/mission_runner.py): change how the drone flies its
     # corridor; applied at once, the drone carries them out while the mission continues.
     #   HOLD and CHANGE_ALTITUDE (a layer change) above are maneuvers there too.
     MAINTAIN = "maintain"                      # no change: a recorded decision to carry on

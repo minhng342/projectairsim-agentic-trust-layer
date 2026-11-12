@@ -58,7 +58,7 @@ _EXECUTOR_FEEDBACK = {
                                          "vehicle is not ready; nothing was sent."),
     "task_timeout": ("timed_out", "The command did not complete in time."),
     "settle_timeout": ("timed_out", "The command did not complete in time."),
-    # mission runner (executor/mission_runner.py): maneuvers are applied, not completed
+    # mission runner (legacy/corridor/mission_runner.py): maneuvers are applied, not completed
     "applied": ("applied", "Maneuver applied: the drone is carrying it out while continuing "
                            "its mission."),
     "not_applicable": ("not_applicable", "That maneuver does not apply right now (for example "

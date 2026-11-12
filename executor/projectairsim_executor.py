@@ -16,7 +16,7 @@ Every command follows the same lifecycle:
                    once off target, steer in with world-frame velocity commands
                    (v = gain * error, clamped) until settled, then hover. Simple
                    Flight's own position hold orbits the target at diagonal headings
-                   (archive/diagnostics/diag_heading_settle.py, 2026-10-14/27). With final_approach="none":
+                   (legacy/diagnostics/diag_heading_settle.py, 2026-10-14/27). With final_approach="none":
                    if the vehicle has STOPPED outside tolerance, re-send the target
                    slowly (bounded corrections).
     5. RESULT      CommandResult. On any failure after dispatch, hover first.

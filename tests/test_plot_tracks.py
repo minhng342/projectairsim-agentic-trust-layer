@@ -1,7 +1,7 @@
 """Top-down track plot (evaluation/plot_tracks.py) for corridor (Phase 0) run logs."""
 from evaluation.plot_tracks import plot_run
 from evaluation.recorder import EvaluationRecorder
-from models.mission import MissionPlan
+from legacy.corridor.mission import MissionPlan
 
 
 def test_corridor_run_plots_planned_corridors_and_flown_tracks(tmp_path):

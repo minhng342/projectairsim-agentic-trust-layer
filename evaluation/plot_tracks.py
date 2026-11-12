@@ -4,7 +4,7 @@ Top-down track plot of a run, as a standalone SVG (no plotting library needed).
     python -m evaluation.plot_tracks runs/run_<id>.jsonl [-o out.svg]
 
 Works on any run log with `truth` events (ground-truth poses, evaluation side):
-    corridor runs (Phase 0, test_corridors_live.py)  planned corridors (dashed) + flown tracks
+    corridor runs (Phase 0, legacy/corridor)        planned corridors (dashed) + flown tracks
     SAR runs (run_sar_mission.py)                    sector grid with ids, sectors shaded by
                                                      the drone's memory (swept / partial),
                                                      flown track, true victim, detection point
