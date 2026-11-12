@@ -12,11 +12,26 @@ ground. It exists so the Phase 1 pipeline (mission file -> planner -> port -> ex
 path follower -> sensor -> memory -> run log) can be tested, and batches of runs checked,
 on any machine. Measured results come from the real simulator.
 
-Time: sim time = host time since start x `speedup`, integrated lazily (in steps of at
-most `max_step_s` sim seconds) whenever anything reads or commands the world. Code that
-polls on the host clock (path follower, executor, feed, sensor) should poll `speedup`
-times faster than in a live run, so each poll still covers about the same sim time; the
-runner's --offline mode does that.
+Time: one simulation clock for everything (physics, command expiry, the sensors, the
+mission deadline, the run log and the metrics all read it). It runs at `speedup` times
+host time, integrated in steps of at most `max_step_s` sim seconds. Code that polls on the
+host clock (path follower, executor, feed, sensor) should poll `speedup` times faster than
+in a live run, so each poll still covers about the same sim time; the runner's --offline
+mode does that.
+
+A host stall must slow simulated time, not skip it. Inside a running event loop (the
+runners), `with KinematicSim(...)` starts a clock task that ticks every `tick_s` host
+seconds. Between two ticks the clock may run at most `max_lag_s` sim seconds ahead of the
+last tick, so when the host stalls (the event loop blocked for a moment, a busy test
+machine) the world stops with it and resumes where it was. Before this, a 0.1 s host stall
+skipped 10 sim seconds at x100: velocity commands expired unseen, the drones hovered, and
+the path follower reported a blocked path with no obstacle in the mission. How much sim
+time passes never depends on how often anything reads the world: it is set by host time
+and the clock task alone. Used without a running event loop (some unit tests), there is no
+clock task and the clock simply follows host time x speedup, as before.
+
+Protective deadlines that must hold in host time (the runners' stall watchdog, the
+follower's host timeout, the pad-zone wait) stay on the host clock.
 
 Velocity commands last `duration` SIM seconds, then the vehicle brakes to a hover, like
 Simple Flight's move_by_velocity. No wind. No buildings unless `obstacles` are given:
@@ -155,7 +170,8 @@ class KinematicSim:
     def __init__(self, starts: dict[str, tuple[float, float]], ground_alt_m: float = 0.0,
                  speedup: float = 20.0, max_step_s: float = 0.02, max_accel_mps2: float = 4.0,
                  max_vertical_mps: float = 3.0, land_speed_mps: float = 1.0,
-                 takeoff_height_m: float = 3.0, clock=time.monotonic, obstacles=()):
+                 takeoff_height_m: float = 3.0, clock=time.monotonic, obstacles=(),
+                 tick_s: float = 0.001, max_lag_s: float = 0.5):
         if speedup <= 0:
             raise ValueError("speedup must be > 0")
         self.vehicle_ids = list(starts)
@@ -167,6 +183,14 @@ class KinematicSim:
         self._clock = clock
         self._t0 = clock()
         self.now_s = 0.0                       # sim seconds integrated so far
+        # The clock (see the module docstring): the sim time `_sim_ref` was reached at host
+        # time `_host_ref`; with the clock task running, a reading may be at most max_lag_s
+        # past `_sim_ref`.
+        self._host_ref, self._sim_ref = self._t0, 0.0
+        self.tick_s, self.max_lag_s = float(tick_s), float(max_lag_s)
+        self._ticking = False
+        self._clock_task: asyncio.Task | None = None
+        self.longest_tick_gap_s = 0.0          # host seconds: the worst stall the clock absorbed
         self.t0_ns = 10_000_000_000            # sim clock starts at 10 s, like the real one
         self.task_poll_s = 0.002
         self.obstacles = [dict(o) for o in obstacles]
@@ -175,10 +199,46 @@ class KinematicSim:
 
     # ------------------------------------------------------------ adapter API
     def __enter__(self):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return self                        # no event loop: no clock task (see docstring)
+        self._clock_task = loop.create_task(self.run_clock())
         return self
 
     def __exit__(self, *exc):
+        if self._clock_task is not None:
+            self._clock_task.cancel()
+            self._clock_task = None
+        self._ticking = False
         return False
+
+    # ------------------------------------------------------------ clock
+    def sim_target_s(self) -> float:
+        """Where the sim clock is now: host time x speedup since the last tick, at most
+        max_lag_s past it while the clock task runs."""
+        t = self._sim_ref + (self._clock() - self._host_ref) * self.speedup
+        if self._ticking:
+            t = min(t, self._sim_ref + self.max_lag_s)
+        return max(t, self.now_s)
+
+    def tick(self) -> None:
+        """One tick of the clock task: the clock moves on to where it is now (at most
+        max_lag_s past the last tick) and starts counting from here."""
+        host = self._clock()
+        self.longest_tick_gap_s = max(self.longest_tick_gap_s, host - self._host_ref)
+        self._sim_ref, self._host_ref = self.sim_target_s(), host
+
+    async def run_clock(self) -> None:
+        self.tick()                            # count from here
+        self._ticking = True
+        try:
+            while True:
+                await asyncio.sleep(self.tick_s)
+                self.tick()
+        finally:
+            self.tick()
+            self._ticking = False
 
     def drone(self, vid):
         return self._drones[vid]
@@ -239,7 +299,7 @@ class KinematicSim:
 
     # ------------------------------------------------------------ physics
     def integrate(self) -> None:
-        target = (self._clock() - self._t0) * self.speedup
+        target = self.sim_target_s()
         while self.now_s < target - 1e-9:
             dt = min(self.max_step_s, target - self.now_s)
             for v in self._v.values():
