@@ -1,5 +1,6 @@
 """Velocity path follower on the fake drone (tests/flight/test_executor.py fakes)."""
 import asyncio
+import itertools
 import math
 
 import pytest
@@ -9,6 +10,10 @@ from atal.flight.path_follower import FollowerConfig, FollowMode, PathFollower, 
 from tests.flight.test_executor import FakeAdapter, FakeDrone, FakeWorld
 
 FAST = FollowerConfig(poll_interval_s=0.0, hover_timeout_s=0.5)
+# The corner slowdown and command slew (live altitude-hold fix) have their own tests below;
+# the older tests check path geometry and modes without them.
+PLAIN = FollowerConfig(poll_interval_s=0.0, hover_timeout_s=0.5, max_cmd_accel_mps2=None,
+                       corner_speed_mps=None)
 # FakeWorld starts airborne at N=-1, E=8, altitude 5, heading 315
 L_PATH = [(-1.0, 8.0), (14.0, 8.0), (14.0, 20.0)]        # 15 m north, then 12 m east
 
@@ -26,7 +31,7 @@ class Ticks:
         await asyncio.sleep(0)
 
 
-def make(path=L_PATH, alt=5.0, speed=3.0, at=None, config=FAST):
+def make(path=L_PATH, alt=5.0, speed=3.0, at=None, config=PLAIN):
     world = FakeWorld()
     drone = FakeDrone(world)
     events = []
@@ -326,3 +331,68 @@ def test_hold_pins_the_point_after_the_brake_limit_even_if_still_moving():
     run(f)
     pins = [d for k, d in events if k == "follower_hold_point"]
     assert pins and pins[0]["braking_s"] >= FAST.hold_brake_max_s
+
+
+# ------------------------------------------- corners and command slew (live altitude hold)
+# zeus-g 2026-11-12: at every lane corner Simple Flight climbed up to ~2 m (once 3.1 m)
+# while the follower already commanded close to its full descent rate. The climbs line up
+# with the horizontal command swinging at speed, so the follower now slows before a corner
+# and limits how fast the horizontal command changes in CRUISE.
+# cmd_duration_s 0.1 = the fake world's sim step, so distance and time agree in these tests
+DEFAULTS = FollowerConfig(poll_interval_s=0.0, hover_timeout_s=0.5, cmd_duration_s=0.1)
+
+
+def test_slows_before_a_corner_and_still_flies_the_path():
+    f, _w, drone, _e, _ = make(speed=5.0, config=DEFAULTS)
+    r = run(f)
+    assert r.mode == FollowMode.DONE and r.waypoints_passed == [1, 2]
+    assert r.max_cross_track_m <= DEFAULTS.lookahead_m
+    # the command when the carrot first passes the corner (14, 8) is at corner speed
+    swing = next(i for i, (vn, ve, _) in enumerate(drone.velocities) if ve > 0.05)
+    vn, ve, _ = drone.velocities[swing - 1]
+    assert math.hypot(vn, ve) <= DEFAULTS.corner_speed_mps + 0.2     # one 0.1 s step of slack
+
+
+def test_the_horizontal_command_changes_at_most_max_cmd_accel_per_second_in_cruise():
+    f, _w, drone, events, _ = make(speed=5.0, config=DEFAULTS)
+    run(f)
+    traces = [d for k, d in events if k == "follower_trace"]
+    assert traces, "no follower_trace events"
+    v = [(vn, ve) for vn, ve, _ in drone.velocities]
+    dt = 0.1                                   # the fake world's sim step per snapshot
+    lim = DEFAULTS.max_cmd_accel_mps2 * dt + 1e-9
+    steps = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in itertools.pairwise(v)]
+    assert max(steps) <= lim
+
+
+def test_braking_for_a_hold_is_not_slew_limited():
+    box = {}
+
+    def call_hold():
+        box["f"].hold()
+        box["w"].vn = 2.5
+    f, world, drone, events, _ = make(speed=5.0, config=DEFAULTS,
+                                      at={8: call_hold, 30: lambda: box["f"].stop()})
+    box.update(f=f, w=world)
+    run(f)
+    held = next(i for i, (k, d) in enumerate(events) if k == "follower_mode" and d["mode"] == "hold")
+    assert any(math.hypot(vn, ve) > 0.5 for vn, ve, _ in drone.velocities[:8])
+    assert drone.velocities[8][:2] == (0.0, 0.0)          # the first command after hold: stop
+    assert held is not None
+
+
+def test_follower_trace_records_command_beside_measurement():
+    f, _w, _d, events, _ = make(speed=3.0, config=DEFAULTS)
+    run(f)
+    t = [d for k, d in events if k == "follower_trace"][1]
+    for key in ("alt_target_m", "alt_m", "vz_cmd_mps", "vz_mps", "vh_cmd_mps", "vh_mps",
+                "cmd_gap_s", "mode", "sim_time_ns"):
+        assert key in t
+    times = [d["sim_time_ns"] for k, d in events if k == "follower_trace"]
+    assert min(b - a for a, b in itertools.pairwise(times)) >= DEFAULTS.trace_period_s * 1e9
+
+
+def test_next_corner_ignores_straight_points():
+    p = Polyline([(0, 0), (5, 0), (10, 0), (10, 10), (10, 20)])
+    assert p.next_corner(0.0, 30.0) == pytest.approx(10.0)
+    assert p.next_corner(10.0, 30.0) is None

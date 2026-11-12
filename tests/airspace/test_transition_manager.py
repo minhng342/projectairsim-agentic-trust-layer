@@ -181,6 +181,21 @@ def test_a_late_grant_lapses_and_motion_without_a_started_grant_is_flagged():
     assert r2.state == State.LAPSED and w2.mgr.flags() == {}
 
 
+def test_the_unauthorised_motion_alarm_uses_the_per_drone_bound_e_z():
+    """Layer spacing is checked as separation + 2 e_z: two drones each up to e_z off toward
+    each other. A holding drone more than e_z (not 2 e_z) off its level breaks that
+    assumption, so the alarm fires there."""
+    within = World({"D0": air(50, 50, 150)}, roster=["D0"])
+    within.step(1.0)
+    within.move_to("D0", 150 + 0.9 * within.mgr.bounds.e_z, 2.0)
+    within.step(1.0)
+    assert within.mgr.flags() == {}
+    beyond = World({"D0": air(50, 50, 150)}, roster=["D0"])
+    beyond.step(1.0)
+    beyond.move_to("D0", 150 + 1.5 * beyond.mgr.bounds.e_z, 2.0)   # under 2 e_z, over e_z
+    assert "unauthorised_motion" in beyond.mgr.flags()["D0"]
+
+
 # ---------------------------------------------------------------- completion
 def test_reaching_the_target_once_is_not_enough_settling_restarts_on_drift():
     w = World({"D0": air(50, 50, 150)}, roster=["D0"])

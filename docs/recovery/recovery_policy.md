@@ -59,6 +59,12 @@ apart.
 | `e_z` | 1 m | `2·e_z` = 2 m | how far a holding drone may be off its altitude |
 | `e_h` | 1.5 m | `2·e_h` = 3 m | how far a holding drone may be off its position |
 
+The per-drone value is the bound: a holding drone more than `e_z` off its cleared altitude,
+with no move reserved, is `unauthorised_motion`. The pair allowance `2·e_z` is only for
+spacing (two drones each `e_z` off toward each other). Until 2026-11-12 the code raised the
+alarm at `2·e_z`, which let one drone use the whole pair allowance; the first live team runs
+on zeus-g found that gap.
+
 **One horizontal margin** is used everywhere: `d_h = separation_cruise_m + 2·e_h`
 (8 m on the dev mission). It is the minimum horizontal distance between two drones that
 are both holding or moving only vertically. The grant rules, the waiting slots and the pad

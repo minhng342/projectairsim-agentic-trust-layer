@@ -84,6 +84,23 @@ class FollowerConfig:
     # expected time + 60 s: many minutes in CityEnviron). None turns it off.
     stuck_after_s: float | None = 10.0
     stuck_min_progress_m: float = 1.0
+    # A follower_trace event at most every trace_period_s of SIM time: what was commanded
+    # next to what was measured (altitude, vertical and horizontal speed, gap between
+    # commands). Live altitude hold is only as good as these show. None turns it off.
+    trace_period_s: float | None = 0.5
+    # The horizontal velocity command changes by at most this much per second of SIM time
+    # (starting from the measured velocity). Live, Simple Flight climbs up to ~2 m against
+    # a full descent command when the horizontal command swings at a corner or a new path
+    # (zeus-g 2026-11-12). CRUISE only: braking for a hold or a stop is never slowed, so the
+    # stopping distances behind the transition manager's stop-line are unchanged. None = off.
+    max_cmd_accel_mps2: float | None = 3.0
+    # Slow down before a corner (a turn of at least corner_turn_deg) so the command swings at
+    # corner_speed_mps, not at cruise speed: v <= sqrt(v_c^2 + 2 a d), d = distance to the
+    # point where the carrot passes the corner. Without it the slew limit above would carry
+    # the drone past the corner. None = off.
+    corner_speed_mps: float | None = 1.5
+    corner_decel_mps2: float = 2.0
+    corner_turn_deg: float = 30.0
 
 
 @dataclass
@@ -125,6 +142,20 @@ class Polyline:
                 (n0, e0), (n1, e1) = self.points[i], self.points[i + 1]
                 return n0 + t * (n1 - n0), e0 + t * (e1 - e0)
         return self.points[-1]
+
+    def next_corner(self, s: float, min_turn_deg: float) -> float | None:
+        """Arc length of the first interior waypoint after s where the path turns by at
+        least min_turn_deg, or None."""
+        for i in range(1, len(self.points) - 1):
+            if self.cum[i] <= s:
+                continue
+            (n0, e0), (n1, e1), (n2, e2) = self.points[i - 1], self.points[i], self.points[i + 1]
+            a = math.atan2(e1 - e0, n1 - n0)
+            b = math.atan2(e2 - e1, n2 - n1)
+            turn = abs(math.degrees((b - a + math.pi) % (2 * math.pi) - math.pi))
+            if turn >= min_turn_deg:
+                return self.cum[i]
+        return None
 
     def project(self, n: float, e: float, s_min: float = 0.0,
                 window_m: float = math.inf) -> tuple[float, float]:
@@ -171,6 +202,9 @@ class PathFollower:
         self._max_xtrack = 0.0
         self._stuck_ref: tuple[float, int] | None = None   # (progress, sim ns) last advance
         self.blocked = False
+        self._trace_ns: int | None = None      # sim time of the last follower_trace
+        self._cmd: tuple[float, float, int] | None = None   # last horizontal command, sim ns
+        self._last_cmd_host: float | None = None
 
     # ------------------------------------------------------------ maneuvers
     def hold(self) -> None:
@@ -240,6 +274,8 @@ class PathFollower:
                     self._set_mode(FollowMode.HOLD, "hold",
                                    at=(snap.position_ned_m.x, snap.position_ned_m.y))
                 vn, ve, vup, arrived = self._guidance(snap)
+                vn, ve = self._slew(snap, vn, ve)
+                self._trace(snap, vn, ve, vup)
                 stuck = self._stuck_for(snap)
                 if stuck is not None:
                     self.blocked = True
@@ -322,6 +358,11 @@ class PathFollower:
             return 0.0, 0.0, vup, arrived
         d_end = to_end if final else self.remaining_m
         v = min(self.speed_mps, max(cfg.min_approach_speed_mps, cfg.arrive_gain * d_end))
+        if cfg.corner_speed_mps is not None:
+            c = self.path.next_corner(self.progress_m, cfg.corner_turn_deg)
+            if c is not None:
+                d = max(0.0, c - self.progress_m - cfg.lookahead_m)
+                v = min(v, math.sqrt(cfg.corner_speed_mps ** 2 + 2 * cfg.corner_decel_mps2 * d))
         d = math.hypot(dn, de)
         return v * dn / d, v * de / d, vup, arrived
 
@@ -395,6 +436,45 @@ class PathFollower:
         self._emit("follower_end", mode=mode.value, reason=reason, progress_m=r.progress_m,
                    elapsed_s=r.elapsed_s, max_cross_track_m=r.max_cross_track_m)
         return r
+
+    def _slew(self, snap: TelemetrySnapshot, vn: float, ve: float) -> tuple[float, float]:
+        """Limit how fast the horizontal command vector changes (max_cmd_accel_mps2)."""
+        a = self.config.max_cmd_accel_mps2
+        t = snap.sim_time_ns
+        if a is None or t is None or self.mode != FollowMode.CRUISE:
+            self._cmd = None if t is None else (vn, ve, t)
+            return vn, ve
+        if self._cmd is None:                  # first command: start from what it is doing
+            pn, pe, dt = snap.velocity_ned_mps.x, snap.velocity_ned_mps.y, self.config.poll_interval_s
+        else:
+            pn, pe, t_prev = self._cmd
+            dt = max(0.0, (t - t_prev) / 1e9)
+        dn, de = vn - pn, ve - pe
+        step, lim = math.hypot(dn, de), a * dt
+        if step > lim:
+            vn, ve = pn + dn * lim / step, pe + de * lim / step
+        self._cmd = (vn, ve, t)
+        return vn, ve
+
+    def _trace(self, snap: TelemetrySnapshot, vn: float, ve: float, vup: float) -> None:
+        """Record the command about to be sent beside the measured state, rate-limited."""
+        now_host = self._clock()
+        gap = None if self._last_cmd_host is None else now_host - self._last_cmd_host
+        self._last_cmd_host = now_host
+        period = self.config.trace_period_s
+        if period is None or snap.sim_time_ns is None:
+            return
+        if self._trace_ns is not None and snap.sim_time_ns - self._trace_ns < period * 1e9:
+            return
+        self._trace_ns = snap.sim_time_ns
+        self._emit("follower_trace", sim_time_ns=snap.sim_time_ns, mode=self.mode.value,
+                   alt_target_m=round(self.altitude_target_m, 2),
+                   alt_m=round(snap.altitude_local_m, 2),
+                   vz_cmd_mps=round(vup, 2), vz_mps=round(snap.vertical_speed_mps, 2),
+                   vh_cmd_mps=round(math.hypot(vn, ve), 2),
+                   vh_mps=round(math.hypot(snap.velocity_ned_mps.x, snap.velocity_ned_mps.y), 2),
+                   cmd_gap_s=None if gap is None else round(gap, 3),
+                   progress_m=round(self.progress_m, 2))
 
     def _emit(self, kind: str, **fields) -> None:
         if self._on_event is None:

@@ -609,8 +609,10 @@ class TransitionManager:
 
     # ------------------------------------------------------------ monitoring
     def _check_unauthorised(self) -> None:
-        """An airborne drone more than 2 e_z off the altitude it is cleared for, with no
-        move reserved, moved without a grant."""
+        """An airborne drone more than e_z off the altitude it is cleared for, with no
+        move reserved, moved without a grant. e_z is the per-drone bound the layer spacing
+        assumes (spacing >= separation + 2 e_z is the PAIR allowance, two drones each e_z
+        off toward each other), so the alarm uses e_z, not 2 e_z."""
         for vid in self.roster:
             tr = self.tracks[vid]
             s = tr.sample
@@ -620,7 +622,7 @@ class TransitionManager:
                          for r in self.reservations.values())
             if moving:
                 continue
-            if abs(s.alt_m - tr.anchor_alt) > 2 * self.bounds.e_z:
+            if abs(s.alt_m - tr.anchor_alt) > self.bounds.e_z:
                 self._flag(vid, "unauthorised_motion", alt_m=round(s.alt_m, 2),
                            cleared_m=tr.anchor_alt)
 
