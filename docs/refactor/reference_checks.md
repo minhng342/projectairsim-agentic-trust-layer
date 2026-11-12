@@ -23,8 +23,8 @@ runs per case cannot show a small change in a failure rate.
 | 8 | f036aa1 | 7cb0f86, clock reference | DIFFERENT: 43 differences | Same cause. An earlier attempt against the clock reference was stopped and not counted: the working tree changed while it ran. |
 | 9 | landing queue (1fdf772) | 7cb0f86, original reference | DIFFERENT: 30 differences | A landing paused a teammate inside its own column and waited for it to its deadline (fixed in 2808999). |
 | 10 | 1fdf772 | 7cb0f86, clock reference | DIFFERENT: 30 differences | Same cause. |
-| 11 | pauses never freeze a drone in the column (2808999) | 7cb0f86, original reference | DIFFERENT: 2 differences | Every case found 3/3 and passed 3/3 (team_obstacle included). Both differences are team_static times to find: 591.4 s vs 364.2 s, 376.8 s vs 260.5 s. Intentional, see below. |
-| 12 | 2808999 | 7cb0f86, clock reference | DIFFERENT: 2 differences | The same two team_static times (591.0 vs 360.6 s, 376.3 vs 256.8 s). |
+| 11 | pauses never freeze a drone in the column (2808999) | 7cb0f86, original reference | DIFFERENT: 2 expected timing differences (not "same behaviour") | Every case found 3/3 and passed 3/3 (team_obstacle included). Both differences are team_static times to find: 591.4 s vs 364.2 s, 376.8 s vs 260.5 s. Intentional, see below. |
+| 12 | 2808999 | 7cb0f86, clock reference | DIFFERENT: 2 expected timing differences | The same two team_static times (591.0 vs 360.6 s, 376.3 vs 256.8 s). |
 
 Attempts 7 to 12 are on the recovery branch, which is not merged. Both references are
 unchanged, and no threshold was changed to make a case pass.

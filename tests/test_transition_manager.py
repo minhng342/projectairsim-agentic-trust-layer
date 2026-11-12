@@ -1,6 +1,8 @@
 """The transition manager on its own (recovery policy sections 2 to 8): bounds, levels, the
 reservation lifecycle, the grant rules, freshness, the STUCK follow-up, the stop-line,
 landing and the roster. Surveillance is fed by hand at 5 Hz of sim time."""
+import math
+
 import pytest
 
 from atal.airspace.bounds import Bounds, Levels
@@ -693,9 +695,63 @@ def test_a_drone_over_the_pads_is_not_frozen_in_a_teammates_landing_column():
     w.step(DT)
     assert land.state == State.REQUESTED and calls.log == []
     for _ in range(15):                                 # D1 flies out at 5 m/s, 3 s
+        if math.dist((w.pos["D1"]["x"], 0), (0, 0)) < w.mgr.bounds.d_h:
+            # while it is inside the column, never granted, and it blocks as a mover
+            assert land.state == State.REQUESTED
+            assert "mover:D1" in w.mgr.blockers(land)
         w.pos["D1"]["x"] += 1.0
         w.step(DT)
     stop(w, "D1")
     w.step(3.0)
     assert ("pause", "D1") in calls.log
     assert land.state == State.GRANTED
+
+
+@pytest.mark.parametrize("keep_out", [False, True])
+def test_the_inside_column_exception_never_applies_to_a_move_in_progress(keep_out):
+    """The exception is for pending requests only. Around an ACTIVE reservation (or a
+    keep-out) a mover that comes inside the column is stopped and paused by the
+    stop-line, however close it is, and stays paused while the reservation lasts."""
+    w, calls = paused_world({"D0": air(0, 0, 150), "D1": air(30, 0, 140, vh=5.0),
+                             "D2": air(300, 300, 170)}, TEAM)
+    phases(w.mgr, D0=Phase.HOLDING, D1=Phase.HOLDING, D2=Phase.HOLDING)
+    w.step(1.4)
+    land = w.mgr.request("D0", "land", Kind.LANDING, (0, 0), 150, 0, wait_until=w.t + 300)
+    w.step(DT)
+    assert land.state == State.GRANTED
+    assert w.mgr.start(land.reservation_id, "land", "D0") == "started"
+    w.mgr.set_phase("D0", Phase.MOVING)
+    if keep_out:
+        w.mgr.report_stuck("D0", "test")
+        assert land.state == State.KEEP_OUT
+    w.mgr.set_phase("D1", Phase.SEARCHING)
+    w.pos["D1"]["x"] = 3.0                             # inside d_h of the column
+    w.step(DT)
+    assert ("pause", "D1") in calls.log
+    assert land.reservation_id in w.mgr.pauses["D1"]
+    assert any(o.vehicle_id == "D1" for o in w.mgr.stop_orders)
+    assert ("D1", land.reservation_id) not in w.mgr._skipped
+    w.step(5.0)
+    assert w.mgr.paused("D1")                           # still paused while it lasts
+
+
+def test_two_adjacent_climbs_resolve_in_order_with_10_m_levels():
+    """Policy section 4, validated configuration only (levels 10 m apart): D0 at 150 m
+    and D1 at 160 m, 3 m apart, both climb. D0's span contains D1's level, D1's does not
+    contain D0's, so D1 goes first and D0 after it; no cycle. This is not a claim that
+    deadlock is impossible for every configuration."""
+    w = World({"D0": air(0, 0, 150), "D1": air(3, 0, 160), "D2": air(300, 300, 170)})
+    phases(w.mgr, D0=Phase.REQUEST, D1=Phase.REQUEST, D2=Phase.HOLDING)
+    w.step(1.4)
+    m = w.mgr
+    a = m.request("D0", "a", Kind.CLIMB, (0, 0), 150, 180, wait_until=w.t + 120)
+    b = m.request("D1", "b", Kind.CLIMB, (3, 0), 160, 190, wait_until=w.t + 120)
+    w.step(DT)
+    assert a.state == State.REQUESTED and "holding:D1" in m.blockers(a)
+    assert b.state == State.GRANTED
+    m.start(b.reservation_id, "b", "D1")
+    w.mgr.set_phase("D1", Phase.MOVING)
+    w.move_to("D1", 190, 30.0)
+    w.step(4.0)
+    assert b.state == State.COMPLETED
+    assert a.state == State.GRANTED and a.granted_at >= b.ended_at
