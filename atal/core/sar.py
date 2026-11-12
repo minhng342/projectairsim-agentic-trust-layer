@@ -119,8 +119,13 @@ class Termination(_Strict):
 
 
 class Limits(_Strict):
+    """altitude_ceiling_m: the highest altitude any drone may use, plus the cruise floor
+    above it (recovery policy section 2). Required for a team run with the managed
+    airspace; a provisional simulation cap, checked against the loaded team's size. It
+    does not establish obstacle clearance."""
     min_battery_pct: float = Field(ge=0, le=100)
     geofence_margin_m: float = Field(ge=0)
+    altitude_ceiling_m: float | None = Field(default=None, gt=0)
 
 
 class Swarm(_Strict):
@@ -168,6 +173,15 @@ class Swarm(_Strict):
                       staging points, else the pads) and each drone sweeps only its own
                       part; no claims, no clears, no re-split when a drone drops out. Finds
                       are still reported, so the team stops on the first find in both
+    airspace          managed (default): every vertical move of a team drone (startup,
+                      obstacle recovery, landing) is a reservation from the trusted
+                      transition manager (atal/airspace/, recovery policy v3.3), and a
+                      recovering drone climbs to a transit level of its own. unmanaged:
+                      the Phase 3 behaviour (the team climbs together, a recovery climbs
+                      10 m), only to reproduce earlier results; such runs are labelled and
+                      are not used for separation claims
+    max_transit_level how many transit levels each drone has above the team's search
+                      levels (T_i(k) = altitude_m + (k n + i) layer_spacing_m)
     staging           optional: drone i first flies (at its layer) to staging[i], then starts
                       searching. Lets the team launch from one known-clear pad area while the
                       first Voronoi split still starts from spread-out generators (drones on
@@ -189,6 +203,8 @@ class Swarm(_Strict):
     separation_pad_m: float = Field(default=1.5, ge=0)
     pad_zone_m: float = Field(default=10.0, ge=0)
     max_truth_gap_s: float = Field(default=2.0, gt=0)
+    airspace: Literal["managed", "unmanaged"] = "managed"
+    max_transit_level: int = Field(default=2, ge=0)
 
 
 class Mission(_Strict):

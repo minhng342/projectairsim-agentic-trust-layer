@@ -418,7 +418,8 @@ class TransitionManager:
                 self._queue.remove(rid)
                 continue
             if self.now > r.wait_until + 1e-9:
-                self._end(r, State.EXPIRED, "not granted by its deadline")
+                self._end(r, State.EXPIRED, "not granted by its deadline (last waiting on "
+                                            f"{r.reason or 'nothing recorded'})")
                 self._queue.remove(rid)
                 continue
             # a later request goes ahead only if it does not conflict with an earlier one,

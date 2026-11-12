@@ -31,6 +31,7 @@ Each recovery episode ends with an outcome of its own (completed, unresolved or 
 recorded apart from the run's acceptance: an episode can complete in a run that fails.
 """
 import asyncio
+import contextlib
 import itertools
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -86,6 +87,7 @@ class Recovery:
         self.retargets = 0
         self.episodes: list[Episode] = []
         self.outcome: str | None = None  # "lost" or "unresolved" once the drone gives up
+        self.startup = None              # its startup reservation (set by the runner)
         self._ids = itertools.count(1)
 
     # ------------------------------------------------------------ where it flies
@@ -134,6 +136,7 @@ class Recovery:
         retarget     descent not granted in time: choose another sector
         return_high  retargeted max_retargets times: go home at this transit level
         obstacle     hit something on the way at the transit level: recover again
+        stopped      interrupted on the way (a detection, the time limit): stop searching
         blocked      the descent itself was blocked; back up at the transit level:
                      mark the sector blocked and choose another
         unresolved   no safe option left (the drone hovers)
@@ -144,6 +147,8 @@ class Recovery:
             return "ready"
         self.phase(Phase.TRANSIT)
         flown = await self.flight.fly_to(entry_xy, self.level)
+        if flown == "stopped":
+            return "stopped"                 # interrupted (a detection, the time limit)
         if flown != "reached":
             return "obstacle"
         await self.flight.hold()
@@ -164,6 +169,18 @@ class Recovery:
             self.phase(Phase.TRANSIT)
             return "blocked"
         return self._unresolved(f"descent from {here:g} m: {result}")
+
+    async def settle_startup(self) -> bool:
+        """After the climb to the search level: wait (holding) until the manager completes
+        the startup reservation. False if it did not (it became a keep-out)."""
+        r = self.startup
+        if r is None:
+            return True
+        await self.flight.hold()
+        return await self._settled(r)
+
+    def searching(self) -> None:
+        self.phase(Phase.SEARCHING)
 
     def returning(self) -> None:
         self.phase(Phase.RETURNING)
@@ -339,3 +356,50 @@ class Recovery:
         return {"episodes": len(outs), "completed": outs.count("completed"),
                 "unresolved": outs.count("unresolved"), "lost": outs.count("lost"),
                 "open": outs.count("open")}
+
+
+class DroneFlight:
+    """RecoveryFlight over one drone's own flight stack. Like takeoff and landing, these
+    are flight-safety steps run outside the action port: the agent did not choose them and
+    the gate does not judge them; the transition manager reserves every vertical move and
+    the run log records each step (source "recovery")."""
+
+    def __init__(self, adapter, vehicle_id: str, flight_executor, sector_executor,
+                 hover_timeout_s: float = 5.0):
+        self.adapter, self.vehicle_id = adapter, vehicle_id
+        self._flight, self._sector = flight_executor, sector_executor
+        self._hover_timeout_s = hover_timeout_s
+
+    async def hold(self) -> None:
+        drone = self.adapter.drone(self.vehicle_id)
+        async def hover():
+            await (await drone.hover_async())
+        # holding is best effort; the manager's own surveillance decides "holding"
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(hover(), self._hover_timeout_s)
+
+    def telemetry(self) -> Telemetry | None:
+        try:
+            s = self.adapter.get_snapshot(self.vehicle_id)
+        except Exception:                 # noqa: BLE001
+            return None
+        return Telemetry(s.sim_time_s, s.position_ned_m.x, s.position_ned_m.y,
+                         s.altitude_local_m, s.ground_speed_mps, s.vertical_speed_mps)
+
+    async def change_altitude(self, alt_m: float) -> str:
+        r = await self._flight.change_altitude(self.vehicle_id, alt_m,
+                                               reason="recovery: reserved vertical move")
+        return "completed" if r.status.value == "succeeded" else (r.reason_code or "failed")
+
+    async def fly_to(self, xy, alt_m: float) -> str:
+        """To the next sector's entry point at the transit level, through the sector
+        executor (so traffic pauses and interrupts apply). "reached", "stopped" (an
+        interrupt: a detection, the time limit), or the failure code."""
+        from atal.core.action import ActionType, ProposedAction
+        r = await self._sector.execute(ProposedAction(
+            vehicle_id=self.vehicle_id, action_type=ActionType.MOVE_TO_POSITION,
+            north_m=float(xy[0]), east_m=float(xy[1]), altitude_m=float(alt_m),
+            reason="recovery: transit at the transit level"))
+        if r.reason_code == "position_reached":
+            return "reached"
+        return "stopped" if r.reason_code == "sweep_stopped" else (r.reason_code or "failed")

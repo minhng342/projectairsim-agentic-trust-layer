@@ -60,6 +60,7 @@ from atal.flight.pad_zone import PadZone
 from atal.observability import span
 from atal.runtime import rates
 from atal.runtime.acceptance import FULL_SWEEP_MIN_COVERAGE, team_run_failures
+from atal.runtime.airspace import TeamAirspace
 from atal.runtime.build_drone import TeamParts, build_team_drone
 from atal.runtime.context import RunContext
 from atal.runtime.landing import fly_team_drone
@@ -176,6 +177,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
     results: dict[str, dict] = {v: {"planner": None, "shutdown": None, "descend": None,
                                     "error": None} for v in vids}
     bg_errors: list[str] = []
+    airspace_summary = None
+    team_parts: dict = {}
     run_error = None
     outcome = "aborted"
 
@@ -205,24 +208,37 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
             if static is not None:
                 recorder.record("static_split", cells=static,
                                 sizes={v: len(c) for v, c in static.items()})
-            shared = TeamParts(bus, pads, static, mission.swarm.staging or [], len(specs))
+            # the trusted transition manager (managed airspace): every vertical move of
+            # every drone is a reservation (atal/airspace/, atal/runtime/airspace.py)
+            airspace = TeamAirspace.build(mission, vids, recorder, timing)
+            shared = TeamParts(bus, pads, static, mission.swarm.staging or [], len(specs),
+                               airspace=airspace)
 
             # 3. Build each drone.
             team = {d.vehicle: build_team_drone(ctx, d, i, missions[d.vehicle], victim,
                                                 gate_on=args.gate == "invariants", team=shared)
                     for i, d in enumerate(specs)}
+            team_parts = team
 
             # 4. Start the background tasks.
             background = start_background(ctx, team, mission)
+            if airspace is not None:
+                airspace.attach(team)
+                background.append(("airspace", airspace.survey(adapter, ctx.stop)))
 
             # 5. Fly every drone at once: take off, search, land one at a time.
             #    Always: stop the background tasks.
             try:
-                await asyncio.gather(*(fly_team_drone(ctx, pads, len(team), team[v], results[v])
+                await asyncio.gather(*(fly_team_drone(ctx, pads, len(team), team[v], results[v],
+                                                      airspace=airspace)
                                        for v in vids))
             finally:
                 bg_errors += await stop_background(ctx, background)
                 recorder.record("bus_stats", **bus.stats)
+                if airspace is not None:
+                    airspace_summary = airspace.summary()
+                    recorder.record("airspace_summary", source="transition_manager",
+                                    **airspace_summary)
         ps = [r["planner"] for r in results.values()]
         outcome = ("victim_found" if any(p and p.detection for p in ps)
                    else "searched" if all(ps) else "aborted")
@@ -246,6 +262,12 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
         d["planner_reason"] = r["planner"].reason if r["planner"] else None
         d["recoveries"] = r["planner"].recoveries if r["planner"] else None
         d["blocked"] = r["planner"].blocked if r["planner"] else []
+        d["landing_cleared"] = r.get("landing_cleared")
+        d["landing_not_cleared"] = bool(r["shutdown"] and r["shutdown"].landing_not_cleared)
+        rec = getattr(team_parts.get(vid), "recovery", None) if team_parts else None
+        d["recovery_outcomes"] = rec.summary() if rec is not None else None
+    metrics["airspace"] = airspace_summary            # None: unmanaged (labelled)
+    metrics["airspace_managed"] = mission.swarm.airspace == "managed"
     metrics["background_errors"] = bg_errors
     metrics["sim_stalled"] = getattr(simulator, "stalled", None)
     metrics["run_error"] = run_error

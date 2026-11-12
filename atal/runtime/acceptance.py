@@ -52,8 +52,12 @@ def team_run_failures(m: dict, full_sweep: bool,
     dropped = (m.get("dropout") or {}).get("vehicle")
     for vid, d in sorted(m["drones"].items()):
         injected = vid == dropped and d.get("ended_by") == "lost"   # the experiment, not a bug
-        if d.get("ended_by") in ("failed", "aborted", "lost", None) and not injected:
+        if d.get("ended_by") in ("failed", "aborted", "lost", "unresolved", None) \
+                and not injected:
             why.append(f"{vid}: search ended by {d.get('ended_by')}")
+        if d.get("landing_not_cleared"):
+            why.append(f"{vid}: unresolved_airborne (no landing reservation; not landed, "
+                       f"not disarmed)")
         if d.get("return_home") != "home_reached" and not injected:
             why.append(f"{vid}: return home {d.get('return_home')}")
         if not d.get("landed"):
@@ -79,6 +83,10 @@ def team_run_failures(m: dict, full_sweep: bool,
             why.append(f"{msgs['peer_dropped_invalid']} invalid peer message(s) in an honest run")
         if msgs.get("identity_mismatch"):
             why.append(f"{msgs['identity_mismatch']} identity mismatch(es) in an honest run")
+    air = m.get("airspace") or {}
+    for vid, flags in sorted((air.get("flags") or {}).items()):
+        for f in flags:          # unauthorised_motion, separation_unverified, speed bound
+            why.append(f"{vid}: {f}")
     sep = m.get("separation")
     if sep is not None:
         if not sep.get("measured"):

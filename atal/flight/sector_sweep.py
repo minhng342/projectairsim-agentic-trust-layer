@@ -16,8 +16,9 @@ action port's executor, so every action still goes proposal -> gate -> executor 
                      wait there until no teammate is landing, then in to the pad. A drone
                      that is inside the zone when a teammate holds it first flies out to
                      the edge. If the wait times out it never goes in (pad_zone_timeout)
-    move_to_position straight to (north, east) at mission altitude (Phase 3 staging);
-                     result position_reached
+    move_to_position straight to (north, east) at mission altitude (Phase 3 staging), or
+                     at one of this drone's transit levels (obstacle recovery); result
+                     position_reached
     change_altitude  delegated to the flight executor (climb in place to mission altitude,
                      the move the corridor missions proved live)
 
@@ -93,6 +94,7 @@ class SectorExecutor:
         self.pad_zone, self.pad_wait_s = pad_zone, pad_wait_s
         self.traffic_paused = False
         self._waiting_for_traffic = False
+        self.transit_altitudes: list[float] = []     # set by the recovery (atal/flight/recovery.py)
         self._done_m, self._total_m = 0.0, 0.0
 
     def interrupt(self, reason: str) -> bool:
@@ -219,10 +221,13 @@ class SectorExecutor:
                        sweep_length_m=round(path.length_m, 2), waypoints=path.waypoints,
                        request_id=action.request_id)
         elif t == ActionType.MOVE_TO_POSITION:
-            if abs(action.altitude_m - self.mission.flight.altitude_m) > 1.0:
+            allowed = [self.mission.flight.altitude_m, *self.transit_altitudes]
+            if all(abs(action.altitude_m - a) > 1.0 for a in allowed):
                 return result(CommandStatus.REFUSED, "not_applicable",
                               f"moves fly at the mission altitude "
-                              f"{self.mission.flight.altitude_m:g} m only")
+                              f"{self.mission.flight.altitude_m:g} m only (or a transit "
+                              f"level during an obstacle recovery)")
+            fly_alt = float(action.altitude_m)
             sid, path = None, None
             target = (action.north_m, action.east_m)
             waypoints = [here, target]
