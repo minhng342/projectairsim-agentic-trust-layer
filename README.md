@@ -5,6 +5,11 @@ from BlueSky to [Project AirSim](https://github.com/iamaisim/ProjectAirSim).
 An agent proposes drone actions; deterministic layers validate telemetry and
 gate actions before anything reaches the simulator.
 
+**New here?** Read [docs/walkthrough.md](docs/walkthrough.md): how one search and rescue
+run works, with the real file and function names. The repository is being reorganised to
+be easier to read; the starting point and the checks are in
+[docs/refactor/baseline.md](docs/refactor/baseline.md).
+
 ```
                  Simulator  <-- executor (flight control, ground truth) <--+
                      |                                                    |
