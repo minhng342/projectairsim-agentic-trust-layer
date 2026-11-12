@@ -165,3 +165,31 @@ How a drone is put together now (`atal/runtime/build_drone.py`):
 The run logs still name the planner `FixedSectorPlanner`, `LLMSectorPlanner`,
 `SwarmFixedPlanner` or `SwarmLLMPlanner` (`run_config.json`: `pipeline.planner`), from the
 table `PLANNER_NAMES` in `search_loop.py`, so old and new logs read the same.
+
+## Step 6: the remaining boundaries
+
+The old module paths below are removed, not forwarded. Run logs are unchanged.
+
+| Before | Now |
+|---|---|
+| `atal/agents/team_coordinator.py: SwarmReceiver`, `PeerMessenger`, `_Delivered` | `atal/channels/peer_link.py: SwarmReceiver`, `PeerMessenger`, `Delivered` |
+| `atal/channels/radio.py: _apply_hooks`, `_hook_name` | `apply_hooks`, `hook_name` (public: the peer link uses them too) |
+| `atal/evaluation/recorder.py: EvaluationRecorder`, `git_info`, `versions` | `atal/runtime/recorder.py` (written during a run) |
+| `atal/evaluation/recorder.py: RunLog`, `read_run` | `atal/evaluation/run_log.py` (read after it) |
+| `atal/evaluation/recorder.py: _clean`, the event fields | `atal/core/events.py: json_safe`, `HEADER_FIELDS`, `RUN_START`, `RUN_END` |
+| `atal/evaluation/recorder.py: REPO_ROOT` | `atal/core/paths.py: REPO_ROOT` |
+| `atal/core/sar.py`: `Point` ... `Swarm`, `Mission`, `PlanFileError`, `load_mission` | `atal/core/mission.py` (plus `load_yaml`, the loader both files use) |
+| `atal/core/sar.py`: `DroneStart`, `Insider`, `Scenario`, `load_scenario` | `atal/core/scenario.py` (the ground truth; agent and trust code never import it) |
+| `atal/core/sar.py`: `Sector`, `SectorGrid`, `sector_id`, `parse_sector_id`, `LETTERS` | `atal/core/sector_grid.py` (with `SECTOR_ID_PATTERN`, from `action.py`) |
+| `atal/core/sar.py`: `DroneState`, `SweepSector`, `ReturnHome`, `SarAction` | `atal/core/action.py` |
+| `atal/core/sar.py: _Strict` | `atal/core/strict.py: Strict` |
+| `atal/trust_layer/assessor.py`: `TrustAssessor`, `NoTrustAssessor` | `atal/core/contracts.py` |
+| `atal/trust_layer/action_gate.py`: `ActionGate`, `BypassGate` | `atal/core/contracts.py` |
+| `atal/attacks/hooks.py: HookContext` | `atal/core/contracts.py` |
+| `team_coordinator.py`: the messenger's type `PeerMessenger` | `atal/core/contracts.py: PeerSender` |
+| `atal/evaluation/sar_metrics.py: _is_impact`, `_tracks` | `is_impact`, `truth_tracks` (public: other files use them) |
+
+`tests/test_boundaries.py` checks the folder rules: what each folder may import, that
+truth (`core/scenario.py`, `simulation/`) never reaches agent, trust, search, channel,
+flight or airspace code, that only `flight/` and `runtime/` use `airspace/`, and that no
+file imports a name starting with `_` from another file.
