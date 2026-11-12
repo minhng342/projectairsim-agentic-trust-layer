@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from atal.core.sar import load_mission
+from atal.core.mission import load_mission
 from atal.search.sweep_lanes import sweep_path
 from atal.search.voronoi import coverage_order, voronoi_partition
 from atal.simulation.victim_sensor import segment_box_hit

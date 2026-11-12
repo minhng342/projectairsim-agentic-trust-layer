@@ -9,7 +9,7 @@ import pytest
 
 from atal.core.action import ActionType, ProposedAction
 from atal.core.belief import LocalBelief
-from atal.core.sar import Mission
+from atal.core.mission import Mission
 from atal.evaluation.archive import main as archive_main
 from atal.evaluation.compare import bootstrap_ci, load_batch, paired_comparison, table
 from atal.evaluation.evidence import MANIFEST, verify, write_manifest
@@ -200,7 +200,7 @@ def test_a_victim_in_a_blocked_sector_fails_as_unreachable():
 
 def test_receiver_stays_out_of_a_sector_a_peer_reported_and_keeps_it_unsearched():
     from atal.agents.team_coordinator import SwarmCoordinator
-    from atal.channels.peer_link import PeerMessenger, SwarmReceiver
+    from atal.channels.peer_link import PeerMessenger
     from atal.channels.radio import RemoteIdBus, RemoteIdReceiver
     from atal.core.peer_messages import SectorBlocked
     m = _mission()

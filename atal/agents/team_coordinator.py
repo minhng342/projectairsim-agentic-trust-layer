@@ -28,13 +28,13 @@ import math
 from atal.channels.peer_link import PeerMessenger
 from atal.core.action import ActionType, ProposedAction
 from atal.core.belief import Detection, LocalBelief, PeerClaim
+from atal.core.mission import Mission
 from atal.core.peer_messages import (
     SectorBlocked,
     SectorClaimed,
     SectorCleared,
     VictimDetected,
 )
-from atal.core.sar import Mission
 from atal.search.allocation import allocate
 from atal.search.voronoi import coverage_order
 from atal.trust_layer.peer_rules import PeerClaimRules

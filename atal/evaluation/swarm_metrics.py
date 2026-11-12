@@ -36,7 +36,7 @@ import itertools
 import math
 import statistics
 
-from atal.core.sar import Mission
+from atal.core.mission import Mission
 from atal.evaluation.run_log import RunLog
 from atal.evaluation.sar_metrics import _is_impact, _tracks, coverage_raster
 

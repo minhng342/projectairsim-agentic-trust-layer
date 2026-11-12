@@ -9,7 +9,7 @@ Every chooser has `kind` (the name it is logged under, see atal/agents/search_lo
 attach(loop) and choose(remaining). The LLM chooser (atal/agents/llm_chooser.py) is the
 other one, and falls back to this same choice when the model fails.
 """
-from atal.core.sar import ReturnHome, SweepSector
+from atal.core.action import ReturnHome, SweepSector
 
 
 class FixedChooser:

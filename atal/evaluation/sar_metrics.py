@@ -27,7 +27,7 @@ Search and rescue metrics for one run, from its run log (evaluation side, ground
 """
 import math
 
-from atal.core.sar import Mission
+from atal.core.mission import Mission
 from atal.evaluation.run_log import RunLog
 
 

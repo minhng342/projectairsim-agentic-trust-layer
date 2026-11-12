@@ -1,13 +1,11 @@
 """Regressions from the 2026-11-02 audit: a find must not hide a later failure, a detection
 during a decision must end the search, a full sweep must be measured, and both planners
 can run under the same guard."""
-import asyncio
-import json
 
 from atal.agents.fixed_chooser import FixedChooser
 from atal.core.action import ActionType, CommandResult, CommandStatus
 from atal.core.belief import Detection
-from atal.core.sar import Mission
+from atal.core.mission import Mission
 from atal.evaluation.run_log import read_run
 from atal.evaluation.sar_metrics import coverage_raster
 from atal.flight.sector_sweep import SectorExecutor

@@ -1,18 +1,12 @@
-"""Phase 1 mission / scenario contracts (atal/core/sar.py): the deck's YAML loads, derived
+"""Phase 1 mission / scenario contracts (atal/core/mission.py, scenario.py, sector_grid.py, action.py): the deck's YAML loads, derived
 values match slide 13, and bad files are rejected with the field named."""
 import pytest
 import yaml
 
-from atal.core.action import ActionType, ProposedAction
-from atal.core.sar import (
-    PlanFileError,
-    ReturnHome,
-    SweepSector,
-    load_mission,
-    load_scenario,
-    parse_sector_id,
-    sector_id,
-)
+from atal.core.action import ActionType, ProposedAction, ReturnHome, SweepSector
+from atal.core.mission import PlanFileError, load_mission
+from atal.core.scenario import load_scenario
+from atal.core.sector_grid import parse_sector_id, sector_id
 
 DECK = "missions/sar/mission.yaml"
 

@@ -100,7 +100,7 @@ def plot_run(path, out=None) -> Path:
     step = 0.5 / c.s if c.s else 0.5
 
     if is_sar:
-        from atal.core.sar import Mission
+        from atal.core.mission import Mission
         ms = Mission.model_validate(mission)
         status, swept_by = {}, {}
         team = len(tracks) > 1

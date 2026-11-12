@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from atal.core.belief import Detection, LocalBelief, SectorStatus
-from atal.core.sar import Mission
+from atal.core.mission import Mission
 from atal.evaluation.run_log import read_run
 from atal.evaluation.sar_metrics import coverage_raster
 from atal.runtime.run_single import main, parse_args

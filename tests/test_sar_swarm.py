@@ -10,12 +10,12 @@ from atal.agents.team_coordinator import SwarmCoordinator
 from atal.channels.peer_link import PeerMessenger, SwarmReceiver
 from atal.channels.radio import RemoteIdBus, RemoteIdReceiver
 from atal.core.belief import LocalBelief, PeerClaim
+from atal.core.mission import Mission, Swarm
 from atal.core.peer_messages import (
     PEER_MESSAGE,
     SectorCleared,
     is_peer_message,
 )
-from atal.core.sar import Mission, Swarm
 from atal.evaluation.run_log import read_run
 from atal.runtime.run_team import main, parse_args
 from atal.search.allocation import allocate

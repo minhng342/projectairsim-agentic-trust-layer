@@ -49,8 +49,9 @@ from pathlib import Path
 
 from atal.agents.search_loop import planner_name
 from atal.channels.radio import RemoteIdBus
+from atal.core.mission import PlanFileError, load_mission
 from atal.core.paths import REPO_ROOT
-from atal.core.sar import PlanFileError, load_mission, load_scenario
+from atal.core.scenario import load_scenario
 from atal.evaluation.compare import load_batch, paired_comparison
 from atal.evaluation.evidence import write_manifest
 from atal.evaluation.plot_tracks import plot_run

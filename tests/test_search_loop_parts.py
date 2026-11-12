@@ -7,7 +7,7 @@ from atal.agents.llm_chooser import LLMChooser
 from atal.agents.search_loop import SearchLoop, SoloRole
 from atal.agents.team_coordinator import TeamRole
 from atal.core.belief import LocalBelief
-from atal.core.sar import Mission
+from atal.core.mission import Mission
 from atal.trust_layer.invariant_guard import SarGuard
 from tests.test_sar_phase2 import MISSION
 

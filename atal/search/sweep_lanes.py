@@ -23,7 +23,7 @@ transits.
 import math
 from dataclasses import dataclass
 
-from atal.core.sar import Mission
+from atal.core.mission import Mission
 
 
 @dataclass(frozen=True)

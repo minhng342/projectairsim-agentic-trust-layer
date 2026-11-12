@@ -12,20 +12,20 @@ actions, so the port, executor, memory and logs carry over unchanged.
 | Deliverable (10/28 meeting) | Where |
 |---|---|
 | Repository with the simulation harness | `run_sar_mission.py` (one command, N seeded runs, live or `--offline`) |
-| Mission file and Pydantic data models | `missions/sar/*.yaml`, `atal/core/sar.py`, `atal/core/belief.py` |
+| Mission file and Pydantic data models | `missions/sar/*.yaml`, `atal/core/mission.py`, `atal/core/scenario.py`, `atal/core/belief.py` |
 | Run logs for each mission | `runs/sar/<batch>/run_NN.jsonl` + `.memory.json` + `.summary.json` + `.svg`, `batch_summary.json` |
 | Class / module diagram | this page (below) |
 | Short demo video | to record on zeus-g, see [Demo video](#demo-video) |
 
 | Piece | File | Notes |
 |---|---|---|
-| Mission / scenario models | `atal/core/sar.py` | Slide 13 YAML, validated by Pydantic; errors name the field |
-| Sector grid | `atal/core/sar.py` (`SectorGrid`) | ids A1..H8, bounds, lookup, serpentine order |
+| Mission / scenario models | `atal/core/mission.py`, `atal/core/scenario.py` | Slide 13 YAML, validated by Pydantic; errors name the field |
+| Sector grid | `atal/core/sector_grid.py` (`SectorGrid`) | ids A1..H8, bounds, lookup, serpentine order |
 | Voronoi coverage | `atal/search/voronoi.py` | the only search algorithm (decided 10/29) |
 | Boustrophedon lanes | `atal/search/sweep_lanes.py` | lanes from footprint and overlap |
 | Victim sensor | `atal/simulation/victim_sensor.py` | footprint geometry; camera detection later |
 | Memory (local belief) | `atal/core/belief.py` | swept sectors and detections, each with its source |
-| Typed actions | `atal/core/sar.py` (`SweepSector`, `ReturnHome`), `atal/core/action.py` | go through the action port like any agent action |
+| Typed actions | `atal/core/action.py` (`SweepSector`, `ReturnHome`, `ProposedAction`) | go through the action port like any agent action |
 | Sector executor | `atal/flight/sector_sweep.py` | sweeps with the live-tested velocity path follower |
 | Fixed-list planner | `atal/agents/search_loop.py` + `atal/agents/fixed_chooser.py` | the Phase 1 "agent" (logged as `FixedSectorPlanner`; one class until restructuring step 5, see docs/refactor/moved.md) |
 | Offline simulator | `atal/simulation/kinematic_sim.py` | point-mass stand-in for AirSim, faster than real time |

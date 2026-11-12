@@ -43,7 +43,7 @@ where it is) and, in a team, stops taking cells so its teammates share them out.
 still fails the run's acceptance: recovery keeps the mission going, it does not make a
 collision acceptable.
 
-Every action is a typed Pydantic action (atal/core/sar.py) converted to a ProposedAction and
+Every action is a typed Pydantic action (atal/core/action.py) converted to a ProposedAction and
 submitted with the observation it was decided from, whichever chooser picked it: the port,
 the executor and the log are the same for both.
 
@@ -54,9 +54,9 @@ via on_detection().
 import time
 from dataclasses import dataclass, field
 
-from atal.core.action import ActionType, ProposedAction
+from atal.core.action import ActionType, DroneState, ProposedAction, ReturnHome
 from atal.core.belief import Detection, LocalBelief
-from atal.core.sar import DroneState, Mission, ReturnHome
+from atal.core.mission import Mission
 from atal.search.sweep_lanes import sweep_path
 from atal.search.voronoi import coverage_order, voronoi_partition
 
