@@ -13,7 +13,7 @@ from legacy.corridor.mission import MissionPlan
 from legacy.corridor.mission_runner import MissionRunner
 from legacy.corridor.scripted_maneuvers import ScriptedManeuverAgent, Trigger
 from tests.channel_fakes import ListRecorder
-from tests.test_executor import FAST, MultiAdapter
+from tests.flight.test_executor import FAST, MultiAdapter
 
 FOLLOW = FollowerConfig(poll_interval_s=0.005, hover_timeout_s=0.5)
 TRIGGERS = {

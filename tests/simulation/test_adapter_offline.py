@@ -4,7 +4,7 @@ recorded in Pass 3 so the adapter's math, caching, collision logic, callback
 robustness and validation can be checked anywhere.
 
     python -m pytest tests                      (from the repo root)
-    python -m tests.test_adapter_offline        (no pytest needed)
+    python -m tests.simulation.test_adapter_offline        (no pytest needed)
 """
 import math
 import sys

@@ -21,7 +21,7 @@ from atal.runtime.run_team import main, parse_args
 from atal.search.allocation import allocate
 from atal.trust_layer.peer_rules import PeerClaimRules
 from tests.channel_fakes import ListRecorder
-from tests.test_sar_pipeline import MISSION
+from tests.runtime.test_sar_pipeline import MISSION
 
 THREE = [{"id": "A", "vehicle": "Drone1", "start": {"x_m": 0, "y_m": 5}},
          {"id": "B", "vehicle": "Drone2", "start": {"x_m": 0, "y_m": 20}},

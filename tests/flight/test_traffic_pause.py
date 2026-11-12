@@ -11,7 +11,7 @@ from atal.flight.executor import ProjectAirSimExecutor
 from atal.flight.path_follower import FollowerConfig
 from atal.flight.sector_sweep import SectorExecutor
 from atal.simulation.kinematic_sim import KinematicSim
-from tests.test_sar_pipeline import MISSION
+from tests.runtime.test_sar_pipeline import MISSION
 
 
 def _setup(events):

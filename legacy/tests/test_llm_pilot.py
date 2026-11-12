@@ -13,8 +13,8 @@ from atal.flight.executor import ProjectAirSimExecutor
 from legacy.llm_pilot.llm_pilot import LLMPilot, PilotLimits, observation_for_model, tool_specs
 from legacy.llm_pilot.providers.base import ModelTurn, ToolCall
 from tests.channel_fakes import ListRecorder, SnapAdapter
-from tests.test_action_port import Clock, FakeExecutor
-from tests.test_executor import FAST, MultiAdapter
+from tests.channels.test_action_port import Clock, FakeExecutor
+from tests.flight.test_executor import FAST, MultiAdapter
 
 
 # ------------------------------------------------------------ fake providers

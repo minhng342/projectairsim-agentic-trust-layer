@@ -26,8 +26,8 @@ from atal.flight.executor import ProjectAirSimExecutor  # noqa: E402
 from legacy.llm_pilot.llm_pilot import PilotLimits  # noqa: E402
 from legacy.llm_pilot.pydantic_pilot import PydanticPilot  # noqa: E402
 from tests.channel_fakes import ListRecorder, SnapAdapter  # noqa: E402
-from tests.test_action_port import Clock, FakeExecutor  # noqa: E402
-from tests.test_executor import FAST, MultiAdapter  # noqa: E402
+from tests.channels.test_action_port import Clock, FakeExecutor  # noqa: E402
+from tests.flight.test_executor import FAST, MultiAdapter  # noqa: E402
 
 TURN = {"action_type": "rotate_to_heading", "heading_deg": 90.0, "reason": "face east"}
 

@@ -8,7 +8,7 @@ way in every comparison condition."""
 import pytest
 
 from atal.evaluation.run_log import read_run
-from tests.test_sar_swarm import run
+from tests.runtime.test_sar_swarm import run
 
 TOWER = "tower:12,28,12,28,20"        # 16 m square in the middle, 20 m tall: above the 10 m
 #                                      and 17 m layers, below the 24 m one

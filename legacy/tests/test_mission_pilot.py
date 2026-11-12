@@ -29,7 +29,7 @@ from legacy.corridor.mission import MissionPlan  # noqa: E402
 from legacy.corridor.mission_pilot import MissionPilot, MissionPilotConfig  # noqa: E402
 from legacy.corridor.mission_runner import MissionRunner  # noqa: E402
 from tests.channel_fakes import ListRecorder  # noqa: E402
-from tests.test_executor import FAST, MultiAdapter  # noqa: E402
+from tests.flight.test_executor import FAST, MultiAdapter  # noqa: E402
 
 PLAN = MissionPlan.load("legacy/corridor/missions/inspection_5_conflict.json")
 LLM = ("Drone2", "Drone3")

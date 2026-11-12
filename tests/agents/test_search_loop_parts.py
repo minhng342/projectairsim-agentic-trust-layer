@@ -9,7 +9,7 @@ from atal.agents.team_coordinator import TeamRole
 from atal.core.belief import LocalBelief
 from atal.core.mission import Mission
 from atal.trust_layer.invariant_guard import SarGuard
-from tests.test_sar_phase2 import MISSION
+from tests.agents.test_sar_phase2 import MISSION
 
 
 class _Stub:

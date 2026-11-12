@@ -13,7 +13,7 @@ from atal.core.observation import GateOutcome
 from atal.evaluation.run_log import read_run
 from atal.observability import span
 from atal.trust_layer.invariant_guard import SarGuard, SarInvariantGate
-from tests.test_sar_pipeline import MISSION, run
+from tests.runtime.test_sar_pipeline import MISSION, run
 
 
 @pytest.fixture
