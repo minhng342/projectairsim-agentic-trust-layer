@@ -158,3 +158,49 @@ def test_stalled_request_acknowledgement_is_bounded():
     r, elapsed = run(timed())
     assert elapsed < 1.0
     assert d.calls == ["hover", "land"] and r.unresolved
+
+
+# ------------------------------------------------------------ with a landing reservation
+def test_without_a_landing_reservation_an_airborne_drone_neither_lands_nor_disarms():
+    d = FakeFlyingDrone()
+    a = FakeAdapter(GroundState.AIRBORNE, drone=d)
+    touched = []
+    r = run(safe_shutdown(d, adapter=a, vehicle_id="Drone1", landing_cleared=False,
+                          on_touchdown=lambda: touched.append(1), **QUIET))
+    assert d.calls == ["hover"]                       # no land, no disarm
+    assert r.landing_not_cleared and r.unresolved and not r.disarmed and not touched
+
+
+def test_with_a_landing_reservation_touchdown_is_reported_before_the_disarm():
+    d = FakeFlyingDrone()
+    a = FakeAdapter(grounded_after_land, drone=d)
+    order = []
+    d.disarm = lambda: order.append("disarm")
+    r = run(safe_shutdown(d, adapter=a, vehicle_id="Drone1", landing_cleared=True,
+                          on_touchdown=lambda: order.append("touchdown"), **QUIET))
+    assert r.grounded_confirmed and r.disarmed and not r.landing_not_cleared
+    assert order == ["touchdown", "disarm"]
+
+
+def test_an_unconfirmed_landing_does_not_report_touchdown():
+    d = FakeFlyingDrone()
+    a = FakeAdapter(GroundState.AIRBORNE, drone=d)
+    touched = []
+    r = run(safe_shutdown(d, adapter=a, vehicle_id="Drone1", landing_cleared=True,
+                          on_touchdown=lambda: touched.append(1), **QUIET))
+    assert r.unresolved and not touched and not r.disarmed
+
+
+def test_an_already_grounded_drone_disarms_without_a_landing_reservation():
+    d = FakeFlyingDrone(landed_raw=0)
+    a = FakeAdapter(GroundState.GROUNDED, drone=d)
+    r = run(safe_shutdown(d, adapter=a, vehicle_id="Drone1", landing_cleared=False, **QUIET))
+    assert r.grounded_confirmed and r.disarmed and not r.landing_not_cleared
+    assert "hover" not in d.calls and "land" not in d.calls
+
+
+def test_an_unknown_ground_state_without_a_reservation_is_not_treated_as_grounded():
+    d = FakeFlyingDrone(landed_raw=0)
+    a = FakeAdapter(GroundState.GROUNDED, status=ValidationStatus.STALE, drone=d)
+    r = run(safe_shutdown(d, adapter=a, vehicle_id="Drone1", landing_cleared=False, **QUIET))
+    assert r.landing_not_cleared and not r.disarmed and "land" not in d.calls

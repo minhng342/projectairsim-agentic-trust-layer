@@ -267,3 +267,31 @@ def test_simultaneous_recoveries_both_succeed_without_losing_separation():
     assert r0.summary()["completed"] == 1 and r1.summary()["completed"] == 1
     assert w.min_sep >= 5.0
     assert w.mgr.flags() == {}
+
+
+# ---------------------------------------------------------------- landing
+def test_a_landing_is_cleared_above_its_pad_next_to_a_grounded_neighbour():
+    w = World({"D0": (0, -3, 0), "D1": (0, 0, 160)})
+    w.mgr.roster.discard("D2")
+    w.d["D0"]["grounded"] = True
+    rec = recovery(w, "D1", 1, [])
+
+    async def body():
+        return await rec.clear_landing()
+    assert run(w, body) is True
+    r = next(iter(w.mgr.reservations.values()))
+    assert r.state == State.ACTIVE and r.center_xy == (0, 0) and r.from_m == 160
+
+
+def test_a_landing_onto_an_occupied_pad_is_never_cleared():
+    w = World({"D0": (0, 0, 0), "D1": (0, 0.5, 160)})
+    w.mgr.roster.discard("D2")
+    w.d["D0"]["grounded"] = True
+    recs = []
+    rec = recovery(w, "D1", 1, recs, max_hold_s=4.0)
+
+    async def body():
+        return await rec.clear_landing()
+    assert run(w, body) is False
+    assert any(k == "landing_not_cleared" for k, _ in recs)
+    assert w.d["D1"]["alt"] == pytest.approx(160)

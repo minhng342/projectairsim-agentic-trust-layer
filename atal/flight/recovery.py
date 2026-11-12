@@ -173,6 +173,31 @@ class Recovery:
         if self.episode is not None:
             self._close("completed", "home at its transit level")
 
+    async def clear_landing(self, ground_m: float = 0.0) -> bool:
+        """Landing sequence steps 3 to 5 (policy section 11): the drone is above its pad
+        (or at its slot after a pad_zone_timeout) holding the zone, at its current level.
+        Confirm holding there, request a landing reservation bound to this position and
+        level, and do the atomic start. True: descend and land now. False: no
+        reservation in max_hold_s (the drone stays holding; never land, never disarm)."""
+        self.phase(Phase.HOLDING)
+        start_t = self._now()
+        while self._now() - start_t < self.max_hold_s:
+            if not await self._confirm_holding(self.level, stationary=False):
+                return False
+            r = await self._ask(Kind.LANDING, self.level, ground_m,
+                                self.max_hold_s - (self._now() - start_t), stationary=False)
+            if r.state == State.DENIED and r.reason == "not_holding":
+                await self._sleep(self.poll_s)
+                continue
+            if r.state != State.GRANTED:
+                self._record("landing_not_cleared", reason=r.reason or r.state.value)
+                return False
+            if self.mgr.start(r.reservation_id, r.request_id, self.vehicle_id) == "started":
+                self.phase(Phase.MOVING)
+                return True
+        self._record("landing_not_cleared", reason="max_hold_s")
+        return False
+
     # ------------------------------------------------------------ one vertical move
     async def _vertical(self, kind: Kind, to_m: float, deadline_s: float) -> str:
         """Hold, request, start, move, settle. Returns "completed", or why not:
