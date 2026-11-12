@@ -1,7 +1,8 @@
 # Investigation: path_blocked with no obstacle in the mission (offline team runs)
 
-Status: cause found 2026-11-12. Not fixed. The fix belongs to the offline simulator and
-gets its own change. Found during the step 5 review, which asked that a known flaky test
+Status: cause found 2026-11-12, fixed in the offline simulator in its own change
+(branch `claude/fix-offline-clock`, commits 45d7e90 and b254db2; see "Fix" at the end). The
+findings below are kept as they were written. Found during the step 5 review, which asked that a known flaky test
 not be treated as harmless.
 
 ## Symptom
@@ -70,3 +71,25 @@ expire unseen. Test: a forced 0.2 s host stall during a sweep must not produce
 
 The run folders of the four failures and the full pytest output are kept outside the
 repository, in the project files (`restructure/evidence/`).
+
+## Fix (2026-11-12)
+
+`atal/simulation/kinematic_sim.py` now has one simulation clock driven by a clock task
+that ticks every 1 ms of host time. Only a tick moves the world: it integrates physics
+and command expiry in whole 0.02 s steps, up to host time × speedup since the last tick
+but never more than `max_lag_s` = 0.5 sim s past it. A host stall therefore slows sim
+time instead of skipping it, with no catch-up burst. Reads and commands see the world as
+of the last tick, so how often anything reads changes neither the time nor the
+trajectory. Leaving the `with` block stops the clock task and freezes the clock.
+Protective deadlines that must hold in host time (the stall watchdog, the follower's host
+timeout, the pad-zone wait, `safe_shutdown`'s landing wait) are unchanged and stay on the
+host clock.
+
+Reproduction: `tests/test_offline_clock.py` blocks the event loop for 0.3 s in two
+consecutive velocity commands while a drone cruises. On the old clock both end-to-end
+tests failed 20 of 20 times with `path_blocked`; on the fixed clock they pass, and the
+recorded sim timestamps show no jump of 5 s or more. Every run of the checks is listed in
+`docs/refactor/reference_checks.md`.
+
+The separation gap allowance (`max_truth_gap_s + 0.25 × speedup`) is not changed by this
+fix. Whether to tighten it is a separate decision.
