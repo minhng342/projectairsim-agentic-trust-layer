@@ -150,5 +150,8 @@ def test_every_planner_gate_combination_runs(tmp_path, planner, gate, expected_g
     assert code == 0 and m["victim_found"] and not m["fail_reasons"]
     log = read_run(batch / "run_00.jsonl")
     assert log.events[0]["config"]["pipeline"]["action_gate"] == expected_gate
+    # the search loop with this chooser and the solo role, under its logged name
+    assert log.events[0]["config"]["pipeline"]["planner"] == {
+        "fixed": "FixedSectorPlanner", "llm": "LLMSectorPlanner"}[planner]
     if planner == "llm":
         assert m["llm_decisions"] >= 1 and m["fallbacks"] == 0
