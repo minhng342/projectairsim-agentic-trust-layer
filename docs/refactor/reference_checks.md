@@ -71,6 +71,10 @@ recorded 8 case(s) in docs/refactor/reference_baseline_clock.json
 exit=0
 ```
 
+Commit ids: the clock fix was tested as 45d7e90 and b254db2 on top of 34e2980, then
+rebased unchanged onto main (4387ece, whose tree is identical to 34e2980) as a9e133a and
+c1aedf0. The trees of b254db2 and c1aedf0 are identical, so the results apply to both.
+
 ### Full test-suite runs on the clock fix
 
 All with `pytest -q -n 2`, every run listed.
