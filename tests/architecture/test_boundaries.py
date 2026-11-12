@@ -18,7 +18,7 @@ nothing it checks.
 import ast
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1] / "atal"
+ROOT = Path(__file__).resolve().parents[2] / "atal"
 UTILITIES = {"env", "observability"}
 
 ALLOWED = {

@@ -4,7 +4,7 @@ import importlib.util
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location(
-    "reference_cases", Path(__file__).resolve().parent.parent / "tools" / "reference_cases.py")
+    "reference_cases", Path(__file__).resolve().parents[2] / "tools" / "reference_cases.py")
 rc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rc)
 

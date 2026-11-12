@@ -18,7 +18,7 @@ import time
 import pytest
 
 from atal.simulation.kinematic_sim import KinematicSim
-from tests.test_sar_pipeline import run as run_single
+from tests.runtime.test_sar_pipeline import run as run_single
 
 STALL_S = 0.3            # host seconds: 30 sim s at x100, three times the follower's stuck limit
 
@@ -76,7 +76,7 @@ def test_a_host_stall_does_not_make_a_drone_report_a_blocked_path(tmp_path, monk
 
 
 def test_a_host_stall_does_not_make_a_team_drone_report_a_blocked_path(tmp_path, monkeypatch):
-    from tests.test_sar_swarm import run as run_team
+    from tests.runtime.test_sar_swarm import run as run_team
     calls = _stall_twice(monkeypatch, at_call=200)
     code, batch, summary = run_team(tmp_path)
     log = (batch / "run_00.jsonl").read_text()

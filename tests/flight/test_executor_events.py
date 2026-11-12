@@ -5,7 +5,7 @@ import pytest
 
 from atal.core.action import CommandStatus
 from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
-from tests.test_executor import FAST, FakeAdapter, FakeDrone, FakeWorld, move, rotate
+from tests.flight.test_executor import FAST, FakeAdapter, FakeDrone, FakeWorld, move, rotate
 
 
 def setup(on_event, **cfg):

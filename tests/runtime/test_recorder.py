@@ -121,7 +121,7 @@ def test_real_executor_events_reach_the_file(tmp_path):
     import asyncio
 
     from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
-    from tests.test_executor import FAST, FakeAdapter, FakeDrone, FakeWorld, move
+    from tests.flight.test_executor import FAST, FakeAdapter, FakeDrone, FakeWorld, move
     world = FakeWorld()
     drone = FakeDrone(world)
     r = rec(tmp_path)

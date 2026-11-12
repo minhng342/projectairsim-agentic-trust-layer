@@ -1,4 +1,4 @@
-"""Velocity path follower on the fake drone (tests/test_executor.py fakes)."""
+"""Velocity path follower on the fake drone (tests/flight/test_executor.py fakes)."""
 import asyncio
 import math
 
@@ -6,7 +6,7 @@ import pytest
 
 from atal.core.telemetry import GroundState, ValidationStatus
 from atal.flight.path_follower import FollowerConfig, FollowMode, PathFollower, Polyline
-from tests.test_executor import FakeAdapter, FakeDrone, FakeWorld
+from tests.flight.test_executor import FakeAdapter, FakeDrone, FakeWorld
 
 FAST = FollowerConfig(poll_interval_s=0.0, hover_timeout_s=0.5)
 # FakeWorld starts airborne at N=-1, E=8, altitude 5, heading 315

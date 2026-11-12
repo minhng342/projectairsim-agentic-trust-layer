@@ -105,7 +105,7 @@ All with `pytest -q -n 2`, every run listed.
 | 45d7e90 | 6 | stopped and not counted: the code was revised (b254db2) while it ran |
 | b254db2 (only clock ticks move the world) | 1 to 8 | 578 passed each |
 
-### The stall reproduction (`tests/test_offline_clock.py`)
+### The stall reproduction (`tests/simulation/test_offline_clock.py`)
 
 | Code | What ran | Result |
 |---|---|---|

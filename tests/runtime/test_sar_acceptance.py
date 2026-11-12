@@ -11,7 +11,7 @@ from atal.evaluation.sar_metrics import coverage_raster
 from atal.flight.sector_sweep import SectorExecutor
 from atal.runtime.acceptance import single_run_failures as run_failures
 from atal.runtime.acceptance import single_run_passes as run_passes
-from tests.test_sar_pipeline import MISSION, run
+from tests.runtime.test_sar_pipeline import MISSION, run
 
 
 def test_failed_return_home_fails_the_run_even_after_a_find(tmp_path, monkeypatch):

@@ -85,7 +85,7 @@ Protective deadlines that must hold in host time (the stall watchdog, the follow
 timeout, the pad-zone wait, `safe_shutdown`'s landing wait) are unchanged and stay on the
 host clock.
 
-Reproduction: `tests/test_offline_clock.py` blocks the event loop for 0.3 s in two
+Reproduction: `tests/simulation/test_offline_clock.py` blocks the event loop for 0.3 s in two
 consecutive velocity commands while a drone cruises. On the old clock both end-to-end
 tests failed 20 of 20 times with `path_blocked`; on the fixed clock they pass, and the
 recorded sim timestamps show no jump of 5 s or more. Every run of the checks is listed in

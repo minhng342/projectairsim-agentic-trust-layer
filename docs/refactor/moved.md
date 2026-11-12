@@ -189,7 +189,7 @@ The old module paths below are removed, not forwarded. Run logs are unchanged.
 | `team_coordinator.py`: the messenger's type `PeerMessenger` | `atal/core/contracts.py: PeerSender` |
 | `atal/evaluation/sar_metrics.py: _is_impact`, `_tracks` | `is_impact`, `truth_tracks` (public: other files use them) |
 
-`tests/test_boundaries.py` checks the folder rules: what each folder may import, that
+`tests/architecture/test_boundaries.py` checks the folder rules: what each folder may import, that
 truth (`core/scenario.py`, `simulation/`) never reaches agent, trust, search, channel,
 flight or airspace code, that only `flight/` and `runtime/` use `airspace/`, and that no
 file imports a name starting with `_` from another file.

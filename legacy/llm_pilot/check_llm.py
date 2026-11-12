@@ -9,7 +9,7 @@ agent loop WITHOUT Project AirSim. Run this before the live test.
 tried in order, e.g.  ollama:qwen3.5:9b   google:gemini-3.5-flash-lite
 (the native harness takes bare Gemini names from GEMINI_MODEL instead).
 
-The fake drone (tests/test_executor.py fakes) starts airborne at N=-1, E=8, altitude
+The fake drone (tests/flight/test_executor.py fakes) starts airborne at N=-1, E=8, altitude
 5 and flies every command exactly. The real ActionPort, executor logic, recorder and
 summarizer are used, so the run log in runs/ looks like a live one.
 
@@ -33,7 +33,7 @@ from atal.observability import configure_observability
 from atal.runtime.recorder import EvaluationRecorder
 from legacy.llm_pilot.llm_pilot import FlightRules, PilotLimits
 from legacy.llm_pilot.pilot_setup import HARNESSES, prepare_pilot
-from tests.test_executor import FAST, MultiAdapter
+from tests.flight.test_executor import FAST, MultiAdapter
 
 TASK = ("Climb to 3 m above your current altitude, fly to a point 10 m north of the launch "
         "point at that altitude, face east, then fly back above the launch point at the same "

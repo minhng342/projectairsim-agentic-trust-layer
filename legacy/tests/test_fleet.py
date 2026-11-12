@@ -6,7 +6,7 @@ import pytest
 from atal.core.action import ActionType, ProposedAction
 from atal.flight.executor import ProjectAirSimExecutor
 from legacy.fleet import run_all_or_cancel
-from tests.test_executor import FAST, MultiAdapter
+from tests.flight.test_executor import FAST, MultiAdapter
 
 
 def run(coro):

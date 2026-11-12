@@ -2,7 +2,7 @@
 what it is derived from, one cleanup deadline fixed once, a landing that waits longer than
 60 s behind a legitimate reservation and then lands, a teammate holding in the column
 (expiry, never a descent), and later conflicting requests never overtaking a waiting
-landing. Uses the small world of tests/test_recovery.py (pads 3 m apart, levels from
+landing. Uses the small world of tests/flight/test_recovery.py (pads 3 m apart, levels from
 150 m every 10 m, ceiling 240 m, as on the dev mission)."""
 import asyncio
 
@@ -11,7 +11,7 @@ import pytest
 from atal.airspace.bounds import Bounds
 from atal.airspace.landing_queue import MARGIN_S, CleanupDeadline, QueueBudget, landing_top_level_m
 from atal.airspace.transition_manager import Kind, Phase, State
-from tests.test_recovery import LEVELS, World, recovery, run
+from tests.flight.test_recovery import LEVELS, World, recovery, run
 
 BUDGET = QueueBudget.derive(LEVELS, Bounds(), pad_zone_s=600.0)
 

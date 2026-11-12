@@ -20,9 +20,9 @@ from atal.flight.sector_sweep import SectorExecutor
 from atal.runtime.run_single import parse_obstacle
 from atal.simulation.kinematic_sim import KinematicSim
 from atal.trust_layer.invariant_guard import SarGuard
-from tests.test_sar_pipeline import MISSION
-from tests.test_sar_pipeline import run as run_one_drone
-from tests.test_sar_swarm import run as run_swarm
+from tests.runtime.test_sar_pipeline import MISSION
+from tests.runtime.test_sar_pipeline import run as run_one_drone
+from tests.runtime.test_sar_swarm import run as run_swarm
 
 
 def _mission():

@@ -13,7 +13,7 @@ from atal.flight.path_follower import FollowerConfig, FollowMode
 from legacy.corridor.mission import Corridor, DroneMission, MissionPlan
 from legacy.corridor.mission_runner import MissionPhase, MissionRunner
 from tests.channel_fakes import ListRecorder
-from tests.test_executor import FAST, FakeAdapter, FakeDrone, FakeWorld
+from tests.flight.test_executor import FAST, FakeAdapter, FakeDrone, FakeWorld
 
 # FakeWorld: Drone1 airborne at N=-1, E=8, altitude 5
 CORRIDOR = Corridor(name="north line", waypoints=[(-1.0, 8.0), (29.0, 8.0), (29.0, 14.0)],

@@ -17,7 +17,7 @@ from atal.flight.executor import ProjectAirSimExecutor
 from legacy.fleet import PhaseBarrier, run_all_or_cancel
 from legacy.llm_pilot.scripted_agent import MissionStep, ScriptedMissionAgent
 from tests.channel_fakes import ListRecorder, SnapAdapter
-from tests.test_executor import FAST, MultiAdapter
+from tests.flight.test_executor import FAST, MultiAdapter
 
 
 # ------------------------------------------------------------ PhaseBarrier
