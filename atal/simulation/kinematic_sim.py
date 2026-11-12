@@ -21,14 +21,18 @@ mode does that.
 
 A host stall must slow simulated time, not skip it. Inside a running event loop (the
 runners), `with KinematicSim(...)` starts a clock task that ticks every `tick_s` host
-seconds. Between two ticks the clock may run at most `max_lag_s` sim seconds ahead of the
-last tick, so when the host stalls (the event loop blocked for a moment, a busy test
-machine) the world stops with it and resumes where it was. Before this, a 0.1 s host stall
-skipped 10 sim seconds at x100: velocity commands expired unseen, the drones hovered, and
-the path follower reported a blocked path with no obstacle in the mission. How much sim
-time passes never depends on how often anything reads the world: it is set by host time
-and the clock task alone. Used without a running event loop (some unit tests), there is no
-clock task and the clock simply follows host time x speedup, as before.
+seconds, and only a tick moves the world: it integrates physics, command expiry and the
+clock together, in fixed steps of `max_step_s` sim seconds. One tick covers the host time
+since the last tick x speedup, but never more than `max_lag_s` sim seconds, so when the host
+stalls (the event loop blocked for a moment, a busy test machine) the world stops with it
+and resumes where it was, with no catch-up burst. Before this, a 0.1 s host stall skipped
+10 sim seconds at x100: velocity commands expired unseen, the drones hovered, and the path
+follower reported a blocked path with no obstacle in the mission. Reads (snapshots, poses,
+collision log) and commands never move the world: they see it as of the last tick, so how
+often anything reads cannot change the time or the trajectory. Leaving the `with` block
+stops the clock task and freezes the clock. Used without a running event loop (some unit
+tests), there is no clock task and each read integrates up to host time x speedup, as
+before.
 
 Protective deadlines that must hold in host time (the runners' stall watchdog, the
 follower's host timeout, the pad-zone wait) stay on the host clock.
@@ -188,7 +192,7 @@ class KinematicSim:
         # past `_sim_ref`.
         self._host_ref, self._sim_ref = self._t0, 0.0
         self.tick_s, self.max_lag_s = float(tick_s), float(max_lag_s)
-        self._ticking = False
+        self._ticking = self._closed = False
         self._clock_task: asyncio.Task | None = None
         self.longest_tick_gap_s = 0.0          # host seconds: the worst stall the clock absorbed
         self.t0_ns = 10_000_000_000            # sim clock starts at 10 s, like the real one
@@ -203,6 +207,8 @@ class KinematicSim:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return self                        # no event loop: no clock task (see docstring)
+        self._host_ref, self._sim_ref = self._clock(), self.now_s     # count from here
+        self._ticking = True
         self._clock_task = loop.create_task(self.run_clock())
         return self
 
@@ -210,35 +216,36 @@ class KinematicSim:
         if self._clock_task is not None:
             self._clock_task.cancel()
             self._clock_task = None
-        self._ticking = False
+        if self._ticking:
+            self._ticking, self._closed = False, True     # the clock stops with the sim
         return False
 
     # ------------------------------------------------------------ clock
     def sim_target_s(self) -> float:
-        """Where the sim clock is now: host time x speedup since the last tick, at most
-        max_lag_s past it while the clock task runs."""
+        """Where the sim clock should be now: host time x speedup since the last tick, at
+        most max_lag_s past it while the clock task runs; frozen once closed."""
+        if self._closed:
+            return self.now_s
         t = self._sim_ref + (self._clock() - self._host_ref) * self.speedup
         if self._ticking:
             t = min(t, self._sim_ref + self.max_lag_s)
-        return max(t, self.now_s)
+        return max(t, self._sim_ref)
 
     def tick(self) -> None:
-        """One tick of the clock task: the clock moves on to where it is now (at most
-        max_lag_s past the last tick) and starts counting from here."""
+        """One tick of the clock task: the clock moves on to where it should be now (at
+        most max_lag_s past the last tick), the world is integrated up to it in whole
+        max_step_s steps, and the clock starts counting from here."""
+        if self._closed:
+            return
         host = self._clock()
         self.longest_tick_gap_s = max(self.longest_tick_gap_s, host - self._host_ref)
         self._sim_ref, self._host_ref = self.sim_target_s(), host
+        self._advance(self._sim_ref, whole_steps=True)
 
     async def run_clock(self) -> None:
-        self.tick()                            # count from here
-        self._ticking = True
-        try:
-            while True:
-                await asyncio.sleep(self.tick_s)
-                self.tick()
-        finally:
+        while True:
+            await asyncio.sleep(self.tick_s)
             self.tick()
-            self._ticking = False
 
     def drone(self, vid):
         return self._drones[vid]
@@ -299,9 +306,19 @@ class KinematicSim:
 
     # ------------------------------------------------------------ physics
     def integrate(self) -> None:
-        target = self.sim_target_s()
+        """Bring the world up to date before a read or a command. With the clock task
+        running this does nothing (only a tick moves the world); without one, it integrates
+        up to host time x speedup."""
+        if not self._ticking and not self._closed:
+            self._advance(self.sim_target_s(), whole_steps=False)
+
+    def _advance(self, target: float, whole_steps: bool) -> None:
+        # whole_steps: fixed max_step_s steps on a grid (the remainder waits for the next
+        # tick), so the trajectory cannot depend on when anyone looked
         while self.now_s < target - 1e-9:
             dt = min(self.max_step_s, target - self.now_s)
+            if whole_steps and dt < self.max_step_s - 1e-9:
+                return
             for v in self._v.values():
                 self._step(v, dt)
             self.now_s += dt
