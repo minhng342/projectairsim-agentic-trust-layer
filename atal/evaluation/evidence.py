@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
 
-from atal.core.paths import REPO_ROOT
+from atal.core.paths import REPO_ROOT, read_config
 
 MANIFEST = "manifest.json"
 # arguments that do not change what is flown (output location only)
@@ -65,7 +65,7 @@ def git_state() -> dict:
 
 def _versions() -> dict:
     out = {}
-    for pkg in ("pydantic", "pydantic-ai", "pydantic-ai-slim", "projectairsim", "logfire"):
+    for pkg in ("atal", "pydantic", "pydantic-ai", "pydantic-ai-slim", "projectairsim", "logfire"):
         try:
             out[pkg] = metadata.version(pkg)
         except metadata.PackageNotFoundError:
@@ -83,10 +83,11 @@ def write_manifest(out_dir, argv, args: dict, files: dict, model, results: list[
     out_dir = Path(out_dir)
     inputs = {}
     for name, rel in files.items():
-        p = Path(rel)
-        if not p.is_absolute():
-            p = (REPO_ROOT / p) if not p.exists() else p
-        inputs[name] = {"path": str(rel), "sha256": sha256_file(p) if p.exists() else None}
+        try:
+            digest = hashlib.sha256(read_config(rel, "")[1]).hexdigest()
+        except FileNotFoundError:
+            digest = None
+        inputs[name] = {"path": str(rel), "sha256": digest}
     cfg_args = {k: v for k, v in sorted(args.items()) if k not in _NOT_CONFIG}
     config_sha = hashlib.sha256(json.dumps({"inputs": {k: v["sha256"] for k, v in inputs.items()},
                                             "args": cfg_args}, sort_keys=True,

@@ -15,14 +15,14 @@ Run from this folder with Blocks.exe running:
 """
 import asyncio
 import json
-import os
 import time
 
 from projectairsim import Drone, ProjectAirSimClient, World
 
 from atal.flight.shutdown import safe_shutdown
+from atal.simulation.airsim import DEFAULT_SIM_CONFIG
 
-SIM_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "sim_config") + os.sep
+SIM_CONFIG = DEFAULT_SIM_CONFIG             # the bundled scenes (atal/configs/sim_config)
 SCENE = "scene_basic_drone.jsonc"
 NAME = "Drone1"
 OUT_FILE = "telemetry_dump.json"  # written in the current directory (the repo root)

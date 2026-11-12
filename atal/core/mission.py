@@ -25,12 +25,12 @@ every error names the field. The swarm section (Phase 3: radio range, layers, pe
 rules) has defaults, so Phase 1 and 2 files stay valid and a one-drone run ignores it.
 """
 import math
-from pathlib import Path
 from typing import Literal
 
 import yaml
 from pydantic import Field, ValidationError, model_validator
 
+from atal.core.paths import ConfigNotFound, read_config
 from atal.core.sector_grid import MAX_SECTORS_PER_AXIS, SECTOR_ID_PATTERN, SectorGrid
 from atal.core.strict import Strict
 
@@ -271,11 +271,15 @@ class PlanFileError(ValueError):
 
 
 def load_yaml(path, model):
-    """Load and validate one YAML plan file; PlanFileError names each bad field."""
-    path = Path(path)
+    """Load and validate one YAML plan file (looked up with find_config); PlanFileError
+    names each bad field."""
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as err:
+        path, raw = read_config(path, "missions", ".yaml")
+    except ConfigNotFound as err:
+        raise PlanFileError(str(err)) from err
+    try:
+        data = yaml.safe_load(raw.decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as err:
         raise PlanFileError(f"{path}: cannot read: {err}") from err
     if not isinstance(data, dict):
         raise PlanFileError(f"{path}: expected a mapping at the top level")

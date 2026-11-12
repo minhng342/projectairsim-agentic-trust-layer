@@ -4,14 +4,14 @@ Phase 1 (default): the fixed-order planner, no LLM. Phase 2 (--planner llm): an 
 each next sector (atal/agents/llm_chooser.py), checked by the invariant guard.
 
     python run_sar_mission.py                                   # deck mission, live sim
-    python run_sar_mission.py --mission missions/sar/mission_dev.yaml \\
-                              --scenario missions/sar/scenario_dev.yaml   # small grid, live
+    python run_sar_mission.py --mission bundled:missions/sar/mission_dev.yaml \\
+                              --scenario bundled:missions/sar/scenario_dev.yaml   # small grid, live
     python run_sar_mission.py --offline --speedup 50            # kinematic sim, no AirSim
     python run_sar_mission.py --offline --runs 1 --full-sweep   # keep sweeping after the find
 
     # Phase 2: LLM planner (LLM_MODEL in .env, or --model); guard in the gate slot
-    python run_sar_mission.py --planner llm --mission missions/sar/mission_dev.yaml \
-                              --scenario missions/sar/scenario_dev.yaml --runs 1
+    python run_sar_mission.py --planner llm --mission bundled:missions/sar/mission_dev.yaml \
+                              --scenario bundled:missions/sar/scenario_dev.yaml --runs 1
     python run_sar_mission.py --planner llm --model ollama:qwen3.5:9b --thinking off ...
     python run_sar_mission.py --planner llm --model scripted --offline   # no model server
 
@@ -44,7 +44,7 @@ the drone landed inside the geofence with no impact, the run log is complete and
 background task died; with --full-sweep every sector must also be swept and the measured
 footprint coverage must reach --min-coverage (default 95%).
 
-Live: the scene (--scene, default sim_config/scene_sar_one_drone.jsonc) must spawn the
+Live: the scene (--scene, default atal/configs/scenes/scene_sar_one_drone.jsonc) must spawn the
 drone at the scenario's start and the area must be clear of buildings at the mission
 altitude. The runner checks the spawn against the scenario start before flying.
 """
@@ -59,7 +59,7 @@ from pathlib import Path
 from atal.agents.search_loop import planner_name
 from atal.core.contracts import BypassGate, NoTrustAssessor
 from atal.core.mission import PlanFileError, load_mission
-from atal.core.paths import REPO_ROOT
+from atal.core.paths import ConfigNotFound, runs_dir
 from atal.core.scenario import load_scenario
 from atal.evaluation.evidence import write_manifest
 from atal.evaluation.plot_tracks import plot_run
@@ -75,7 +75,7 @@ from atal.runtime.landing import descend_before_landing, shut_down, takeoff
 from atal.runtime.llm_setup import prepare_llm
 from atal.runtime.rates import Timing
 from atal.runtime.recorder import EvaluationRecorder
-from atal.runtime.simulator import open_simulator
+from atal.runtime.simulator import find_scene, open_simulator
 from atal.runtime.watchers import sample_truth, stop_background, watch_mission_time
 from atal.trust_layer.invariant_guard import SarInvariantGate
 
@@ -85,7 +85,9 @@ async def main(args) -> int:
     try:
         mission = load_mission(args.mission)
         scenario = load_scenario(args.scenario, mission)
-    except PlanFileError as err:
+        if not args.offline:
+            find_scene(args.scene)                 # fail before connecting, not after
+    except (PlanFileError, ConfigNotFound) as err:
         print(err)
         return 2
     if len(scenario.drones) != 1:
@@ -137,7 +139,7 @@ async def main(args) -> int:
     manifest = write_manifest(
         out_dir, argv=sys.argv, args=vars(args),
         files={"mission": args.mission, "scenario": args.scenario,
-               **({} if args.offline else {"scene": f"sim_config/{args.scene}"})},
+               **({} if args.offline else {"scene": args.scene})},
         model=llm["config"] if llm else None, results=results, passed=passed, runs_planned=runs)
     print_batch(results, passed, best, runs, manifest, out_dir)
     return 0 if all(passed) else 1
@@ -324,18 +326,21 @@ def parse_args(argv=None):
                     help="model thinking/reasoning (off is much faster on qwen3.5)")
     ap.add_argument("--decision-timeout", type=float, default=60.0,
                     help="seconds per LLM decision before the fallback is used")
-    ap.add_argument("--mission", default="missions/sar/mission.yaml")
-    ap.add_argument("--scenario", default="missions/sar/scenario.yaml")
+    ap.add_argument("--mission", help="bundled:missions/... or a path to your own file",
+                    default="bundled:missions/sar/mission.yaml")
+    ap.add_argument("--scenario", help="bundled:missions/... or a path to your own file",
+                    default="bundled:missions/sar/scenario.yaml")
     ap.add_argument("--runs", type=int, default=None, help="override scenario.runs")
     ap.add_argument("--offline", action="store_true", help="kinematic sim instead of AirSim")
     ap.add_argument("--speedup", type=float, default=50.0, help="offline sim time / host time")
     ap.add_argument("--full-sweep", action="store_true",
                     help="keep sweeping after the detection (checks 'sweeps every sector')")
-    ap.add_argument("--scene", default="scene_sar_one_drone.jsonc", help="sim_config scene (live)")
+    ap.add_argument("--scene", default="bundled:sim_config/scene_sar_one_drone.jsonc", 
+                    help="live scene: bundled:sim_config/<file> or a path to your own .jsonc")
     ap.add_argument("--obstacle", type=parse_obstacle, action="append", default=None,
                     help="offline only: NAME:N_MIN,N_MAX,E_MIN,E_MAX,TOP_M box the drone "
                          "cannot fly through (repeatable), to exercise obstacle recovery")
-    ap.add_argument("--out", default=str(REPO_ROOT / "runs" / "sar"))
+    ap.add_argument("--out", default=str(runs_dir() / "sar"))
     return ap.parse_args(argv)
 
 

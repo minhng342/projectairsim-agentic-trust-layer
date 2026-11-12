@@ -11,7 +11,7 @@ executor, sensor, memory) plus its team role and coordinator
     python run_sar_swarm.py --offline --radio-range 60    # range sensitivity
     python run_sar_swarm.py --offline --peer-clear-rule self_only        # no cooperation
 
-Defaults: missions/sar/mission_dev.yaml + missions/sar/scenario_swarm_dev.yaml (the same
+Defaults: bundled:missions/sar/mission_dev.yaml + scenario_swarm_dev.yaml (the same
 mission and the same per-run victims as the Phase 1/2 dev scenario, for paired comparison).
 
 Per run:
@@ -51,7 +51,7 @@ from atal.agents.search_loop import planner_name
 from atal.channels.radio import RemoteIdBus
 from atal.core.contracts import BypassGate, NoTrustAssessor
 from atal.core.mission import PlanFileError, load_mission
-from atal.core.paths import REPO_ROOT
+from atal.core.paths import ConfigNotFound, runs_dir
 from atal.core.scenario import load_scenario
 from atal.evaluation.compare import load_batch, paired_comparison
 from atal.evaluation.evidence import write_manifest
@@ -71,7 +71,7 @@ from atal.runtime.llm_setup import prepare_llm
 from atal.runtime.rates import Timing
 from atal.runtime.recorder import EvaluationRecorder
 from atal.runtime.run_single import parse_obstacle
-from atal.runtime.simulator import open_simulator
+from atal.runtime.simulator import find_scene, open_simulator
 from atal.runtime.watchers import (
     inject_dropout,
     sample_truth,
@@ -89,7 +89,9 @@ async def main(args) -> int:
     try:
         mission = load_mission(args.mission)
         scenario = load_scenario(args.scenario, mission)
-    except PlanFileError as err:
+        if not args.offline:
+            find_scene(args.scene)                 # fail before connecting, not after
+    except (PlanFileError, ConfigNotFound) as err:
         print(err)
         return 2
     mission, scenario = apply_overrides(args, mission, scenario)
@@ -151,7 +153,7 @@ async def main(args) -> int:
     # last, so it hashes every file of the batch, batch_summary.json included
     mf = write_manifest(out_dir, argv=sys.argv, args=vars(args),
                         files={"mission": args.mission, "scenario": args.scenario,
-                               **({} if args.offline else {"scene": f"sim_config/{args.scene}"})},
+                               **({} if args.offline else {"scene": args.scene})},
                         model=llm["config"] if llm else None, results=results, passed=passed,
                         runs_planned=runs)
     print_batch(args, summary, results, passed, mf, out_dir)
@@ -485,8 +487,10 @@ def parse_args(argv=None):
                     "or test")
     ap.add_argument("--thinking", choices=("default", "on", "off"), default="default")
     ap.add_argument("--decision-timeout", type=float, default=60.0)
-    ap.add_argument("--mission", default="missions/sar/mission_dev.yaml")
-    ap.add_argument("--scenario", default="missions/sar/scenario_swarm_dev.yaml")
+    ap.add_argument("--mission", help="bundled:missions/... or a path to your own file",
+                    default="bundled:missions/sar/mission_dev.yaml")
+    ap.add_argument("--scenario", help="bundled:missions/... or a path to your own file",
+                    default="bundled:missions/sar/scenario_swarm_dev.yaml")
     ap.add_argument("--runs", type=int, default=None, help="override scenario.runs")
     ap.add_argument("--drones", type=int, default=None, help="use only the first N drones")
     ap.add_argument("--radio-range", type=float, default=None,
@@ -510,8 +514,9 @@ def parse_args(argv=None):
     ap.add_argument("--speedup", type=float, default=50.0)
     ap.add_argument("--full-sweep", action="store_true")
     ap.add_argument("--min-coverage", type=float, default=FULL_SWEEP_MIN_COVERAGE)
-    ap.add_argument("--scene", default="scene_sar_three_drones.jsonc")
-    ap.add_argument("--out", default=str(REPO_ROOT / "runs" / "sar_swarm"))
+    ap.add_argument("--scene", default="bundled:sim_config/scene_sar_three_drones.jsonc",
+                    help="live scene: bundled:sim_config/<file> or a path to your own .jsonc")
+    ap.add_argument("--out", default=str(runs_dir() / "sar_swarm"))
     return ap.parse_args(argv)
 
 

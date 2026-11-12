@@ -14,15 +14,18 @@ Run from the repo root with Blocks.exe running:  python -m legacy.diagnostics.te
 """
 import asyncio
 import math
-import os
 
 from projectairsim import Drone, ProjectAirSimClient, World
 
 from atal.core.telemetry import Quaternion, Vector3
 from atal.flight.shutdown import safe_shutdown
-from atal.simulation.airsim import track_deg_from_velocity, yaw_deg_from_quaternion
+from atal.simulation.airsim import (
+    DEFAULT_SIM_CONFIG,
+    track_deg_from_velocity,
+    yaw_deg_from_quaternion,
+)
 
-SIM_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "sim_config") + os.sep
+SIM_CONFIG = DEFAULT_SIM_CONFIG             # the bundled scenes (atal/configs/sim_config)
 SCENE = "scene_basic_drone.jsonc"
 NAME = "Drone1"
 

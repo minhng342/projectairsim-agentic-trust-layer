@@ -1,4 +1,5 @@
-"""Load KEY=VALUE lines from the repo's .env into os.environ (never overriding
+"""Load KEY=VALUE lines from a .env file (./.env in the current folder, else the
+checkout's .env) into os.environ (never overriding
 variables that are already set). No dependency on python-dotenv. Values are
 never printed or logged; callers learn only which keys were set."""
 import os
@@ -7,7 +8,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def load_env_file(path: Path | str = REPO_ROOT / ".env") -> list[str]:
+def load_env_file(path: Path | str | None = None) -> list[str]:
+    if path is None:
+        path = Path.cwd() / ".env"
+        if not path.is_file():
+            path = REPO_ROOT / ".env"
     path = Path(path)
     if not path.is_file():
         return []

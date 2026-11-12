@@ -91,7 +91,7 @@ def test_gate_is_assessed_and_rejects_with_the_rule(guard):
 
 # ------------------------------------------------------------------ prompt pieces
 def test_prior_mass_is_normalized_and_peaks_at_the_center():
-    m = load_mission("missions/sar/mission.yaml")
+    m = load_mission("bundled:missions/sar/mission.yaml")
     assert prior_mass(m) == {}                                  # disabled in the file
     m = m.model_copy(update={"prior": m.prior.model_copy(update={"enabled": True})})
     p = prior_mass(m)

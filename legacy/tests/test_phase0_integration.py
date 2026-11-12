@@ -26,7 +26,7 @@ TRIGGERS = {
 
 
 def test_five_drones_fly_their_corridors_hear_each_other_and_maneuver():
-    plan = MissionPlan.load("missions/inspection_5.json")
+    plan = MissionPlan.load("legacy/corridor/missions/inspection_5.json")
     ids = plan.vehicle_ids
     adapter, rec = MultiAdapter(ids), ListRecorder()
     for vid in ids:                                   # each fake drone starts over its pad

@@ -50,7 +50,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ONE = "run_sar_mission.py"
 TEAM = "run_sar_swarm.py"
-DEV = ["--mission", "missions/sar/mission_dev.yaml", "--scenario", "missions/sar/scenario_dev.yaml"]
+DEV = ["--mission", "bundled:missions/sar/mission_dev.yaml", "--scenario", "bundled:missions/sar/scenario_dev.yaml"]
 
 # Cases whose sweep order does not depend on timing, so the time to find is comparable.
 TIME_COMPARED = {"one_fixed", "one_llm", "team_static"}

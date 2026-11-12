@@ -31,7 +31,7 @@ from legacy.corridor.mission_runner import MissionRunner  # noqa: E402
 from tests.channel_fakes import ListRecorder  # noqa: E402
 from tests.test_executor import FAST, MultiAdapter  # noqa: E402
 
-PLAN = MissionPlan.load("missions/inspection_5_conflict.json")
+PLAN = MissionPlan.load("legacy/corridor/missions/inspection_5_conflict.json")
 LLM = ("Drone2", "Drone3")
 FOLLOW = FollowerConfig(poll_interval_s=0.005, hover_timeout_s=0.5)
 FAST_PILOT = MissionPilotConfig(check_every_s=0.005, recheck_s=0.3, off_nominal_clear_s=0.1,

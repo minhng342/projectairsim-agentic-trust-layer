@@ -59,7 +59,8 @@ def _target(module: str) -> str:
 
 
 def test_every_folder_has_a_rule():
-    folders = {p.name for p in ROOT.iterdir() if p.is_dir() and not p.name.startswith("_")}
+    folders = {p.name for p in ROOT.iterdir()                 # code folders; configs/ is data
+               if p.is_dir() and not p.name.startswith("_") and any(p.glob("*.py"))}
     assert folders == set(ALLOWED), folders ^ set(ALLOWED)
 
 
