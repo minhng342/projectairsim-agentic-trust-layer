@@ -16,14 +16,23 @@ action port's executor, so every action still goes proposal -> gate -> executor 
                      wait there until no teammate is landing, then in to the pad. A drone
                      that is inside the zone when a teammate holds it first flies out to
                      the edge. If the wait times out it never goes in (pad_zone_timeout)
-    move_to_position straight to (north, east) at mission altitude (Phase 3 staging);
-                     result position_reached
+    move_to_position straight to (north, east) at mission altitude (Phase 3 staging), or
+                     at one of this drone's transit levels (obstacle recovery); result
+                     position_reached
     change_altitude  delegated to the flight executor (climb in place to mission altitude,
                      the move the corridor missions proved live)
 
 interrupt(reason) stops the sweep in progress (the drone hovers where it is). The runner
 wires it to the victim sensor when termination.stop_on_detection is set, and to the
 mission-time watchdog.
+
+pause_for_traffic() / resume_traffic(): a traffic pause from the transition manager
+(recovery policy section 8a). The leg in progress stops and the drone hovers, but the
+action does not end: when the pause is lifted the drone flies the rest of the same path
+from where it stopped. So a pause never produces path_blocked, obstacle recovery or a
+"sector swept" result, and the sweep's progress counts the part flown before it. An
+interrupt for another reason (a detection, the time limit) during a pause still ends the
+action as sweep_stopped. A leg that has not started yet waits for the pause to end.
 
 Result codes (CommandResult.reason_code, mapped to agent feedback by the port):
     sector_swept      every lane flown
@@ -39,16 +48,25 @@ Result codes (CommandResult.reason_code, mapped to agent feedback by the port):
 Policy (which sector may be swept now, geofence) is not checked here: in Phase 2 that is
 the invariant guard's job, in the port's gate slot.
 """
+import asyncio
+import itertools
 import math
 import time
 from types import SimpleNamespace as _Leg
 
 from atal.core.action import ActionType, CommandResult, CommandStatus, ProposedAction
 from atal.core.sar import Mission
-from atal.flight.path_follower import FollowerConfig, FollowMode, PathFollower
+from atal.flight.path_follower import (
+    FollowerConfig,
+    FollowMode,
+    FollowResult,
+    PathFollower,
+    Polyline,
+)
 from atal.search.sweep_lanes import sweep_path
 
 PAD_EDGE_MARGIN_M = 2.0     # wait this far outside the pad zone (the follower stops ~0.1 m short)
+TRAFFIC = "traffic_pause"
 
 
 class SectorExecutor:
@@ -74,9 +92,17 @@ class SectorExecutor:
         self._interrupt_reason: str | None = None
         self.current_sector: str | None = None
         self.pad_zone, self.pad_wait_s = pad_zone, pad_wait_s
+        self.traffic_paused = False
+        self._waiting_for_traffic = False
+        self.transit_altitudes: list[float] = []     # set by the recovery (atal/flight/recovery.py)
+        self._done_m, self._total_m = 0.0, 0.0
 
     def interrupt(self, reason: str) -> bool:
         """Stop the sweep / return in progress. True if something was running."""
+        if self._waiting_for_traffic:              # paused for traffic: end the action
+            self._interrupt_reason = reason
+            self._emit("sweep_interrupt", reason=reason, sector_id=self.current_sector)
+            return True
         f = self.follower
         if f is None or f.mode in (FollowMode.DONE, FollowMode.FAILED, FollowMode.STOPPED):
             return False
@@ -84,6 +110,79 @@ class SectorExecutor:
         f.stop()
         self._emit("sweep_interrupt", reason=reason, sector_id=self.current_sector)
         return True
+
+    # ------------------------------------------------------------ traffic pauses
+    def pause_for_traffic(self) -> None:
+        """The transition manager paused this drone: hover, keep the action open."""
+        if self.traffic_paused:
+            return
+        self.traffic_paused = True
+        f = self.follower
+        if f is not None and f.mode not in (FollowMode.DONE, FollowMode.FAILED,
+                                            FollowMode.STOPPED):
+            if self._interrupt_reason is None:
+                self._interrupt_reason = TRAFFIC
+            f.stop()
+        self._emit("traffic_pause_hold", sector_id=self.current_sector,
+                   progress=round(self.last_progress(), 4))
+
+    def resume_traffic(self) -> None:
+        """No owner of a pause is left: the leg goes on."""
+        if not self.traffic_paused:
+            return
+        self.traffic_paused = False
+        self._emit("traffic_pause_resume", sector_id=self.current_sector,
+                   progress=round(self.last_progress(), 4))
+
+    async def _wait_for_traffic(self) -> bool:
+        """Hover until the pause ends. False if interrupted for another reason meanwhile."""
+        self._waiting_for_traffic = True
+        try:
+            while self.traffic_paused:
+                if self._interrupt_reason not in (None, TRAFFIC):
+                    return False
+                await (self._sleep or asyncio.sleep)(self.follower_config.poll_interval_s)
+            return self._interrupt_reason in (None, TRAFFIC)
+        finally:
+            self._waiting_for_traffic = False
+
+    async def _follow(self, waypoints, alt, timeout_for) -> FollowResult:
+        """Fly the waypoints with the path follower, through any traffic pauses. The result
+        counts progress along the whole path, the parts before each pause included."""
+        self._done_m = 0.0
+        self._total_m = _length(waypoints)
+        left = list(waypoints)
+        kw = {"sleep": self._sleep} if self._sleep is not None else {}
+        while True:
+            if self.traffic_paused and not await self._wait_for_traffic():
+                return FollowResult(FollowMode.STOPPED, "stopped on request (paused)",
+                                    self._done_m, self._total_m, 0.0)
+            if self._interrupt_reason == TRAFFIC:
+                self._interrupt_reason = None
+            self.follower = PathFollower(self.adapter, self.vehicle_id, left, alt,
+                                         self.mission.flight.speed_m_s,
+                                         config=self.follower_config, on_event=self._on_event,
+                                         log=self._log, **kw)
+            r = await self.follower.run(timeout_s=timeout_for(left))
+            if r.mode == FollowMode.STOPPED and self._interrupt_reason == TRAFFIC:
+                path = self.follower.path
+                snap = self._truth()
+                s_at = r.progress_m
+                if snap is not None:
+                    here = (snap.position_ned_m.x, snap.position_ned_m.y)
+                    s_proj, _ = path.project(*here, r.progress_m,
+                                             2 * self.follower_config.lookahead_m)
+                    s_at = max(s_at, s_proj)
+                else:
+                    here = path.point_at(s_at)
+                self._done_m += min(s_at, path.length)
+                left = [here] + _rest_of(path, s_at)
+                self._emit("traffic_pause_stopped", sector_id=self.current_sector,
+                           progress=round(self.last_progress(), 4))
+                continue
+            r.progress_m += self._done_m
+            r.path_length_m = self._total_m
+            return r
 
     async def execute(self, action: ProposedAction) -> CommandResult:
         started = self._clock()
@@ -122,10 +221,13 @@ class SectorExecutor:
                        sweep_length_m=round(path.length_m, 2), waypoints=path.waypoints,
                        request_id=action.request_id)
         elif t == ActionType.MOVE_TO_POSITION:
-            if abs(action.altitude_m - self.mission.flight.altitude_m) > 1.0:
+            allowed = [self.mission.flight.altitude_m, *self.transit_altitudes]
+            if all(abs(action.altitude_m - a) > 1.0 for a in allowed):
                 return result(CommandStatus.REFUSED, "not_applicable",
                               f"moves fly at the mission altitude "
-                              f"{self.mission.flight.altitude_m:g} m only")
+                              f"{self.mission.flight.altitude_m:g} m only (or a transit "
+                              f"level during an obstacle recovery)")
+            fly_alt = float(action.altitude_m)
             sid, path = None, None
             target = (action.north_m, action.east_m)
             waypoints = [here, target]
@@ -150,7 +252,8 @@ class SectorExecutor:
                             else edge)
                     waypoints = [here, self.home_xy]
                 self._emit("pad_zone_wait", request_id=action.request_id, held_by=z.holder)
-                if not await z.acquire(self.vehicle_id, timeout_s=self.pad_wait_s):
+                wait_s = self.pad_wait_s() if callable(self.pad_wait_s) else self.pad_wait_s
+                if not await z.acquire(self.vehicle_id, timeout_s=wait_s):
                     # never fly in without the zone: hold outside it; the runner lands
                     # the drone here, outside the zone (a recorded contingency landing)
                     self.current_sector = None
@@ -159,19 +262,13 @@ class SectorExecutor:
                                held_by=z.holder, position=here)
                     return result(CommandStatus.FAILED, "pad_zone_timeout",
                                   f"the pad zone stayed held by {z.holder} for "
-                                  f"{self.pad_wait_s:g} s; holding outside it", True)
+                                  f"{wait_s:g} s; holding outside it", True)
             self.current_sector = None
             self._emit("return_home_started", home=self.home_xy, request_id=action.request_id)
 
-        length = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(waypoints, waypoints[1:]))
-        timeout = length / self.mission.flight.speed_m_s * self.timeout_factor + self.timeout_margin_s
-        kw = {"sleep": self._sleep} if self._sleep is not None else {}
+        length = _length(waypoints)
         self._interrupt_reason = None
-        self.follower = PathFollower(self.adapter, self.vehicle_id, waypoints,
-                                     fly_alt, self.mission.flight.speed_m_s,
-                                     config=self.follower_config, on_event=self._on_event,
-                                     log=self._log, **kw)
-        r = await self.follower.run(timeout_s=timeout)
+        r = await self._follow(waypoints, fly_alt, self._timeout_for)
         progress = 1.0 if length <= 0 else min(1.0, r.progress_m / length)
 
         if r.mode == FollowMode.DONE:
@@ -222,14 +319,8 @@ class SectorExecutor:
     async def _fly(self, waypoints, alt, action):
         """One leg (the return home's approach to the pad zone). None when it got there,
         else the (status, code, reason, sent) to return."""
-        length = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(waypoints, waypoints[1:]))
-        timeout = length / self.mission.flight.speed_m_s * self.timeout_factor + self.timeout_margin_s
-        kw = {"sleep": self._sleep} if self._sleep is not None else {}
         self._interrupt_reason = None
-        self.follower = PathFollower(self.adapter, self.vehicle_id, waypoints, alt,
-                                     self.mission.flight.speed_m_s, config=self.follower_config,
-                                     on_event=self._on_event, log=self._log, **kw)
-        r = await self.follower.run(timeout_s=timeout)
+        r = await self._follow(waypoints, alt, self._timeout_for)
         if r.mode == FollowMode.DONE:
             return None
         if r.mode == FollowMode.STOPPED and self._interrupt_reason:
@@ -243,11 +334,17 @@ class SectorExecutor:
         return (CommandStatus.FAILED, "path_blocked" if blocked else "path_failed",
                 f"{r.mode.value}: {r.reason} (approaching the pads)", True)
 
+    def _timeout_for(self, waypoints) -> float:
+        return (_length(waypoints) / self.mission.flight.speed_m_s * self.timeout_factor
+                + self.timeout_margin_s)
+
     def last_progress(self) -> float:
+        """Share of the current action's path flown, parts before a traffic pause included."""
         f = self.follower
-        if f is None or f.path.length <= 0:
+        if f is None or self._total_m <= 0:
             return 0.0
-        return min(1.0, f.progress_m / f.path.length)
+        running = 0.0 if f.mode == FollowMode.STOPPED and self.traffic_paused else f.progress_m
+        return min(1.0, (self._done_m + running) / self._total_m)
 
     def _truth(self):
         try:
@@ -262,3 +359,18 @@ class SectorExecutor:
             self._on_event(kind, {"vehicle_id": self.vehicle_id, **fields})
         except Exception as err:
             self._log(f"[sector] on_event({kind}) failed: {type(err).__name__}: {err}")
+
+
+def _length(points) -> float:
+    return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in itertools.pairwise(points))
+
+
+def _rest_of(path: Polyline, s: float) -> list:
+    """The path's points from arc length s on (the point at s first)."""
+    out, acc = [path.point_at(s)], 0.0
+    pts = path.points
+    for a, b in itertools.pairwise(pts):
+        acc += math.hypot(b[0] - a[0], b[1] - a[1])
+        if acc > s + 1e-6:
+            out.append(b)
+    return out

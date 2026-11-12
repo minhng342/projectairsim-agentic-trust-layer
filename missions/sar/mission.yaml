@@ -32,6 +32,9 @@ termination:
 limits:
   min_battery_pct: 25
   geofence_margin_m: 10
+  # provisional simulation cap (recovery policy section 2), checked against the team size;
+  # deck: levels 60-140 m for a team of 3 with 2 transit levels. It does not make 60 m suitable for CityEnviron. It does not establish obstacle clearance.
+  altitude_ceiling_m: 150
 # Phase 3 (swarm, run_sar_swarm.py); ignored by the one-drone runner. models/sar.py, Swarm.
 swarm:
   radio_range_m: 500            # 3D distance, decided from true positions

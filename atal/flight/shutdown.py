@@ -19,6 +19,20 @@ Every simulator call is bounded end to end: the timeout covers sending the
 request AND waiting for the resulting task (a stalled acknowledgement can't
 hang shutdown).
 
+With the transition manager (team runs, atal/airspace/transition_manager.py), a landing
+is a vertical move and needs a landing reservation. The caller obtains it before the
+descent and passes landing_cleared:
+
+    landing_cleared=None    no manager (one-drone runs before the manager): as above
+    landing_cleared=True    the landing reservation is ACTIVE: hover, land, confirm, then
+                            on_touchdown() (the manager completes the reservation), then
+                            disarm. The caller releases the pad only after the disarm.
+    landing_cleared=False   no reservation: do NOT land and do NOT disarm. Hover, keep API
+                            control, report UNRESOLVED (landing_not_cleared).
+
+An already grounded drone needs no reservation to disarm (it never left the pad, or it
+already landed): it disarms whatever landing_cleared says.
+
 Ground confirmation
 - With an adapter: a VALID snapshot with ground_state GROUNDED, polled for up to
   confirm_timeout_s after landing (contact + stillness needs ~1 s). Stale,
@@ -36,6 +50,7 @@ from dataclasses import dataclass, field
 class ShutdownReport:
     grounded_confirmed: bool = False
     disarmed: bool = False
+    landing_not_cleared: bool = False
     api_released: bool = False
     steps: list[str] = field(default_factory=list)
 
@@ -113,7 +128,8 @@ def _release(drone, log, report) -> None:
 
 async def safe_shutdown(drone, log=print, adapter=None, vehicle_id: str | None = None,
                         hover_timeout_s: float = 5.0, land_timeout_s: float = 120.0,
-                        confirm_timeout_s: float = 5.0, confirm_poll_s: float = 0.1
+                        confirm_timeout_s: float = 5.0, confirm_poll_s: float = 0.1,
+                        landing_cleared: bool | None = None, on_touchdown=None
                         ) -> ShutdownReport:
     report = ShutdownReport()
     if drone is None:
@@ -123,6 +139,11 @@ async def safe_shutdown(drone, log=print, adapter=None, vehicle_id: str | None =
         log("[safe_shutdown] already grounded: skipping hover and land")
         report.steps.append("already grounded")
         report.grounded_confirmed = True
+    elif landing_cleared is False:
+        # airborne (or unknown) with no landing reservation: never land, never disarm
+        await _bounded_task("hover", drone.hover_async, hover_timeout_s, log, report)
+        report.landing_not_cleared = True
+        report.steps.append("landing_not_cleared")
     else:  # airborne or unknown: assume airborne
         await _bounded_task("hover", drone.hover_async, hover_timeout_s, log, report)
         landed_ok = await _bounded_task("land", drone.land_async, land_timeout_s, log, report)
@@ -133,12 +154,18 @@ async def safe_shutdown(drone, log=print, adapter=None, vehicle_id: str | None =
             else:
                 report.grounded_confirmed = True  # see module docstring
         report.steps.append(f"grounded confirmed: {report.grounded_confirmed}")
+        if report.grounded_confirmed and on_touchdown is not None:
+            on_touchdown()
+            report.steps.append("touchdown reported")
 
     if report.grounded_confirmed:
         _release(drone, log, report)
     else:
         hovered = "hover: ok" in report.steps
-        msg = ("UNRESOLVED: vehicle not confirmed on the ground; NOT disarming. "
+        msg = ("UNRESOLVED: " + ("no landing reservation (landing_not_cleared); NOT "
+                                 "landing and " if report.landing_not_cleared else
+                                 "vehicle not confirmed on the ground; ")
+               + "NOT disarming. "
                + ("Hover was accepted, so it should be holding position"
                   if hovered else "Hover was NOT confirmed, so its state is unknown")
                + "; check the simulator.")

@@ -211,8 +211,8 @@ def test_live_peers_drop_stale_and_homebound_drones():
 # ------------------------------------------------------------------ end to end
 def files(tmp_path, victim=(25.0, 33.0), runs=1, drones=THREE, **swarm):
     m = json.loads(json.dumps(MISSION))
-    m["swarm"] = {"radio_range_m": 200, "layer_spacing_m": 5, "separation_cruise_m": 4.5,
-                  **swarm}                       # the floor just under the 5 m layers
+    m["swarm"] = {"radio_range_m": 200, "layer_spacing_m": 7, "separation_cruise_m": 4.5,
+                  **swarm}   # managed airspace needs spacing >= 4.5 + 2 x e_z (6.5 m)
     sc = {"scenario_id": "sc-swarm-test", "seed": 7, "runs": runs, "drones": drones}
     sc |= {"victim": {"x_m": victim[0], "y_m": victim[1]}} if victim else {"randomize_victim": True}
     (tmp_path / "m.yaml").write_text(yaml.safe_dump(m), encoding="utf-8")
@@ -234,8 +234,8 @@ def test_three_drones_find_the_victim_on_separate_layers_and_all_land(tmp_path):
     assert code == 0 and summary["all_passed"], summary["runs"][0]["fail_reasons"]
     m = summary["runs"][0]
     assert m["victim_found"] and m["victim_sector"] == "D3" and m["duplicate_sweeps"] == 0
-    assert {d["altitude_m"] for d in m["drones"].values()} == {10, 15, 20}
-    assert m["min_separation_m"] >= 4.9                    # layers 5 m apart at the least
+    assert {d["altitude_m"] for d in m["drones"].values()} == {10, 17, 24}
+    assert m["min_separation_m"] >= 4.9                    # the same floor as before
     assert all(d["landed"] and d["return_home"] == "home_reached" for d in m["drones"].values())
     others = [v for v in m["drones"] if v != m["finder"]]
     assert set(m["time_to_hear_s"]) == set(others)

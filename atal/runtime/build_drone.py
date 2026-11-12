@@ -23,6 +23,7 @@ from atal.channels.action_port import ActionPort
 from atal.channels.observation_feed import ObservationFeed
 from atal.channels.radio import RemoteIdBroadcaster, RemoteIdReceiver
 from atal.core.belief import LocalBelief
+from atal.flight.recovery import DroneFlight, Recovery
 from atal.flight.sector_sweep import SectorExecutor
 from atal.runtime import rates
 from atal.simulation.victim_sensor import VictimSensor
@@ -44,6 +45,8 @@ class Drone:
     launch_altitude_m: float
     coordinator: Any = None        # team only
     broadcaster: Any = None        # team only
+    recovery: Any = None           # team with the managed airspace only (atal/flight/recovery.py)
+    cleanup: Any = None            # its cleanup deadline, managed airspace only (landing_queue.py)
 
 
 @dataclass
@@ -54,6 +57,7 @@ class TeamParts:
     static_cells: dict | None      # the pre-mission split, in the static-allocation condition
     staging: list                  # staging points, by drone index (may be empty)
     size: int                      # number of drones
+    airspace: Any = None           # TeamAirspace (atal/runtime/airspace.py), managed only
 
 
 def make_chooser(ctx):
@@ -158,8 +162,23 @@ def build_team_drone(ctx, spec, index: int, mission, victim, gate_on: bool,
     stage = team.staging
     role = TeamRole(coordinator, staging_xy=(stage[index].x_m, stage[index].y_m)
                     if index < len(stage) else None)
+    recovery = cleanup = None
+    if team.airspace is not None:                # every vertical move is reserved
+        lv = team.airspace.levels
+        transit = [t for t in (lv.transit(index, k) for k in
+                               range(1, lv.max_transit_level + 1)) if t is not None]
+        sector_executor.transit_altitudes = transit
+        cleanup = team.airspace.cleanup_deadline()
+        # the pad-zone wait on the way home draws on the same cleanup deadline
+        sector_executor.pad_wait_s = lambda: cleanup.pad_zone_wait_s() / ctx.timing.k
+        recovery = Recovery(
+            vid, lv.search(index), transit, team.airspace.manager,
+            DroneFlight(adapter, vid, ctx.flight, sector_executor),
+            sim_now=lambda: sim_clock() or 0.0,
+            record=lambda kind, **f: recorder.record(kind, source="recovery", **f),
+            poll_s=ctx.timing.poll(0.1))
     planner = SearchLoop(vid, mission, feed, port, belief, chooser=make_chooser(ctx), role=role,
-                         guard=guard, recorder=recorder,
+                         guard=guard, recovery=recovery, recorder=recorder,
                          sweep_progress=sector_executor.last_progress, log=log)
 
     # Stop only a SEARCH move: a drone already heading home (it found nothing
@@ -183,4 +202,5 @@ def build_team_drone(ctx, spec, index: int, mission, victim, gate_on: bool,
     broadcaster = RemoteIdBroadcaster(adapter, vid, team.bus, recorder=recorder,
                                       status=lambda: coordinator.state)
     return Drone(vid, mission, feed, belief, sector_executor, planner, sensor, home.altitude_m,
-                 coordinator=coordinator, broadcaster=broadcaster)
+                 coordinator=coordinator, broadcaster=broadcaster, recovery=recovery,
+                 cleanup=cleanup)

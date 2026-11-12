@@ -21,7 +21,7 @@ MISSION = {
     "flight": {"altitude_m": 10, "speed_m_s": 5.0}, "sensor": {"footprint_m": 6, "overlap": 0.2},
     "search": {"pattern": "boustrophedon", "sector_order": "serpentine", "start_sector": "A1"},
     "termination": {"stop_on_detection": True, "max_mission_time_s": 900},
-    "limits": {"min_battery_pct": 25, "geofence_margin_m": 5},
+    "limits": {"min_battery_pct": 25, "geofence_margin_m": 5, "altitude_ceiling_m": 100},
 }
 
 

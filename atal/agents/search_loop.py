@@ -23,6 +23,15 @@ What run() does:
        through the action port; update the drone's memory (belief) from the feedback
     3. finish: fly home through the port (once more, higher, if the way home is blocked)
 
+With the managed airspace (team runs, mission swarm.airspace: managed) a third part plugs
+in: `recovery` (atal/flight/recovery.py). It owns every climb and descent after an
+obstacle: the drone climbs to a transit level of its own (a reservation from the trusted
+transition manager), flies on up there, and comes down to its search level only at the
+next sector's entry point. The loop only asks it two things: recover(cause) after an
+obstacle, and descend_at(entry) before a sweep while it is up at a transit level. The
+paragraph below is the behaviour without it (one-drone runs, and unmanaged team runs kept
+to reproduce earlier results).
+
 Obstacles (wall hits, a blocked path): the runner reports an impact the simulator saw
 (on_impact, which also interrupts the sweep), and the path follower gives up a path it
 cannot make progress on ("path_blocked"). Either way the loop recovers instead of grinding
@@ -48,9 +57,11 @@ from dataclasses import dataclass, field
 from atal.core.action import ActionType, ProposedAction
 from atal.core.belief import Detection, LocalBelief
 from atal.core.sar import DroneState, Mission, ReturnHome
+from atal.search.sweep_lanes import sweep_path
 from atal.search.voronoi import coverage_order, voronoi_partition
 
 STALE = object()        # submit(): the `before` check withdrew the action
+AGAIN = object()        # _come_down_for(): no sweep now, choose again
 
 # The name each chooser and role combination is logged under (run_config.json:
 # pipeline.planner). These are the class names from before the loop was split into parts,
@@ -171,8 +182,8 @@ class SoloRole:
 
 class SearchLoop:
     def __init__(self, vehicle_id: str, mission: Mission, feed, port, belief: LocalBelief, *,
-                 chooser, role=None, guard=None, sweep_progress=None, recorder=None,
-                 observe_timeout_s: float = 5.0, log=print):
+                 chooser, role=None, guard=None, recovery=None, sweep_progress=None,
+                 recorder=None, observe_timeout_s: float = 5.0, log=print):
         self.vehicle_id, self.mission = vehicle_id, mission
         self.guard = guard               # SarGuard (atal/trust_layer/invariant_guard.py) or None
         self.return_code: str | None = None
@@ -203,6 +214,8 @@ class SearchLoop:
         self._impact: dict | None = None     # set by on_impact, handled by the loop
         self._dropout: str | None = None     # set by on_dropout (injected failure)
         self.impacts_reported = 0
+        self.recovery = recovery             # managed airspace only (see the module docstring)
+        self._avoid: set[str] = set()        # sectors whose descent was not granted just now
         # The two plug-in parts. The role first: the chooser may ask it whether this drone
         # is in a team.
         self.role = role if role is not None else SoloRole()
@@ -252,6 +265,8 @@ class SearchLoop:
         if ended is not None:
             return ended
         self.phase = "search"
+        if self.recovery is not None:
+            self.recovery.searching()
         while True:
             ended = await self._step()
             if ended is not None:
@@ -273,6 +288,10 @@ class SearchLoop:
         if fb is None or fb.code != "completed":
             return await self._finish("failed", f"climb to mission altitude: "
                                                 f"{fb.code if fb else 'no observation'}")
+        if self.recovery is not None:
+            if not await self.recovery.settle_startup():
+                return self._unresolved("startup climb did not settle in its reservation")
+            self.recovery.searching()            # from here on it moves horizontally
         failed = await self.role.after_climb()
         if failed:
             return await self._finish("failed", failed)
@@ -292,6 +311,7 @@ class SearchLoop:
         remaining = self.role.remaining()
         if not remaining:
             return await self._finish(*self.role.nothing_left())
+        remaining = [s for s in remaining if s not in self._avoid] or remaining
         action = await self.chooser.choose(remaining)
         # The decision may have taken a while (an LLM): a detection or the time limit
         # that arrived meanwhile ends the search before anything new is flown.
@@ -301,6 +321,13 @@ class SearchLoop:
         if isinstance(action, ReturnHome):
             return await self._finish(self.return_outcome, action.reason)
         sid = action.sector_id
+        if self.recovery is not None and self.recovery.k > 0:   # up at a transit level
+            ended = await self._come_down_for(sid)
+            if ended is AGAIN:
+                return None
+            if ended is not None:
+                return ended
+        self._avoid.clear()
         obs_sim = self.sim_now()
 
         def before(rid, sid=sid, obs_sim=obs_sim):
@@ -380,6 +407,8 @@ class SearchLoop:
                  + (f" in {sid}" if sid else "")
                  + (f" ({info['object_name']})" if info.get("object_name") else "")
                  + f"; recovery {self.recoveries}/{self.max_recoveries}")
+        if self.recovery is not None:                     # managed airspace
+            return await self._ended_by(await self.recovery.recover(cause), cause)
         if self.recoveries > self.max_recoveries:
             return await self._lost(f"{self.recoveries} obstacle incidents (last: {cause}"
                                     + (f" in {sid}" if sid else "") + ")")
@@ -404,14 +433,77 @@ class SearchLoop:
                     recovery=self.recoveries)
         return None
 
+    async def _come_down_for(self, sid: str):
+        """Managed airspace, up at a transit level: fly to sid's entry point up there and
+        come down to the search level (atal/flight/recovery.py). None: sweep it now.
+        AGAIN: choose again. A SearchResult: the search is over."""
+        _, state = await self.observe()
+        if state is None:
+            return await self._finish("failed", f"{sid}: no observation to decide from")
+        entry = sweep_path(self.mission, sid, (state.x_m, state.y_m)).waypoints[0]
+        result = await self.recovery.descend_at(entry)
+        if result == "ready":
+            return None
+        self.record("recovery_descent", sector_id=sid, result=result, level_m=self.recovery.level)
+        if result == "stopped" and self._impact is None:   # a detection, the time limit
+            stop = self._should_stop()
+            return await self._finish(*(stop or ("aborted", f"{sid}: transit stopped")))
+        if result in ("obstacle", "stopped"):   # hit something on the way to sid: as
+            # without the managed airspace, sid is then blocked (for the team too)
+            ended = await self._recover(sid, "impact" if self._impact else "path_blocked")
+            return AGAIN if ended is None else ended
+        if result == "retarget":
+            self._avoid.add(sid)
+            return AGAIN
+        if result == "blocked":                            # its descent was blocked
+            self.blocked.add(sid)
+            if self.guard is not None:
+                self.guard.blocked.add(sid)
+            # the peer message knows two causes; an obstacle under the column is a
+            # blocked path (the local record above says "descent")
+            self.role.on_blocked(sid, "path_blocked")
+            return AGAIN
+        if result == "return_high":
+            return await self._finish("returned", "descent not granted; home at the transit "
+                                                  "level")
+        return await self._ended_by(result, f"descent to {sid}")
+
+    async def _ended_by(self, result: str, why: str):
+        """The recovery's answer: None to carry on, else the drone is out of the search."""
+        if result == "transit":
+            self.flight_failures_in_row = 0
+            return None
+        if result == "lost":
+            return await self._lost(f"{why}: {self.recovery.episodes[-1].reason}")
+        return self._unresolved(f"{why}: {self.recovery.episodes[-1].reason}"
+                                if self.recovery.episodes else why)
+
+    def _unresolved(self, reason: str) -> SearchResult:
+        """No safe vertical move left (managed airspace): the drone hovers where it is and
+        asks for nothing more; the run fails (unresolved_airborne)."""
+        self.log(f"  [{time.strftime('%H:%M:%S')}] {self.vehicle_id}: UNRESOLVED ({reason})")
+        self.record("drone_unresolved", reason=reason, recoveries=self.recoveries)
+        self.role.on_lost()
+        self.return_code = "not_attempted"
+        return self._done("unresolved", reason)
+
     async def _return_higher(self, fb):
         """The flight home was blocked (or hit something): climb recovery_climb_m and fly
-        home at that height, once. Returns the second attempt's feedback, or None."""
+        home at that height, once. Returns the second attempt's feedback, or None. With
+        the managed airspace the climb is a recovery to the next transit level."""
         info, self._impact = self._impact or {}, None
         self.recoveries += 1
         self.record("obstacle", cause="impact" if info else "path_blocked", sector_id=None,
                     during="return_home", recovery=self.recoveries,
                     object_name=info.get("object_name"), blocked=sorted(self.blocked))
+        if self.recovery is not None:
+            if await self.recovery.recover("return home blocked") != "transit":
+                return None
+            again = await self._fly_home(f"return home at transit level "
+                                         f"{self.recovery.level:g} m")
+            if again is None or again.code != "home_reached":
+                self.recovery.home_blocked("return home blocked at the transit level too")
+            return again
         _, state = await self.observe()
         if state is None:
             return None
@@ -458,17 +550,38 @@ class SearchLoop:
                                   f"{self.mission.termination.max_mission_time_s:g} used up")
         return None
 
+    async def _fly_home(self, reason: str):
+        """Return home through the port, at the transit level if still up there."""
+        up = self.recovery is not None and self.recovery.k > 0
+        if not up:
+            return await self.submit(ReturnHome(reason=reason).to_proposed(self.vehicle_id))
+        action = ProposedAction(vehicle_id=self.vehicle_id, action_type=ActionType.RETURN_HOME,
+                                altitude_m=self.recovery.level, reason=reason)
+        if self.guard is not None:
+            self.guard.recovery_alt_m = self.recovery.level
+        try:
+            fb = await self.submit(action)
+        finally:
+            if self.guard is not None:
+                self.guard.recovery_alt_m = None
+        if fb is not None and fb.code == "home_reached":
+            self.recovery.home_reached()
+        return fb
+
     async def _finish(self, outcome: str, reason: str) -> SearchResult:
         self.role.on_finish()
         self.phase = "returning"
         self._impact = None              # one met before the search ended: already handled
-        fb = await self.submit(ReturnHome(reason=f"mission over: {outcome}").to_proposed(
-            self.vehicle_id))
+        if self.recovery is not None:
+            self.recovery.returning()
+        fb = await self._fly_home(f"mission over: {outcome}")
         if fb is not None and (fb.code == "path_blocked" or self._impact is not None):
             fb = await self._return_higher(fb) or fb
         self.phase = "ended"
         self.return_code = fb.code if fb else None
         self.record("return_home", code=self.return_code)
+        if self.recovery is not None:
+            self.recovery.search_over(self.return_code)
         return self._done(outcome, reason)
 
     def _done(self, outcome, reason) -> SearchResult:

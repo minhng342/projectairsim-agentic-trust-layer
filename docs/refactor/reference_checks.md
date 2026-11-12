@@ -19,6 +19,26 @@ runs per case cannot show a small change in a failure rate.
 | 4 | step 5 (aad88cd) | 7cb0f86 | SAME BEHAVIOUR | team_obstacle passed 2 of 3, its third run failing only for impacts, which the checker allows in that case (as in the baseline). Full output below. |
 | 5 | offline-clock fix (b254db2) | 7cb0f86 | SAME BEHAVIOUR | Checked against the original reference. team_obstacle passed 3 of 3. Full output below. |
 | 6 | offline-clock fix (b254db2) | 7cb0f86, `--record` | recorded | New reference `reference_baseline_clock.json`. team_obstacle passed 2 of 3; the failed run (seed 42) failed for "2 impacts" only, with every drone landed. That failure is part of the recorded reference, not removed. |
+| 7 | managed airspace wired in (f036aa1, branch claude/recovery-reservations) | 7cb0f86, original reference | DIFFERENT: 43 differences | Drones left airborne: landings waited at most 60 s (`max_hold_s`), less than one teammate's 150-170 m startup or landing through the shared pad column. |
+| 8 | f036aa1 | 7cb0f86, clock reference | DIFFERENT: 43 differences | Same cause. An earlier attempt against the clock reference was stopped and not counted: the working tree changed while it ran. |
+| 9 | landing queue (1fdf772) | 7cb0f86, original reference | DIFFERENT: 30 differences | A landing paused a teammate inside its own column and waited for it to its deadline (fixed in 2808999). |
+| 10 | 1fdf772 | 7cb0f86, clock reference | DIFFERENT: 30 differences | Same cause. |
+| 11 | pauses never freeze a drone in the column (2808999) | 7cb0f86, original reference | DIFFERENT: 2 expected timing differences (not "same behaviour") | Every case found 3/3 and passed 3/3 (team_obstacle included). Both differences are team_static times to find: 591.4 s vs 364.2 s, 376.8 s vs 260.5 s. Intentional, see below. |
+| 12 | 2808999 | 7cb0f86, clock reference | DIFFERENT: 2 expected timing differences | The same two team_static times (591.0 vs 360.6 s, 376.3 vs 256.8 s). |
+
+Attempts 7 to 12 are on the recovery branch, which is not merged. Both references are
+unchanged, and no threshold was changed to make a case pass.
+
+**Intentional differences from the recovery policy (attempts 11 and 12).** In the static
+split each drone searches only its own cells, so the time to find depends on when the
+victim's owner starts. Under the managed airspace (policy v3.4) startups are granted top
+down and the 3 m pads share one column, so the drones take off one after another:
+Drone2 waits about 120 s and Drone1 about 233 s for its startup reservation, and a drone
+may also be paused while a teammate moves vertically. In a separate 3-run static batch on
+2808999 the finder of the 587 s run was Drone1 (startup wait 233 s, paused 111 s), and the
+finder of the 377 s run was Drone2 (startup wait 120 s), which matches the 227 s and 117 s
+differences. Team cases without time comparison pass with the same finds.
+
 
 Attempts before #3 are recorded from the PR descriptions of steps 3 and 4; from #4 on, the
 full output is kept here.
@@ -120,3 +140,4 @@ team_self_only: peer clears are recorded but never accepted ...
 RESULT: SAME BEHAVIOUR
 exit=0
 ```
+Full outputs of attempts 7 to 12: `docs/refactor/reference_outputs/`.

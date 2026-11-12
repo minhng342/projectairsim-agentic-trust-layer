@@ -1,0 +1,47 @@
+one_fixed: one drone, fixed sector order ...
+    found 3/3, passed 3/3, 41 s
+one_llm: one drone, scripted stand-in for the LLM, invariant guard on ...
+    found 3/3, passed 3/3, 50 s
+team_fixed: three drones cooperating over the bus ...
+    found 3/3, passed 2/3, 73 s
+team_llm: three drones, scripted stand-in for the LLM ...
+    found 3/3, passed 3/3, 59 s
+team_dropout: one drone fails 200 s into the search ...
+    found 3/3, passed 2/3, 76 s
+team_static: fixed pre-mission split, no claims ...
+    found 3/3, passed 2/3, 73 s
+team_obstacle: an obstacle in the grid: impacts, recovery, shared blocked sectors ...
+    found 3/3, passed 0/3, 87 s
+team_self_only: peer clears are recorded but never accepted ...
+    found 3/3, passed 2/3, 88 s
+DIFFERENT: team_fixed run 1: Drone3 not landed
+DIFFERENT: team_fixed run 1: Drone3 descend not_cleared
+DIFFERENT: team_fixed run 1: pad zone left held by Drone3
+DIFFERENT: team_fixed run 1: passed False (['Drone1: return home pad_zone_timeout', 'Drone2: return home pad_zone_timeout', 'Drone3: unresolved_airborne (no landing reservation; not landed, not disarmed)', 'Drone3: not landed', 'Drone3: descend not_cleared', '2 pad zone timeout(s)', 'Drone1: contingency landing outside the pads (pad_zone_timeout)', 'Drone2: contingency landing outside the pads (pad_zone_timeout)', 'pad zone kept: landing not confirmed for Drone3']), reference True ([])
+DIFFERENT: team_dropout run 1: Drone3 not landed
+DIFFERENT: team_dropout run 1: Drone3 descend not_cleared
+DIFFERENT: team_dropout run 1: pad zone left held by Drone3
+DIFFERENT: team_dropout run 1: passed False (['Drone1: return home pad_zone_timeout', 'Drone3: unresolved_airborne (no landing reservation; not landed, not disarmed)', 'Drone3: not landed', 'Drone3: descend not_cleared', '2 pad zone timeout(s)', 'Drone1: contingency landing outside the pads (pad_zone_timeout)', 'Drone2: contingency landing outside the pads (pad_zone_timeout)', 'pad zone kept: landing not confirmed for Drone3']), reference True ([])
+DIFFERENT: team_static run 1: Drone3 not landed
+DIFFERENT: team_static run 1: Drone3 descend not_cleared
+DIFFERENT: team_static run 1: pad zone left held by Drone3
+DIFFERENT: team_static run 0: time to find 590.7 s, reference 360.6 s (allowed difference 54.1 s)
+DIFFERENT: team_static run 1: passed False (['Drone1: return home pad_zone_timeout', 'Drone2: return home pad_zone_timeout', 'Drone3: unresolved_airborne (no landing reservation; not landed, not disarmed)', 'Drone3: not landed', 'Drone3: descend not_cleared', '2 pad zone timeout(s)', 'Drone1: contingency landing outside the pads (pad_zone_timeout)', 'Drone2: contingency landing outside the pads (pad_zone_timeout)', 'pad zone kept: landing not confirmed for Drone3']), reference True ([])
+DIFFERENT: team_static run 2: time to find 378.3 s, reference 256.8 s (allowed difference 38.5 s)
+DIFFERENT: team_obstacle run 1: Drone3 not landed
+DIFFERENT: team_obstacle run 1: Drone3 descend not_cleared
+DIFFERENT: team_obstacle run 1: pad zone left held by Drone3
+DIFFERENT: team_obstacle run 1: failure not expected in this case: Drone1: return home pad_zone_timeout
+DIFFERENT: team_obstacle run 1: failure not expected in this case: Drone2: return home pad_zone_timeout
+DIFFERENT: team_obstacle run 1: failure not expected in this case: Drone3: unresolved_airborne (no landing reservation; not landed, not disarmed)
+DIFFERENT: team_obstacle run 1: failure not expected in this case: Drone3: not landed
+DIFFERENT: team_obstacle run 1: failure not expected in this case: Drone3: descend not_cleared
+DIFFERENT: team_obstacle run 1: failure not expected in this case: 2 pad zone timeout(s)
+DIFFERENT: team_obstacle run 1: failure not expected in this case: Drone1: contingency landing outside the pads (pad_zone_timeout)
+DIFFERENT: team_obstacle run 1: failure not expected in this case: Drone2: contingency landing outside the pads (pad_zone_timeout)
+DIFFERENT: team_obstacle run 1: failure not expected in this case: pad zone kept: landing not confirmed for Drone3
+DIFFERENT: team_self_only run 1: Drone3 not landed
+DIFFERENT: team_self_only run 1: Drone3 descend not_cleared
+DIFFERENT: team_self_only run 1: pad zone left held by Drone3
+DIFFERENT: team_self_only run 1: passed False (['Drone1: return home pad_zone_timeout', 'Drone2: return home pad_zone_timeout', 'Drone3: unresolved_airborne (no landing reservation; not landed, not disarmed)', 'Drone3: not landed', 'Drone3: descend not_cleared', '2 pad zone timeout(s)', 'Drone1: contingency landing outside the pads (pad_zone_timeout)', 'Drone2: contingency landing outside the pads (pad_zone_timeout)', 'pad zone kept: landing not confirmed for Drone3']), reference True ([])
+RESULT: 30 difference(s)
