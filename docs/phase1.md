@@ -12,7 +12,7 @@ actions, so the port, executor, memory and logs carry over unchanged.
 | Deliverable (10/28 meeting) | Where |
 |---|---|
 | Repository with the simulation harness | `run_sar_mission.py` (one command, N seeded runs, live or `--offline`) |
-| Mission file and Pydantic data models | `missions/sar/*.yaml`, `atal/core/mission.py`, `atal/core/scenario.py`, `atal/core/belief.py` |
+| Mission file and Pydantic data models | `atal/configs/missions/sar/*.yaml`, `atal/core/mission.py`, `atal/core/scenario.py`, `atal/core/belief.py` |
 | Run logs for each mission | `runs/sar/<batch>/run_NN.jsonl` + `.memory.json` + `.summary.json` + `.svg`, `batch_summary.json` |
 | Class / module diagram | this page (below) |
 | Short demo video | to record on zeus-g, see [Demo video](#demo-video) |
@@ -228,12 +228,12 @@ classDiagram
 
 ```bash
 # offline, no simulator (kinematic sim at 50x real time)
-python run_sar_mission.py --offline --mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml
+python run_sar_mission.py --offline --mission bundled:missions/sar/mission_dev.yaml --scenario bundled:missions/sar/scenario_dev.yaml
 python run_sar_mission.py --offline --speedup 100                       # the deck's 800 m mission
 python run_sar_mission.py --offline --full-sweep --runs 1               # keep sweeping after the find
 
-# live (Project AirSim running, scene sim_config/scene_sar_one_drone.jsonc)
-python run_sar_mission.py --mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml --runs 1
+# live (Project AirSim running, scene atal/configs/sim_config/scene_sar_one_drone.jsonc)
+python run_sar_mission.py --mission bundled:missions/sar/mission_dev.yaml --scenario bundled:missions/sar/scenario_dev.yaml --runs 1
 
 # one run's plot again, or a Phase 0 corridor run's plot
 python -m atal.evaluation.plot_tracks runs/sar/<batch>/run_00.jsonl

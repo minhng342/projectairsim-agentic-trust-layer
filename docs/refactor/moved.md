@@ -193,3 +193,18 @@ The old module paths below are removed, not forwarded. Run logs are unchanged.
 truth (`core/scenario.py`, `simulation/`) never reaches agent, trust, search, channel,
 flight or airspace code, that only `flight/` and `runtime/` use `airspace/`, and that no
 file imports a name starting with `_` from another file.
+
+## Step 6b: packaging
+
+| Before | Now |
+|---|---|
+| `missions/sar/*.yaml` | `atal/configs/missions/sar/*.yaml`, named `bundled:missions/sar/<file>` |
+| `sim_config/*.jsonc` | `atal/configs/sim_config/*.jsonc`, named `bundled:sim_config/<file>` |
+| `missions/inspection_5*.json` (Phase 0) | `legacy/corridor/missions/` |
+| `--mission missions/sar/mission_dev.yaml` (relative to the checkout) | `--mission bundled:missions/sar/mission_dev.yaml`, or a path to your own file relative to where you run |
+| `--scene scene_sar_three_drones.jsonc` (a name in `sim_config/`) | `--scene bundled:sim_config/scene_sar_three_drones.jsonc`, or a path to your own scene with its robot files next to it |
+| default output `<checkout>/runs/` | `./runs/` in the folder you run in |
+| `python run_sar_swarm.py ...`, `python -m atal.evaluation.compare ...` | still work from the checkout; installed: `atal swarm ...`, `atal compare ...` (`atal/runtime/cli.py`) |
+
+The old checkout-relative spellings are not looked up anywhere else: a path that does
+not exist is an error that lists the bundled files.

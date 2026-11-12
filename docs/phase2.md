@@ -13,13 +13,13 @@ limits and termination, and differ only in which sector comes next.
 
 ```bash
 # live (zeus-g): LLM_MODEL in .env, or --model
-python run_sar_mission.py --planner llm --mission missions/sar/mission_dev.yaml \
-    --scenario missions/sar/scenario_dev.yaml --runs 1
+python run_sar_mission.py --planner llm --mission bundled:missions/sar/mission_dev.yaml \
+    --scenario bundled:missions/sar/scenario_dev.yaml --runs 1
 python run_sar_mission.py --planner llm --model ollama:qwen3.5:9b --thinking off ...
 
 # offline, no model server: the scripted stand-in model
 python run_sar_mission.py --planner llm --model scripted --offline \
-    --mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml
+    --mission bundled:missions/sar/mission_dev.yaml --scenario bundled:missions/sar/scenario_dev.yaml
 ```
 
 ## What was built

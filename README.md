@@ -78,11 +78,11 @@ don't.
 | 5.6d | Pydantic AI harness (default): any model via one setting (`LLM_MODEL`: Ollama, OpenAI-compatible, Gemini), pacing and transient-error retries below the framework, optional Logfire tracing; same prompt, tools, port and recording as the reference `LLMPilot` (`PilotCore`); schema-rejected tool calls recorded | offline done; live next |
 | 0.a | Velocity path follower (`atal/flight/path_follower.py`): continuous polyline flight by pure pursuit, live maneuvers (hold = brake then stay, resume, altitude, speed, stop), fail-safe hover; live diag at 3 m/s: 2.90 m/s on straights, 0.22 m median cross-track (1.15 m out of corners), no orbit after arrival. Python 3.11 `asyncio.wait_for` could swallow a cancellation: replaced by `asyncio.timeout` in executor, feed, follower, native pilot | done (hold fix: live recheck) |
 | 0.b | Remote ID broadcast channel (`atal/channels/radio.py`): honest 1 Hz broadcasters, bus, per-drone receivers keyed by CLAIMED id, sender hooks (malicious drone: lie, impersonate, Sybil, drop) and link hooks (in transit), assessor slot per stream, agent traffic view with unverified free text | done (offline) |
-| 0.c | Mission layer: maneuver actions (`maintain`, `hold` [optional duration], `resume`, `change_speed`, `change_altitude` as a layer change); `MissionRunner` (climb to layer, fly the corridor with the path follower, apply maneuvers via the port: applied / not_applicable / out_of_range / not_flying / mission_finished); mission files (`missions/inspection_5.json`: 5 crossing corridors on separate layers) and `scene_inspection_5.jsonc`; `ScriptedManeuverAgent` (own observations + corridor + Remote ID traffic, maneuvers through the port); 5-drone offline integration test | offline done; live next |
+| 0.c | Mission layer: maneuver actions (`maintain`, `hold` [optional duration], `resume`, `change_speed`, `change_altitude` as a layer change); `MissionRunner` (climb to layer, fly the corridor with the path follower, apply maneuvers via the port: applied / not_applicable / out_of_range / not_flying / mission_finished); mission files (`legacy/corridor/missions/inspection_5.json`: 5 crossing corridors on separate layers) and `scene_inspection_5.jsonc`; `ScriptedManeuverAgent` (own observations + corridor + Remote ID traffic, maneuvers through the port); 5-drone offline integration test | offline done; live next |
 | 0.d | Conflict detection (`legacy/corridor/conflict_detection.py`: linear projection, TCPA/DCPA/time to loss of separation, 5 m / 2 m minima; Kuchar & Yang, Atlas ideas, no Atlas code), `MissionPilot` LLM mission agent (deterministic watch loop wakes the model on new / persisting conflicts or to return to plan; tools own state, traffic, conflicts, mission, real-time `monitor` diff, `propose_maneuver`; what-if check of the assigned layer), conflict mission `inspection_5_conflict.json` v2 (`scene_inspection_5_wide.jsonc`, pads 6 m apart; 2 pairs fly a shared line out and back, LLM vs scripted, ~13 s warning). After live run 1 (Drone2/Drone4 collided: 5-10 s free-tier decisions vs 8 s observation limit, a too-early return to layer, a 4.5 s-warning crossing): one model call per decision, safe-layer advice, stricter back-to-plan, contact episodes in the separation report. After live run 2 (Drone2 and Drone3 both escaped to 17 m within seconds: each saw only where the other was): Remote ID intent field `target_altitude_m` (modeled on ADS-B selected altitude; a claim like any field), and planning treats a peer as occupying its current altitude and its announced target. After live run 3 (Drone2 climbed 10 to 17, a clear layer, through Drone3 crossing above at 14): layer changes are also checked along the climb or descent (at the nominal and half vertical rate); the adapter keeps the first 2000 collision records so a long contact no longer hides when it started. After live run 4 (no safe layer at the first wake-up, the model slowed down, the 8 s recheck came after the head-on): new wake reason `safe_layer_available` when one opens, recheck interval shrinks with time to loss of separation, own-ship projected to level off at its target altitude, prompt says speed/hold do not resolve a head-on and to decide from the wake-up message. After live run 5 (model latency 5-10 s, three information calls before acting, a return to layer decided from a 10 s old picture): one tool per maneuver with required parameters, get_traffic/get_conflicts/get_mission removed (the wake-up message carries them), layer changes pre-checked on the current situation and refused with `would_conflict` if they create a new or sooner conflict | offline done; live rerun next |
 | 0.e | Top-down track plot (`atal/evaluation/plot_tracks.py`): SVG of planned corridors and flown ground-truth tracks for any run log, no plotting library. Mission-track CD&R metrics dropped: the corridor scenario is parked after the search-and-rescue pivot (roadmap rev 5) | done |
 | 0 live | Clean recorded 5-drone LLM run (0.d live rerun), hold-fix recheck (0.a) | parked with the corridor scenario; rerun on zeus-g only if the corridor demo is still wanted |
-| **SAR 1** | **Phase 1, one drone, no LLM** (docs/phase1.md): `missions/sar/*.yaml` validated by Pydantic (`atal/core/mission.py`, `scenario.py`, `sector_grid.py`, `action.py`), 8 x 8 sector grid A1..H8, Voronoi coverage (`atal/search/voronoi.py`), boustrophedon lanes from footprint and overlap (`atal/search/sweep_lanes.py`), geometric victim sensor (`atal/simulation/victim_sensor.py`), memory of swept sectors and detections with sources (`atal/core/belief.py`), `SectorExecutor` on the path follower, the search loop with `FixedChooser` (`atal/agents/search_loop.py`, `fixed_chooser.py`) submitting typed actions through the port, `run_sar_mission.py` (N seeded runs, run log + memory + metrics + plot per run, batch verdict), `atal/simulation/kinematic_sim.py` for offline runs. Offline: dev mission 10 of 10 runs found the victim; the deck mission's full sweep needs ~80 min, more than its 3600 s limit | offline done; live next (spawn point / area in CityEnviron) |
+| **SAR 1** | **Phase 1, one drone, no LLM** (docs/phase1.md): `atal/configs/missions/sar/*.yaml` validated by Pydantic (`atal/core/mission.py`, `scenario.py`, `sector_grid.py`, `action.py`), 8 x 8 sector grid A1..H8, Voronoi coverage (`atal/search/voronoi.py`), boustrophedon lanes from footprint and overlap (`atal/search/sweep_lanes.py`), geometric victim sensor (`atal/simulation/victim_sensor.py`), memory of swept sectors and detections with sources (`atal/core/belief.py`), `SectorExecutor` on the path follower, the search loop with `FixedChooser` (`atal/agents/search_loop.py`, `fixed_chooser.py`) submitting typed actions through the port, `run_sar_mission.py` (N seeded runs, run log + memory + metrics + plot per run, batch verdict), `atal/simulation/kinematic_sim.py` for offline runs. Offline: dev mission 10 of 10 runs found the victim; the deck mission's full sweep needs ~80 min, more than its 3600 s limit | offline done; live next (spawn point / area in CityEnviron) |
 | **SAR 2** | **Phase 2, one LLM drone** (docs/phase2.md): `LLMChooser` (`atal/agents/llm_chooser.py`; Pydantic AI, any model) chooses each next sector from its memory; output `SweepSector \| ReturnHome`; invariant guard (`atal/trust_layer/invariant_guard.py`) as output validator (refusals go back to the model) and in the port's gate slot; Phase 1 choice as safe fallback; `--planner llm`, scripted model for offline runs; Logfire spans per run and decision | offline done; live next |
 | **SAR 3** | **Phase 3, three honest drones** (docs/phase3.md): typed peer messages `SectorClaimed` / `SectorCleared` / `VictimDetected` (`atal/core/peer_messages.py`) on the Remote ID bus with a radio-range filter from true positions; invalid messages dropped before anything sees them; belief records who said what (`PeerClaim`); peer-claim rules (`atal/trust_layer/peer_rules.py`: one honest peer's clear accepted, a peer's find ends the search); Voronoi re-allocation over open sectors, live peers and claims at every decision, with work stealing (`atal/search/allocation.py`); each drone on its own layer; `run_sar_swarm.py` (fixed or Pydantic AI planners) and `atal/evaluation/swarm_metrics.py`. Offline baseline over 20 seeded runs in docs/phase3.md | offline done; live next (spawn points in CityEnviron) |
 | next | Phase 4 (insider), 5 (defenses) | planned |
@@ -122,12 +122,27 @@ conversation reaches 10-20k tokens. Raise it on the server (e.g. `OLLAMA_CONTEXT
 before `ollama serve`, or `num_ctx` in a Modelfile); otherwise the model silently loses
 the start of its mission.
 
-Scene and robot configs are vendored in `sim_config/` (copied from the
-Project AirSim v1.0.1 samples), so no sibling checkout is required.
+Scene and robot configs are vendored in `atal/configs/sim_config/` (copied from the
+Project AirSim v1.0.1 samples), so no sibling checkout is required. They and the sample
+missions in `atal/configs/missions/` ship with the package; see "Installed use" below.
 
 ## Running
 
-All commands from the repo root. On zeus-g prefix them with `pas` (runs them in the lab image).
+The commands below are written for the repo root; the `atal` command works from anywhere. On zeus-g prefix them with `pas` (runs them in the lab image).
+
+### Installed use
+
+`pip install .` (or a built wheel) installs the `atal` command, with the sample missions and scenes inside the package. From any folder:
+
+```bash
+atal swarm --offline --runs 1          # = python run_sar_swarm.py --offline --runs 1
+atal mission --offline --runs 1 --mission bundled:missions/sar/mission_dev.yaml \
+    --scenario bundled:missions/sar/scenario_dev.yaml
+atal mission --offline --mission my/mission.yaml --scenario my/scenario.yaml   # your own files
+atal compare|archive|plot|summarize ...  # the evaluation tools
+```
+
+`bundled:<path>` names a file inside `atal/configs/` (read-only). Any other path is your own file, relative to the folder you run in. A name that matches nothing is an error that lists the bundled files. A scene of your own needs its robot files next to it. Output goes to `./runs` unless `--out` says otherwise.
 
 ### What's where
 
@@ -146,10 +161,10 @@ Project AirSim (CityEnviron) and Ollama running. Same seed, so both search for t
 
 ```bash
 # Phase 1: fixed serpentine order
-python run_sar_mission.py --mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml --runs 1
+python run_sar_mission.py --mission bundled:missions/sar/mission_dev.yaml --scenario bundled:missions/sar/scenario_dev.yaml --runs 1
 # Phase 2: the LLM picks each next sector (invariant guard on by default)
 python run_sar_mission.py --planner llm --model ollama:qwen3.5:9b --thinking off \
-    --mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml --runs 1
+    --mission bundled:missions/sar/mission_dev.yaml --scenario bundled:missions/sar/scenario_dev.yaml --runs 1
 ```
 
 Each run writes `runs/sar/<batch>/run_00.jsonl`, `.memory.json`, `.summary.json` and a top-down `.svg`.
@@ -159,15 +174,15 @@ Each run writes `runs/sar/<batch>/run_00.jsonl`, `.memory.json`, `.summary.json`
 | Command | Needs sim | What it checks |
 |---|---|---|
 | `python -m pytest` | no | The whole offline test suite (`tests/` and `legacy/tests/`); real model calls are blocked |
-| `python run_sar_mission.py --offline [--mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml] [--runs N] [--full-sweep]` | no | Phase 1 search and rescue on the kinematic sim: one drone sweeps the 8 x 8 grid (Voronoi order, boustrophedon lanes) until it detects the victim; PASS = found, home, landed, no failures (`--full-sweep`: also every sector swept and 95% measured coverage) |
+| `python run_sar_mission.py --offline [--mission bundled:missions/sar/mission_dev.yaml --scenario bundled:missions/sar/scenario_dev.yaml] [--runs N] [--full-sweep]` | no | Phase 1 search and rescue on the kinematic sim: one drone sweeps the 8 x 8 grid (Voronoi order, boustrophedon lanes) until it detects the victim; PASS = found, home, landed, no failures (`--full-sweep`: also every sector swept and 95% measured coverage) |
 | `python run_sar_mission.py --offline --planner llm --model scripted[:stubborn\|broken]` | no | Phase 2 pipeline without a model server: guard refusals sent back to the model (`stubborn`), fallback to the Phase 1 order (`broken`); `--model test` uses Pydantic AI's TestModel |
-| `python run_sar_mission.py [--planner llm --model SPEC --thinking off] [--mission ... --scenario ...]` | yes | The same missions in Project AirSim (scene `sim_config/scene_sar_one_drone.jsonc`); refuses to fly if the drone spawns > 5 m from the scenario start |
+| `python run_sar_mission.py [--planner llm --model SPEC --thinking off] [--mission ... --scenario ...]` | yes | The same missions in Project AirSim (scene `atal/configs/sim_config/scene_sar_one_drone.jsonc`); refuses to fly if the drone spawns > 5 m from the scenario start |
 | `python run_sar_swarm.py --offline [--runs N] [--planner llm --model scripted] [--radio-range M] [--peer-clear-rule single\|corroborated\|self_only] [--allocation static] [--dropout Drone2@200] [--obstacle NAME:N0,N1,E0,E1,TOP] [--reference BATCH] [--full-sweep]` | no | Phase 3: three drones on the dev mission share the search over the bus (claims, clears, finds; Voronoi re-split at every decision); PASS = found by some drone, every drone home and landed, no failures; `batch_summary.json` has the baseline (time to find, coverage, duplicate sweeps, delivery) and, with `--reference`, the paired speedup with a 95% interval; every batch writes `manifest.json` (commit, config hashes, model, seeds, counts). Compare batches: `python -m atal.evaluation.compare REF BATCH...`; pack evidence: `python -m atal.evaluation.archive BATCH... --reference REF` |
-| `python run_sar_swarm.py [--planner llm --model SPEC --thinking off] --runs 1` | yes | The same with three drones in Project AirSim (scene `sim_config/scene_sar_three_drones.jsonc`, layers 150 / 160 / 170 m) |
+| `python run_sar_swarm.py [--planner llm --model SPEC --thinking off] --runs 1` | yes | The same with three drones in Project AirSim (scene `atal/configs/sim_config/scene_sar_three_drones.jsonc`, layers 150 / 160 / 170 m) |
 | `python -m legacy.llm_pilot.check_llm [--harness pydantic\|native] [--model SPEC]` | no | The model answers and calls tools correctly (against a fake drone); `--model test` needs no network |
 | `python -m atal.evaluation.plot_tracks runs/<...>.jsonl` | no | Top-down SVG of a run: SAR grid with swept sectors, track, victim and detection; or corridors and tracks for Phase 0 runs |
-| `python -m legacy.corridor.corridors_live [--mission missions/inspection_5.json] [--no-maneuvers]` | yes | Phase 0 base scenario: 5 drones fly crossing corridors (scene_inspection_5.jsonc), Remote ID between all of them, scripted mission agents; PASS = all corridors done, all landed, separation >= 2 m with coverage |
-| `python -m legacy.corridor.corridors_live --mission missions/inspection_5_conflict.json --llm Drone2,Drone3` | yes | 2 LLM mission agents + 3 scripted drones that do not yield; two head-on encounters on shared layers |
+| `python -m legacy.corridor.corridors_live [--mission legacy/corridor/missions/inspection_5.json] [--no-maneuvers]` | yes | Phase 0 base scenario: 5 drones fly crossing corridors (scene_inspection_5.jsonc), Remote ID between all of them, scripted mission agents; PASS = all corridors done, all landed, separation >= 2 m with coverage |
+| `python -m legacy.corridor.corridors_live --mission legacy/corridor/missions/inspection_5_conflict.json --llm Drone2,Drone3` | yes | 2 LLM mission agents + 3 scripted drones that do not yield; two head-on encounters on shared layers |
 | `python -m atal.evaluation.summarize_run runs/run_<id>.jsonl` | no | Per-drone observation counts and the chain observation -> proposal -> gate decision -> result -> feedback; works on incomplete runs |
 
 ### Archived scripts
@@ -288,8 +303,9 @@ atal/
     plot_tracks.py            top-down SVG of a run
     summarize_run.py          readable run summary
     separation.py             pairwise separation and collision assessment
+  configs/                    bundled, read-only: missions/sar/*.yaml, sim_config/*.jsonc
   observability.py            optional Logfire tracing (LOGFIRE_TOKEN)
-  env.py                      load the repo's .env without printing it
+  env.py                      load ./.env (or the checkout's) without printing it
 
 legacy/                       code from before the search and rescue work; atal/ never imports it
   llm_pilot/                  the first LLM pilot, its Gemini provider, check_llm
@@ -298,8 +314,6 @@ legacy/                       code from before the search and rescue work; atal/
   tests/                      tests of the code above
 
 search_and_rescue_stack.py    Sam's SAR prototype
-missions/                     mission and scenario files (missions/sar/*.yaml)
-sim_config/                   scene and robot configs
 tests/                        offline tests with a fake projectairsim module
 tools/reference_cases.py      offline reference runs used to check the restructuring
 docs/                         walkthrough, phase notes, restructuring baseline
