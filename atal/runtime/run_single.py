@@ -1,7 +1,7 @@
 """
 Search and rescue runner: one drone, N seeded runs, one command.
 Phase 1 (default): the fixed-order planner, no LLM. Phase 2 (--planner llm): an LLM picks
-each next sector (atal/agents/llm_sector_planner.py), checked by the invariant guard.
+each next sector (atal/agents/llm_chooser.py), checked by the invariant guard.
 
     python run_sar_mission.py                                   # deck mission, live sim
     python run_sar_mission.py --mission missions/sar/mission_dev.yaml \\
@@ -19,7 +19,7 @@ Logfire: with LOGFIRE_TOKEN in .env, each run, each decision and each model requ
 traced (atal/observability.py). The JSONL run log is written either way.
 
 Per drone (deck slide 12; every block is plain code):
-    mission.yaml -> Mission (Pydantic) -> FixedSectorPlanner (Voronoi cells, fixed order)
+    mission.yaml -> Mission (Pydantic) -> SearchLoop + FixedChooser (Voronoi cells, fixed order)
       -> SweepSector -> ActionPort -> BypassGate -> SectorExecutor (boustrophedon lanes,
          velocity PathFollower) -> simulator
     VictimSensor (footprint geometry, ground truth) -> Detection -> memory + planner
@@ -56,8 +56,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from atal.agents.llm_sector_planner import LLMSectorPlanner
-from atal.agents.sector_planner import FixedSectorPlanner
+from atal.agents.search_loop import planner_name
 from atal.core.sar import PlanFileError, load_mission, load_scenario
 from atal.evaluation.evidence import write_manifest
 from atal.evaluation.plot_tracks import plot_run
@@ -249,7 +248,7 @@ def run_config(args, mission, scenario, run_index, timing, llm) -> dict:
         "full_sweep_override": args.full_sweep,
         "scene": None if args.offline else args.scene,
         "obstacles": (getattr(args, "obstacle", None) or []) if args.offline else None,
-        "pipeline": {"planner": (LLMSectorPlanner if llm else FixedSectorPlanner).name,
+        "pipeline": {"planner": planner_name("llm" if llm else "fixed", team=False),
                      "allocation": "voronoi", "trust_assessor": NoTrustAssessor.name,
                      "action_gate": (SarInvariantGate.name if gate_mode(args) == "invariants"
                                      else BypassGate.name),

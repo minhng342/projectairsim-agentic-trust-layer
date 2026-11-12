@@ -1,5 +1,5 @@
 """
-Phase 3: what makes one drone a member of the swarm. Per drone:
+Phase 3: what makes one drone a member of the team (the swarm). Per drone:
 
     SwarmReceiver     on the bus: Remote ID position reports go to the drone's
                       RemoteIdReceiver, typed peer messages (atal/core/peer_messages.py) are validated
@@ -15,9 +15,10 @@ Phase 3: what makes one drone a member of the swarm. Per drone:
                         outgoing  only facts this drone verified itself: its own claim
                                   before a sweep, its own SectorCleared after one, its own
                                   sensor's VictimDetected (repeated every victim_repeat_s)
-    SwarmPlannerMixin the planner hooks (atal/agents/sector_planner.py) that use the coordinator;
-                      SwarmFixedPlanner / SwarmLLMPlanner are the Phase 1 / Phase 2
-                      planners with it
+    TeamRole          the search loop's role (atal/agents/search_loop.py) for a team drone:
+                      it asks the coordinator which sectors are this drone's, claims a
+                      sector before sweeping it and clears it after; it works with either
+                      chooser (fixed or LLM)
 
 Who knows what: the coordinator sees only delivered messages and this drone's own
 observations; true senders and true positions stay on the evaluation side (bus records).
@@ -29,6 +30,7 @@ import copy
 import math
 
 from atal.channels.radio import RidContext, _apply_hooks, _hook_name
+from atal.core.action import ActionType, ProposedAction
 from atal.core.belief import Detection, LocalBelief, PeerClaim
 from atal.core.peer_messages import (
     PEER_MESSAGE,
@@ -385,152 +387,147 @@ class SwarmCoordinator:
             self._recorder.record(kind, vehicle_id=self.vehicle_id, source="swarm", **fields)
 
 
-class SwarmPlannerMixin:
-    """Planner hooks for a swarm member. Put it before the planner class:
-    class SwarmFixedPlanner(SwarmPlannerMixin, FixedSectorPlanner)."""
+class TeamRole:
+    """The search loop's role for a team drone (the other role is SoloRole in
+    atal/agents/search_loop.py, with the same methods)."""
+    team = True
 
-    def __init__(self, *args, swarm: SwarmCoordinator, staging_xy=None, **kw):
-        self.swarm = swarm
+    def __init__(self, coordinator: SwarmCoordinator, staging_xy=None):
+        self.coordinator = coordinator
         self.staging_xy = staging_xy
-        super().__init__(*args, **kw)
+        self.loop = None
 
-    async def _after_climb(self):
+    def attach(self, loop) -> None:
+        self.loop = loop
+
+    async def after_climb(self):
+        """Fly to this drone's staging point before searching (a one-time move)."""
+        loop = self.loop
         if self.staging_xy is None:
             return None
-        from atal.core.action import ActionType, ProposedAction
-        if self.guard is not None:
-            self.guard.staging_xy = self.staging_xy
+        if loop.guard is not None:
+            loop.guard.staging_xy = self.staging_xy
         x, y = self.staging_xy
-        fb = await self._submit(ProposedAction(
-            vehicle_id=self.vehicle_id, action_type=ActionType.MOVE_TO_POSITION,
-            north_m=x, east_m=y, altitude_m=self.mission.flight.altitude_m,
+        fb = await loop.submit(ProposedAction(
+            vehicle_id=loop.vehicle_id, action_type=ActionType.MOVE_TO_POSITION,
+            north_m=x, east_m=y, altitude_m=loop.mission.flight.altitude_m,
             reason="fly to the staging point before searching"))
-        if self.guard is not None:
-            self.guard.staging_xy = None          # a one-time move
+        if loop.guard is not None:
+            loop.guard.staging_xy = None          # a one-time move
         if fb is not None and fb.code == "sweep_stopped":
             return None                           # a find meanwhile: the loop stops the search
         if fb is None or fb.code != "position_reached":
             return f"staging: {fb.code if fb else 'no observation'}"
-        self._record("staged", at={"x_m": x, "y_m": y})
+        loop.record("staged", at={"x_m": x, "y_m": y})
         return None
 
     def _here(self):
-        obs = self.feed.latest()
+        loop = self.loop
+        obs = loop.feed.latest()
         if obs is None:
-            st = getattr(self, "_last_state", None)
+            st = loop.last_state
             return ((st.x_m, st.y_m) if st else None), None
         ns = obs.source_sim_time_ns
         return (obs.north_m, obs.east_m), (None if ns is None else ns / 1e9)
 
-    def _plan(self, state):
-        order = self.swarm.my_sectors((state.x_m, state.y_m), state.sim_time_s)
-        if self.guard is not None:
-            self.guard.start_sim_s, self.guard.cells = self.start_sim_s, set(order)
-        peers = self.swarm.live_peers(state.sim_time_s)
-        self._record("sar_plan", allocation=("static" if self.swarm.static_cells is not None
-                                             else "voronoi_swarm"),
-                     fleet=sorted([self.vehicle_id, *peers]), cells=order, order=order,
-                     start={"x_m": state.x_m, "y_m": state.y_m}, derived=self.mission.derived(),
-                     altitude_m=self.mission.flight.altitude_m)
+    def plan(self, state):
+        loop, team = self.loop, self.coordinator
+        order = team.my_sectors((state.x_m, state.y_m), state.sim_time_s)
+        if loop.guard is not None:
+            loop.guard.start_sim_s, loop.guard.cells = loop.start_sim_s, set(order)
+        peers = team.live_peers(state.sim_time_s)
+        loop.record("sar_plan", allocation=("static" if team.static_cells is not None
+                                            else "voronoi_swarm"),
+                    fleet=sorted([loop.vehicle_id, *peers]), cells=order, order=order,
+                    start={"x_m": state.x_m, "y_m": state.y_m}, derived=loop.mission.derived(),
+                    altitude_m=loop.mission.flight.altitude_m)
         return order
 
-    def _remaining(self):
+    def remaining(self):
+        """A fresh share of the open sectors, at every decision."""
+        loop = self.loop
         xy, now = self._here()
         if xy is None:
             return []
-        order = self.swarm.my_sectors(xy, now, exclude=self._all_blocked())
-        if self.guard is not None:
-            self.guard.cells = set(order)
+        order = self.coordinator.my_sectors(xy, now, exclude=self._all_blocked())
+        if loop.guard is not None:
+            loop.guard.cells = set(order)
         return order
 
     def _all_blocked(self) -> set[str]:
         """Sectors this drone stays out of: its own obstacle incidents and its peers'."""
-        return self.blocked | set(self.swarm.peer_blocked)
+        return self.loop.blocked | set(self.coordinator.peer_blocked)
 
-    def _on_blocked(self, sid, cause):
-        self.swarm.blocked(sid, cause, self.mission.flight.altitude_m)
+    def on_blocked(self, sid, cause):
+        self.coordinator.blocked(sid, cause, self.loop.mission.flight.altitude_m)
 
-    def _still_open(self, sid):
+    def still_open(self, sid):
         """No await between this check and the claim, so a peer's claim, clear or obstacle
         report that arrived while this drone was deciding is never overridden."""
-        if self.belief.is_done(sid) or sid in self.swarm.peer_blocked:
+        loop, team = self.loop, self.coordinator
+        if loop.belief.is_done(sid) or sid in team.peer_blocked:
             return False
         _, now = self._here()
-        peers = self.swarm.live_peers(now)
-        holder = self.swarm.live_claims(now, peers).get(sid)
-        if holder not in (None, self.vehicle_id):
-            self._record("stale_choice", sector_id=sid, claimed_by=holder)
+        peers = team.live_peers(now)
+        holder = team.live_claims(now, peers).get(sid)
+        if holder not in (None, loop.vehicle_id):
+            loop.record("stale_choice", sector_id=sid, claimed_by=holder)
             return False
         return True
 
-    def _nothing_left(self):
-        if not self.belief.unsearched():
+    def nothing_left(self):
+        belief = self.loop.belief
+        if not belief.unsearched():
             return "all_swept", "every sector swept or cleared by a peer"
-        stuck = sorted(set(self.belief.unsearched()) & self._all_blocked())
+        stuck = sorted(set(belief.unsearched()) & self._all_blocked())
         if stuck:
             return "blocked_sectors", (f"nothing reachable left; blocked by obstacles: "
                                        f"{', '.join(stuck)}")
-        if self.swarm.static_cells is not None:
+        if self.coordinator.static_cells is not None:
             return "all_swept", "every sector of this drone's fixed part swept"
-        return "nothing_assigned", (f"{len(self.belief.unsearched())} open sector(s), all "
+        return "nothing_assigned", (f"{len(belief.unsearched())} open sector(s), all "
                                     f"claimed by or nearer to a peer")
 
-    def _on_sweep_start(self, sid, request_id):
+    def on_sweep_start(self, sid, request_id):
+        loop = self.loop
         xy, _ = self._here()
-        est = (self.guard.sweep_time_s(sid, xy) if (self.guard is not None and xy)
-               else self.mission.swarm.max_claim_s)
-        self.swarm.claim(sid, est * 1.5)
+        est = (loop.guard.sweep_time_s(sid, xy) if (loop.guard is not None and xy)
+               else loop.mission.swarm.max_claim_s)
+        self.coordinator.claim(sid, est * 1.5)
 
-    def _on_sector_swept(self, sid, request_id):
-        self.swarm.cleared(sid)
+    def on_sector_swept(self, sid, request_id):
+        self.coordinator.cleared(sid)
 
-    async def _finish(self, outcome, reason):
-        self.swarm.state = "returning"
-        self.swarm.own_claim = None
-        return await super()._finish(outcome, reason)
+    def on_finish(self):
+        self.coordinator.state = "returning"
+        self.coordinator.own_claim = None
 
-    def _on_lost(self):
-        self.swarm.state = "lost"           # peers stop counting it: its cells are shared out
-        self.swarm.own_claim = None
+    def on_lost(self):
+        self.coordinator.state = "lost"     # peers stop counting it: its cells are shared out
+        self.coordinator.own_claim = None
 
-    def _peer_stop(self):
-        v = self.swarm.peer_victim
-        if v is not None and self.mission.termination.stop_on_detection:
+    def peer_stop(self):
+        v = self.coordinator.peer_victim
+        if v is not None and self.loop.mission.termination.stop_on_detection:
             return "peer_found", f"{v.sender_id} reported the victim in {v.sector_id}"
         return None
 
-    def swarm_situation(self) -> dict:
-        """What the LLM planner is told about the team (Phase 3; read-only)."""
+    def situation(self) -> dict:
+        """What the LLM chooser is told about the team (read-only)."""
+        loop, team = self.loop, self.coordinator
         _, now = self._here()
-        peers = self.swarm.live_peers(now)
-        claims = self.swarm.live_claims(now, peers)
+        peers = team.live_peers(now)
+        claims = team.live_claims(now, peers)
         cleared = {}
-        for c in self.belief.peer_claims:
+        for c in loop.belief.peer_claims:
             if c.msg_type == "sector_cleared":
                 cleared.setdefault(c.sector_id, []).append(c.sender_id)
         return {
             "teammates": [{"id": p, "north_m": round(x, 1), "east_m": round(y, 1),
                            "sweeping": next((s for s, who in claims.items() if who == p), None)}
                           for p, (x, y) in sorted(peers.items())],
-            "assigned_to_you": sorted(self.guard.cells) if self.guard and self.guard.cells else [],
-            "blocked_for_you": sorted(self.blocked),
-            "blocked_by_teammates": dict(sorted(self.swarm.peer_blocked.items())),
+            "assigned_to_you": sorted(loop.guard.cells) if loop.guard and loop.guard.cells else [],
+            "blocked_for_you": sorted(loop.blocked),
+            "blocked_by_teammates": dict(sorted(team.peer_blocked.items())),
             "cleared_by_teammates": {s: sorted(set(v)) for s, v in sorted(cleared.items())},
         }
-
-
-def _planner_classes():
-    from atal.agents.llm_sector_planner import LLMSectorPlanner
-    from atal.agents.sector_planner import FixedSectorPlanner
-
-    class SwarmFixedPlanner(SwarmPlannerMixin, FixedSectorPlanner):
-        name = "SwarmFixedPlanner"
-
-    class SwarmLLMPlanner(SwarmPlannerMixin, LLMSectorPlanner):
-        name = "SwarmLLMPlanner"
-        team = True
-
-    return SwarmFixedPlanner, SwarmLLMPlanner
-
-
-SwarmFixedPlanner, SwarmLLMPlanner = _planner_classes()

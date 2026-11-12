@@ -27,7 +27,7 @@ actions, so the port, executor, memory and logs carry over unchanged.
 | Memory (local belief) | `atal/core/belief.py` | swept sectors and detections, each with its source |
 | Typed actions | `atal/core/sar.py` (`SweepSector`, `ReturnHome`), `atal/core/action.py` | go through the action port like any agent action |
 | Sector executor | `atal/flight/sector_sweep.py` | sweeps with the live-tested velocity path follower |
-| Fixed-list planner | `atal/agents/sector_planner.py` | the Phase 1 "agent" |
+| Fixed-list planner | `atal/agents/search_loop.py` + `atal/agents/fixed_chooser.py` | the Phase 1 "agent" (logged as `FixedSectorPlanner`; one class until restructuring step 5, see docs/refactor/moved.md) |
 | Offline simulator | `atal/simulation/kinematic_sim.py` | point-mass stand-in for AirSim, faster than real time |
 | Metrics | `atal/evaluation/sar_metrics.py` | time to find, coverage, sectors swept |
 | Top-down plot | `atal/evaluation/plot_tracks.py` | SVG; also plots Phase 0 corridor runs |

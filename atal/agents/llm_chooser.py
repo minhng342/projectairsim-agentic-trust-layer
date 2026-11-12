@@ -1,10 +1,11 @@
 """
-Phase 2 planner: one drone, the next search action chosen by an LLM (Pydantic AI, any model).
+The LLM chooser (Phase 2): an LLM picks the next search action (Pydantic AI, any model).
 
-    planner = LLMSectorPlanner("Drone1", mission, feed, port, belief, model=model, guard=guard)
-    result = await planner.run()
+    loop = SearchLoop("Drone1", mission, feed, port, belief, guard=guard,
+                      chooser=LLMChooser(model=model))
+    result = await loop.run()
 
-It is FixedSectorPlanner (atal/agents/sector_planner.py) with one box swapped: choose(). The
+It plugs into the same search loop as the fixed chooser (atal/agents/search_loop.py). The
 climb, the port, the executor, the memory, stop on detection / time limit and the return
 home are the same code, so a run differs from Phase 1 only in which sector comes next.
 
@@ -26,7 +27,7 @@ input is rebuilt from the belief, so a long search does not grow the prompt and 
 model knows is exactly what the memory file says.
 
 What the model can see: its own observation, its own memory, the frozen mission. Never the
-scenario (victim position): a detection still reaches the planner only through its sensor.
+scenario (victim position): a detection still reaches the loop only through its sensor.
 """
 import asyncio
 import json
@@ -36,10 +37,8 @@ import time
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimits
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 
-from atal.agents.sector_planner import FixedSectorPlanner
 from atal.core.sar import Mission, ReturnHome, SweepSector
 from atal.observability import span
-from atal.trust_layer.invariant_guard import SarGuard
 
 NEAREST_LISTED = 8
 PRIOR_LISTED = 8
@@ -121,8 +120,11 @@ def memory_map(mission: Mission, belief, here: str | None) -> str:
     return "\n".join(lines)
 
 
-def situation(planner: "LLMSectorPlanner", state, remaining: list[str]) -> dict:
-    m, guard = planner.mission, planner.guard
+def situation(chooser, state, remaining: list[str]) -> dict:
+    """The decision's input. `chooser` is anything with mission, belief, guard, last_sector
+    and prior (the LLMChooser, or a stand-in in tests); blocked and team_situation() are
+    used when it has them."""
+    m, guard = chooser.mission, chooser.guard
     here_xy = (state.x_m, state.y_m)
     left = guard.remaining_s(state.sim_time_s)
     near = []
@@ -138,16 +140,17 @@ def situation(planner: "LLMSectorPlanner", state, remaining: list[str]) -> dict:
                 "altitude_m": round(state.altitude_m, 1), "over_sector": state.sector_id},
         "time": {"used_s": round(m.termination.max_mission_time_s - left),
                  "left_s": round(left), "limit_s": m.termination.max_mission_time_s},
-        "memory": {"swept": len(planner.belief.done()), "unsearched": len(remaining),
+        "memory": {"swept": len(chooser.belief.done()), "unsearched": len(remaining),
                    "total": len(m.grid.ids())},
-        "last_sector": planner.last_sector,
+        "last_sector": chooser.last_sector,
         "nearest_unsearched": nearest,
     }
-    if getattr(planner, "blocked", None):
-        out["blocked_sectors"] = sorted(planner.blocked)     # obstacle recovery: not offered
-    if hasattr(planner, "swarm_situation"):
-        out["team"] = planner.swarm_situation()
-    prior = planner.prior
+    if getattr(chooser, "blocked", None):
+        out["blocked_sectors"] = sorted(chooser.blocked)     # obstacle recovery: not offered
+    team = chooser.team_situation() if hasattr(chooser, "team_situation") else None
+    if team is not None:
+        out["team"] = team
+    prior = chooser.prior
     if prior:
         likely = sorted(((p, s) for s, p in prior.items() if s in remaining), reverse=True)
         out["prior_likely_unsearched"] = [{"sector_id": s, "probability": round(p, 3)}
@@ -155,80 +158,105 @@ def situation(planner: "LLMSectorPlanner", state, remaining: list[str]) -> dict:
     return out
 
 
-def decision_prompt(planner, state, remaining) -> str:
-    sit = situation(planner, state, remaining)
+def decision_prompt(chooser, state, remaining) -> str:
+    sit = situation(chooser, state, remaining)
     return ("Situation (from your own observation and memory):\n```json\n"
             + json.dumps(sit) + "\n```\n\nMemory map (north at the top; '.' unsearched, "
             "'#' swept, '~' partly swept, 'p' cleared by a teammate):\n```\n"
-            + memory_map(planner.mission, planner.belief, state.sector_id)
+            + memory_map(chooser.mission, chooser.belief, state.sector_id)
             + "\n```\nChoose the next action.")
 
 
-class LLMSectorPlanner(FixedSectorPlanner):
-    name = "LLMSectorPlanner"
+class LLMChooser:
+    kind = "llm"
 
-    def __init__(self, vehicle_id, mission, feed, port, belief, *, model, guard: SarGuard,
-                 model_label: str | None = None, model_settings: dict | None = None,
-                 retries: int = 2, decision_timeout_s: float = 60.0, clock=time.monotonic, **kw):
-        super().__init__(vehicle_id, mission, feed, port, belief, guard=guard, **kw)
-        self.model, self.guard = model, guard
+    def __init__(self, *, model, model_label: str | None = None,
+                 model_settings: dict | None = None, retries: int = 2,
+                 decision_timeout_s: float = 60.0, clock=time.monotonic):
+        self.model = model
         self.model_label = model_label or getattr(model, "model_name", str(model))
         self.model_settings = dict(model_settings or {})
         self.retries, self.decision_timeout_s, self._clock = retries, decision_timeout_s, clock
-        self.prior = prior_mass(mission)
+        self.loop = None
+        self.prior: dict[str, float] = {}
         self.last_sector: str | None = None
         self.decisions = 0
         self.fallbacks = 0
-        self.return_outcome = "returned"
-        self._agent = self._build_agent()
+        self._agent = None
         self._state = None
         self._rejections: list[dict] = []
 
+    def attach(self, loop) -> None:
+        """Bind to the drone's search loop (it needs the loop's guard) and build the agent."""
+        if loop.guard is None:
+            raise ValueError("the LLM chooser needs the invariant guard (its output validator)")
+        self.loop = loop
+        self.prior = prior_mass(loop.mission)
+        self._agent = self._build_agent()
+
+    # ------------------------------------------------------------ what situation() reads
+    @property
+    def mission(self):
+        return self.loop.mission
+
+    @property
+    def belief(self):
+        return self.loop.belief
+
+    @property
+    def guard(self):
+        return self.loop.guard
+
+    @property
+    def blocked(self):
+        return self.loop.blocked
+
+    def team_situation(self) -> dict | None:
+        return self.loop.role.situation()
+
     # ------------------------------------------------------------ agent
     def _build_agent(self) -> Agent:
+        loop = self.loop
         agent = Agent(self.model, output_type=[SweepSector, ReturnHome],
-                      instructions=system_prompt(self.vehicle_id, self.mission,
-                                                 team=getattr(self, "team", False)),
-                      retries=self.retries, name=f"search-{self.vehicle_id}")
-        planner = self
+                      instructions=system_prompt(loop.vehicle_id, loop.mission,
+                                                 team=loop.role.team),
+                      retries=self.retries, name=f"search-{loop.vehicle_id}")
+        chooser = self
 
         @agent.output_validator
         def guard_check(ctx: RunContext[None], out):
-            st = planner._state
-            v = planner.guard.check(out.to_proposed(planner.vehicle_id), st.x_m, st.y_m,
-                                    st.sim_time_s)
+            st = chooser._state
+            v = loop.guard.check(out.to_proposed(loop.vehicle_id), st.x_m, st.y_m,
+                                 st.sim_time_s)
             if not v.ok:
-                planner._rejections.append({"choice": _describe(out), "code": v.code,
+                chooser._rejections.append({"choice": _describe(out), "code": v.code,
                                             "message": v.message})
                 raise ModelRetry(f"Refused by the guard ({v.code}): {v.message}")
             return out
         return agent
 
-    # ------------------------------------------------------------ the swapped box
-    async def run(self):
-        self.guard.start_sim_s = None
-        return await super().run()
-
+    # ------------------------------------------------------------ one decision
     async def choose(self, remaining: list[str]):
-        obs, state = await self._observe()
+        loop = self.loop
+        obs, state = await loop.observe()
         fallback_choice = self._fallback(remaining, state)
         if state is None:
             return fallback_choice
-        feasible = self.guard.feasible((state.x_m, state.y_m), state.sim_time_s)
+        feasible = loop.guard.feasible((state.x_m, state.y_m), state.sim_time_s)
         if not feasible:
-            self.return_outcome = "time_limit"
-            self._record("llm_decision", decision=self.decisions + 1, skipped=True,
-                         choice=_describe(ReturnHome(reason="no unsearched sector fits")),
-                         reason="no unsearched sector fits in the time left")
+            loop.return_outcome = "time_limit"
+            loop.record("llm_decision", decision=self.decisions + 1, skipped=True,
+                        choice=_describe(ReturnHome(reason="no unsearched sector fits")),
+                        reason="no unsearched sector fits in the time left")
             return ReturnHome(reason="no unsearched sector fits in the mission time left")
         self._state, self._rejections = state, []
         self.decisions += 1
-        prompt = decision_prompt(self, state, [s for s in remaining if s in self.guard.cells])
+        prompt = decision_prompt(self, state, [s for s in remaining if s in loop.guard.cells])
         t0 = self._clock()
         out, error, usage = None, None, None
         try:
             with span("sar decision {decision}", decision=self.decisions,
-                      vehicle_id=self.vehicle_id, unsearched=len(remaining),
+                      vehicle_id=loop.vehicle_id, unsearched=len(remaining),
                       sim_s=state.sim_time_s):
                 res = await asyncio.wait_for(
                     self._agent.run(prompt, model_settings=self.model_settings or None,
@@ -249,28 +277,30 @@ class LLMSectorPlanner(FixedSectorPlanner):
             self.fallbacks += 1
             out = fallback_choice
         if isinstance(out, ReturnHome):
-            self.return_outcome = "returned"
+            loop.return_outcome = "returned"
         else:
             self.last_sector = out.sector_id
-        self._record("llm_decision", decision=self.decisions, model=self.model_label,
-                     latency_s=latency, choice=_describe(out), reason=out.reason,
-                     fallback=fallback, error=error, prompt=prompt, guard_rejections=self._rejections, usage=usage,
-                     sim_s=state.sim_time_s, unsearched=len(remaining),
-                     serpentine_choice=remaining[0])
-        self._log(f"  [{time.strftime('%H:%M:%S')}] {self.vehicle_id}: decision "
-                  f"{self.decisions} -> {_describe(out)} ({latency:.1f} s"
-                  + (f", {len(self._rejections)} refused" if self._rejections else "")
-                  + (f", FALLBACK: {error}" if fallback else "") + ")"
-                  + (f"\n      reason: {out.reason}" if not fallback else ""))
+        loop.record("llm_decision", decision=self.decisions, model=self.model_label,
+                    latency_s=latency, choice=_describe(out), reason=out.reason,
+                    fallback=fallback, error=error, prompt=prompt,
+                    guard_rejections=self._rejections, usage=usage,
+                    sim_s=state.sim_time_s, unsearched=len(remaining),
+                    serpentine_choice=remaining[0])
+        loop.log(f"  [{time.strftime('%H:%M:%S')}] {loop.vehicle_id}: decision "
+                 f"{self.decisions} -> {_describe(out)} ({latency:.1f} s"
+                 + (f", {len(self._rejections)} refused" if self._rejections else "")
+                 + (f", FALLBACK: {error}" if fallback else "") + ")"
+                 + (f"\n      reason: {out.reason}" if not fallback else ""))
         return out
 
     def _fallback(self, remaining, state):
         """Phase 1's choice: the next sector in the fixed order that the guard allows."""
+        loop = self.loop
         for sid in remaining:
             if state is None:
                 break
             a = SweepSector(sector_id=sid, reason="fallback: next sector in the fixed order")
-            if self.guard.check(a.to_proposed(self.vehicle_id), state.x_m, state.y_m,
+            if loop.guard.check(a.to_proposed(loop.vehicle_id), state.x_m, state.y_m,
                                 state.sim_time_s).ok:
                 return a
         return SweepSector(sector_id=remaining[0], reason="fallback: next sector in the fixed "

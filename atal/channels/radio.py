@@ -171,7 +171,7 @@ class RemoteIdBus:
     rid_out_of_range. None = every receiver hears everything (Phase 0-2).
 
     A receiver is anything with `owner_id` and `receive(payload)`; the swarm receiver
-    (atal/agents/swarm.py) takes Remote ID reports and typed peer messages on the same bus.
+    (atal/agents/team_coordinator.py) takes Remote ID reports and typed peer messages on the same bus.
     A receiver with `receive_linked(payload, link_sender)` is also told the transmitter's
     authenticated identity (Phase 3: the link layer of an authenticated radio). It is the
     transmitter's enrolled id, never its position or whether it is honest."""

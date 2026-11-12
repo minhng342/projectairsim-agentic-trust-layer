@@ -44,12 +44,12 @@ A module name follows its path: `from models.sar import Mission` is now
 | `agent/providers/gemini.py` | `legacy/llm_pilot/providers/gemini.py` |
 | `agent/pydantic_pilot.py` | `legacy/llm_pilot/pydantic_pilot.py` |
 | `agent/rate_limit.py` | `atal/agents/llm/rate_limit.py` |
-| `agent/sar_llm_planner.py` | `atal/agents/llm_sector_planner.py` |
+| `agent/sar_llm_planner.py` | `atal/agents/llm_chooser.py` (step 5; it was `atal/agents/llm_sector_planner.py` after step 3) |
 | `agent/sar_scripted_model.py` | `atal/agents/llm/scripted_model.py` |
 | `agent/scripted_agent.py` | `legacy/llm_pilot/scripted_agent.py` |
 | `agent/scripted_maneuvers.py` | `legacy/corridor/scripted_maneuvers.py` |
-| `agent/sector_planner.py` | `atal/agents/sector_planner.py` |
-| `agent/swarm.py` | `atal/agents/swarm.py` |
+| `agent/sector_planner.py` | `atal/agents/search_loop.py` and `atal/agents/fixed_chooser.py` (step 5) |
+| `agent/swarm.py` | `atal/agents/team_coordinator.py` (step 5; it was `atal/agents/swarm.py` after step 3) |
 | `archive/diagnostics/diag_heading_settle.py` | `legacy/diagnostics/diag_heading_settle.py` |
 | `archive/diagnostics/diag_path_follow.py` | `legacy/diagnostics/diag_path_follow.py` |
 | `archive/diagnostics/smoke_projectairsim_connection.py` | `legacy/diagnostics/smoke_projectairsim_connection.py` |
@@ -136,3 +136,32 @@ Step 4 split the two runner files into small files. The flow of a run did not ch
 One visible difference: in a one-drone run log, when a geofence breach is recorded it now
 comes just before the `truth` record of the same instant instead of just after it (the one-drone
 and team runs now share one truth sampler, and that is the team order).
+
+## Step 5: inside `atal/agents/`
+
+Step 5 replaced the planner class hierarchy (a fixed planner, an LLM planner that inherited
+from it, and a team mixin that overrode eleven of its hooks) with one search loop and two
+parts that plug into it. The behaviour did not change.
+
+| Before | Now |
+|---|---|
+| `sector_planner.py: FixedSectorPlanner.run()` and its recovery, finish and submit code | `search_loop.py: SearchLoop` (run is now `_start`, then `_step` repeated, with `_after_sweep` for the feedback) |
+| `sector_planner.py: FixedSectorPlanner.choose()` | `fixed_chooser.py: FixedChooser.choose()` |
+| `sector_planner.py`: the hooks `_plan`, `_remaining`, `_still_open`, `_nothing_left`, ... | `search_loop.py: SoloRole` (`plan`, `remaining`, `still_open`, `nothing_left`, ...) |
+| `sector_planner.py: PlannerResult` | `search_loop.py: SearchResult` |
+| `llm_sector_planner.py: LLMSectorPlanner` | `llm_chooser.py: LLMChooser` (the prompt functions are unchanged) |
+| `swarm.py: SwarmPlannerMixin`, `SwarmFixedPlanner`, `SwarmLLMPlanner` | `team_coordinator.py: TeamRole`, used with either chooser |
+| `swarm.py: SwarmReceiver`, `PeerMessenger`, `SwarmCoordinator` | `team_coordinator.py` (same names) |
+| `planner._observe()`, `_submit()`, `_record()`, `_sim_now()`, `_log` | `loop.observe()`, `submit()`, `record()`, `sim_now()`, `log` (the parts call them, so they are public) |
+| `swarm_situation()` on the team planner | `TeamRole.situation()`, read by `LLMChooser.team_situation()` |
+
+How a drone is put together now (`atal/runtime/build_drone.py`):
+
+    SearchLoop(vehicle_id, mission, feed, port, belief,
+               chooser=FixedChooser() or LLMChooser(model=...),
+               role=TeamRole(coordinator, staging_xy) for a team drone (default SoloRole()),
+               guard=..., recorder=..., sweep_progress=..., log=...)
+
+The run logs still name the planner `FixedSectorPlanner`, `LLMSectorPlanner`,
+`SwarmFixedPlanner` or `SwarmLLMPlanner` (`run_config.json`: `pipeline.planner`), from the
+table `PLANNER_NAMES` in `search_loop.py`, so old and new logs read the same.

@@ -35,11 +35,11 @@ Output per batch: `runs/sar_swarm/<batch>/run_NN.jsonl` (one log for the whole t
 | Swarm settings | `atal/core/sar.py` (`Swarm`, `Mission.swarm`, `Mission.for_layer`) | radio range, layer spacing, peer timeout, claim cap, peer-claim rules, victim repeat; all with defaults, so Phase 1/2 mission files still load |
 | Radio range | `atal/channels/radio.py` (`RemoteIdBus(in_range=...)`) | the existing Remote ID bus; a delivery happens only if the TRUE sender is within `radio_range_m` (3D) of the receiver; misses are recorded as `rid_out_of_range` |
 | Mission state in Remote ID | `atal/channels/radio.py` (`mission_state`) | `searching` / `returning` / `landed`, so peers stop giving cells to a drone that is heading home |
-| Receiver, messenger, coordinator | `atal/agents/swarm.py` | `SwarmReceiver` splits the bus into Remote ID reports and peer messages and drops invalid ones; `PeerMessenger` has the sender-hook slot (Phase 4's insider); `SwarmCoordinator` does incoming rules, allocation and outgoing own facts |
+| Receiver, messenger, coordinator | `atal/agents/team_coordinator.py` | `SwarmReceiver` splits the bus into Remote ID reports and peer messages and drops invalid ones; `PeerMessenger` has the sender-hook slot (Phase 4's insider); `SwarmCoordinator` does incoming rules, allocation and outgoing own facts |
 | Belief: who said what | `atal/core/belief.py` (`PeerClaim`, `peer_claims`, `mark_peer_cleared`, `is_done`, `cleared_by`) | each claim: type, claimed sender, sent and received times, message id, whether a rule acted on it |
 | Peer-claim rules | `atal/trust_layer/peer_rules.py` (`PeerClaimRules`) | when a peer's clear or find changes this drone's belief; see below |
 | Allocation | `atal/search/allocation.py` (`allocate`) | Voronoi over open sectors, live peers and live claims, plus work stealing |
-| Planners | `atal/agents/swarm.py` (`SwarmFixedPlanner`, `SwarmLLMPlanner`) | the Phase 1 and Phase 2 planners with five hooks (`atal/agents/sector_planner.py`): plan, remaining, nothing left, before a sweep (claim), after a sweep (clear), peer stop |
+| Planners | `atal/agents/team_coordinator.py` (`TeamRole`; logged as `SwarmFixedPlanner`, `SwarmLLMPlanner`) | the Phase 1 search loop (`atal/agents/search_loop.py`) with either chooser and the team role: plan, remaining, nothing left, before a sweep (claim), after a sweep (clear), peer stop |
 | Guard | `atal/trust_layer/invariant_guard.py` | `already_swept` covers accepted peer clears; `search_over` covers an accepted peer find |
 | Runner | `run_sar_swarm.py` | N seeded runs, 3 drones, one bus, layers, `--planner fixed|llm`, `--radio-range`, `--peer-clear-rule`, `--layer-spacing`, `--drones N`, `--full-sweep` |
 | Metrics | `atal/evaluation/swarm_metrics.py` (`swarm_metrics`, `batch_baseline`) | team and per-drone metrics, the baseline block |
@@ -236,7 +236,7 @@ ended. Now, in every runner (Phase 1, 2 and 3 alike):
 - **Impact hook**: the runners' truth sampler already logged collisions; an impact (fast, or a
   non-supporting surface: `_is_impact`) now calls `planner.on_impact()` and interrupts the
   sweep at once.
-- **Recovery** (`atal/agents/sector_planner.py`, so every planner has it): the drone is hovering; it
+- **Recovery** (`atal/agents/search_loop.py`, so every planner has it): the drone is hovering; it
   climbs `recovery_climb_m` (10 m) above where it is (the guard allows exactly that climb), marks
   the sector it was flying as **blocked** for itself (never offered or allowed again:
   `blocked_by_obstacle`), and carries on. If the flight home is blocked or hits something, it

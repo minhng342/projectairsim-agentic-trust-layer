@@ -25,7 +25,7 @@ slot in Phase 4) and link hooks. A payload with a "msg_type" field is a peer mes
 anything else is a Remote ID report.
 
 Design rules (deck slide 25): peers inform beliefs, never goals (no message can change the
-mission), and each drone emits only facts it verified itself (atal/agents/swarm.py).
+mission), and each drone emits only facts it verified itself (atal/agents/team_coordinator.py).
 """
 from typing import Annotated, Literal, Union
 

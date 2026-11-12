@@ -199,7 +199,7 @@ def test_a_victim_in_a_blocked_sector_fails_as_unreachable():
 
 
 def test_receiver_stays_out_of_a_sector_a_peer_reported_and_keeps_it_unsearched():
-    from atal.agents.swarm import PeerMessenger, SwarmCoordinator, SwarmReceiver
+    from atal.agents.team_coordinator import PeerMessenger, SwarmCoordinator, SwarmReceiver
     from atal.channels.radio import RemoteIdBus, RemoteIdReceiver
     from atal.core.peer_messages import SectorBlocked
     m = _mission()

@@ -5,6 +5,9 @@ A drone is the same chain in every run:
     observation feed -> planner -> (guard) -> action port -> gate -> sector executor -> simulator
     victim sensor -> memory (belief) + planner
 
+The planner is a SearchLoop (atal/agents/search_loop.py) with a chooser (fixed or LLM) and,
+for a team drone, the TeamRole.
+
 A team drone adds the radio side: a Remote ID broadcaster, a receiver, a messenger and the
 coordinator that applies the peer-claim rules.
 """
@@ -12,15 +15,10 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from atal.agents.llm_sector_planner import LLMSectorPlanner
-from atal.agents.sector_planner import FixedSectorPlanner
-from atal.agents.swarm import (
-    PeerMessenger,
-    SwarmCoordinator,
-    SwarmFixedPlanner,
-    SwarmLLMPlanner,
-    SwarmReceiver,
-)
+from atal.agents.fixed_chooser import FixedChooser
+from atal.agents.llm_chooser import LLMChooser
+from atal.agents.search_loop import SearchLoop
+from atal.agents.team_coordinator import PeerMessenger, SwarmCoordinator, SwarmReceiver, TeamRole
 from atal.channels.action_port import ActionPort
 from atal.channels.observation_feed import ObservationFeed
 from atal.channels.radio import RemoteIdBroadcaster, RemoteIdReceiver
@@ -41,7 +39,7 @@ class Drone:
     feed: ObservationFeed          # the only way observations reach the planner
     belief: LocalBelief            # the drone's memory
     sector_executor: SectorExecutor
-    planner: Any
+    planner: SearchLoop
     sensor: VictimSensor
     launch_altitude_m: float
     coordinator: Any = None        # team only
@@ -56,6 +54,16 @@ class TeamParts:
     static_cells: dict | None      # the pre-mission split, in the static-allocation condition
     staging: list                  # staging points, by drone index (may be empty)
     size: int                      # number of drones
+
+
+def make_chooser(ctx):
+    """The LLM chooser when the run has a model (--planner llm), else the fixed one."""
+    llm = ctx.llm
+    if not llm:
+        return FixedChooser()
+    return LLMChooser(model=llm["model"], model_label=llm["label"],
+                      model_settings=llm["settings"],
+                      decision_timeout_s=ctx.args.decision_timeout)
 
 
 def read_home(ctx, spec, feed) -> tuple:
@@ -94,19 +102,11 @@ def build_single_drone(ctx, spec, mission, victim, gate_on: bool) -> Drone:
     gate = SarInvariantGate(guard) if gate_on else BypassGate()
     port = ActionPort(vid, sector_executor, feed, gate=gate, recorder=recorder,
                       max_observation_age_s=rates.MAX_OBSERVATION_AGE_S)
-    if llm:
-        if hasattr(llm["model"], "on_event"):
-            llm["model"].on_event = recorder.recorder_for(source="model")
-        planner = LLMSectorPlanner(vid, mission, feed, port, belief, model=llm["model"],
-                                   guard=guard, model_label=llm["label"],
-                                   model_settings=llm["settings"],
-                                   decision_timeout_s=ctx.args.decision_timeout,
-                                   recorder=recorder,
-                                   sweep_progress=sector_executor.last_progress, log=ctx.log)
-    else:
-        planner = FixedSectorPlanner(vid, mission, feed, port, belief, recorder=recorder,
-                                     sweep_progress=sector_executor.last_progress, log=ctx.log,
-                                     guard=guard)
+    if llm and hasattr(llm["model"], "on_event"):
+        llm["model"].on_event = recorder.recorder_for(source="model")
+    planner = SearchLoop(vid, mission, feed, port, belief, chooser=make_chooser(ctx),
+                         guard=guard, recorder=recorder,
+                         sweep_progress=sector_executor.last_progress, log=ctx.log)
 
     def detected(d):
         belief.add_detection(d)
@@ -123,7 +123,7 @@ def build_single_drone(ctx, spec, mission, victim, gate_on: bool) -> Drone:
 def build_team_drone(ctx, spec, index: int, mission, victim, gate_on: bool,
                      team: TeamParts) -> Drone:
     """One drone of a team. `mission` is this drone's own (its altitude layer)."""
-    vid, recorder, llm, log = spec.vehicle, ctx.recorder, ctx.llm, ctx.log
+    vid, recorder, log = spec.vehicle, ctx.recorder, ctx.log
     adapter = ctx.adapter
 
     def sim_clock():                       # sim time in seconds, as this drone last heard it
@@ -156,16 +156,11 @@ def build_team_drone(ctx, spec, index: int, mission, victim, gate_on: bool,
                                   authenticated=mission.swarm.identity == "authenticated"))
 
     stage = team.staging
-    common = dict(recorder=recorder, sweep_progress=sector_executor.last_progress,
-                  log=log, swarm=coordinator,
-                  staging_xy=(stage[index].x_m, stage[index].y_m) if index < len(stage) else None)
-    if llm:
-        planner = SwarmLLMPlanner(vid, mission, feed, port, belief, model=llm["model"],
-                                  guard=guard, model_label=llm["label"],
-                                  model_settings=llm["settings"],
-                                  decision_timeout_s=ctx.args.decision_timeout, **common)
-    else:
-        planner = SwarmFixedPlanner(vid, mission, feed, port, belief, guard=guard, **common)
+    role = TeamRole(coordinator, staging_xy=(stage[index].x_m, stage[index].y_m)
+                    if index < len(stage) else None)
+    planner = SearchLoop(vid, mission, feed, port, belief, chooser=make_chooser(ctx), role=role,
+                         guard=guard, recorder=recorder,
+                         sweep_progress=sector_executor.last_progress, log=log)
 
     # Stop only a SEARCH move: a drone already heading home (it found nothing
     # left, or an earlier report ended its search) keeps flying home even if it

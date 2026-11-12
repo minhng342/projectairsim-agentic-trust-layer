@@ -5,7 +5,7 @@ import json
 import pytest
 
 from atal.agents.llm.scripted_model import scripted_search_model
-from atal.agents.llm_sector_planner import decision_prompt, memory_map, prior_mass, system_prompt
+from atal.agents.llm_chooser import decision_prompt, memory_map, prior_mass, system_prompt
 from atal.core.action import ActionType, ProposedAction
 from atal.core.belief import Detection, LocalBelief
 from atal.core.observation import GateOutcome

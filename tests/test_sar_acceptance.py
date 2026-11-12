@@ -4,7 +4,7 @@ can run under the same guard."""
 import asyncio
 import json
 
-from atal.agents.sector_planner import FixedSectorPlanner
+from atal.agents.fixed_chooser import FixedChooser
 from atal.core.action import ActionType, CommandResult, CommandStatus
 from atal.core.belief import Detection
 from atal.core.sar import Mission
@@ -35,19 +35,19 @@ def test_failed_return_home_fails_the_run_even_after_a_find(tmp_path, monkeypatc
 
 
 def test_detection_during_a_decision_ends_the_search(tmp_path, monkeypatch):
-    real = FixedSectorPlanner.choose
+    real = FixedChooser.choose
     calls = {"n": 0}
 
     async def choose(self, remaining):
         a = await real(self, remaining)
         calls["n"] += 1
         if calls["n"] == 2:              # the sensor fires while the planner is "thinking"
-            d = Detection(vehicle_id=self.vehicle_id, sim_time_s=1.0, x_m=1, y_m=1,
+            d = Detection(vehicle_id=self.loop.vehicle_id, sim_time_s=1.0, x_m=1, y_m=1,
                           altitude_m=10, sector_id="A1", footprint_m=6)
-            self.belief.add_detection(d)
-            self.on_detection(d)
+            self.loop.belief.add_detection(d)
+            self.loop.on_detection(d)
         return a
-    monkeypatch.setattr(FixedSectorPlanner, "choose", choose)
+    monkeypatch.setattr(FixedChooser, "choose", choose)
     code, batch, summary = run(tmp_path, victim=(39.0, 1.0))
     actions = [e["feedback"]["action_type"] for e in read_run(batch / "run_00.jsonl")
                .of_kind("feedback")]

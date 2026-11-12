@@ -1,7 +1,8 @@
 """
 Search and rescue swarm runner (Phase 3): three honest drones, N seeded runs, one command.
 Every drone runs the same design as Phases 1-2 (feed, planner, guard, port, sector
-executor, sensor, memory) plus its swarm member (atal/agents/swarm.py); they talk on one bus.
+executor, sensor, memory) plus its team role and coordinator
+(atal/agents/team_coordinator.py); they talk on one bus.
 
     python run_sar_swarm.py --offline                     # dev mission, 3 drones, 20 runs
     python run_sar_swarm.py --offline --runs 1 --full-sweep
@@ -46,7 +47,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from atal.agents.swarm import SwarmFixedPlanner, SwarmLLMPlanner
+from atal.agents.search_loop import planner_name
 from atal.channels.radio import RemoteIdBus
 from atal.core.sar import PlanFileError, load_mission, load_scenario
 from atal.evaluation.compare import load_batch, paired_comparison
@@ -338,7 +339,7 @@ def run_config(args, mission, missions, scenario, run_index, timing, llm) -> dic
                     "altitude_m": missions[d.vehicle].flight.altitude_m} for d in scenario.drones],
         "swarm": mission.swarm.model_dump(mode="json"),
         "insider_enabled": scenario.insider.enabled,
-        "pipeline": {"planner": (SwarmLLMPlanner if llm else SwarmFixedPlanner).name,
+        "pipeline": {"planner": planner_name("llm" if llm else "fixed", team=True),
                      "allocation": ("static" if mission.swarm.allocation == "static"
                                     else "voronoi_swarm"), "peer_rules": PeerClaimRules.name,
                      "trust_assessor": NoTrustAssessor.name,
