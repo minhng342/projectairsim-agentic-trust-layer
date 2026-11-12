@@ -1,14 +1,13 @@
 # Walkthrough: how a search and rescue run works
 
-This is the reading guide for the code **as it is today**: the files are in their new
-folders (restructuring step 3), the run is split into small files in `atal/runtime/`
-(step 4), and every drone's planner is one search loop with a chooser and a role plugged in
-(step 5). The guard, channels and flight code are unchanged from commit `5a06556`. "The
-planner" below means a drone's `SearchLoop` with its parts. It answers eight questions with
-the real file and function names, then follows
-one real decision through a recorded run. It is updated with every restructuring step, so it
-always describes the code in front of you. The folders are listed in the
-[README](../README.md#layout).
+This is the reading guide for the code **as it is today** (restructuring step 6). Every
+drone's planner is one search loop with a chooser and a role plugged in; in a team run every
+climb, descent, startup and landing goes through the trusted airspace transition manager.
+"The planner" below means a drone's `SearchLoop` with its parts. It answers eight questions
+with the real file and function names, then follows one real decision through a recorded
+run. Read [architecture.md](architecture.md) first for the folders and the reading order;
+every file is listed there under [Every file](architecture.md#every-file). It is updated with
+every restructuring step, so it always describes the code in front of you.
 
 Conventions used everywhere in the code:
 
@@ -171,6 +170,15 @@ Completion is decided from ground-truth telemetry by the pure functions in
 timeout, a telemetry problem, or no progress along the path for 10 seconds
 (`path_blocked`). On failure the executor tells the drone to hover.
 
+**Altitude changes in a team run** never go straight to the simulator. Startups, landings
+and the climbs and descents of an obstacle recovery are reservations with the transition
+manager (`atal/airspace/transition_manager.py`), requested by the drone's recovery component
+(`Recovery.recover()`, `Recovery.clear_landing()` in `atal/flight/recovery.py`). The manager
+grants a move only when no teammate is in the way, and pauses teammates inside a move's
+column. The rules are in [recovery/recovery_policy.md](recovery/recovery_policy.md). The
+manager is trusted infrastructure: it is not part of the trust layer and runs the same way
+in every experiment condition.
+
 Every executor returns a `CommandResult` with a `reason_code`. The action port translates
 that into the limited `ActionFeedback` the planner sees
 (`_EXECUTOR_FEEDBACK` in `atal/channels/action_port.py`).
@@ -192,7 +200,11 @@ that into the limited `ActionFeedback` the planner sees
 6. The next time the planner picks a sector, that one is no longer open.
 
 A peer's `VictimDetected` follows the same route through `PeerClaimRules.on_victim()`. If
-accepted, it ends this drone's search.
+accepted, it ends this drone's search. A peer's `SectorBlocked` ("an obstacle stopped me
+flying this sector") is not a clear: the sector stays unsearched, and the coordinator stops
+offering it to this drone (`peer_blocked`). That report carries no altitude in the
+coordinator, so a drone above the obstacle skips the sector too; this is an open item in
+[refactor/baseline.md](refactor/baseline.md).
 
 ## 8. Who stops tasks, lands the drones and closes the record after an error?
 
@@ -201,6 +213,9 @@ accepted, it ends this drone's search.
   (`atal/flight/shutdown.py`): hover, land, and disarm only once the drone is confirmed on
   the ground. If landing cannot be confirmed, it does not disarm and reports the drone as
   unresolved.
+- **Landing in a team run.** A drone lands only under an active landing reservation
+  (`Recovery.clear_landing()`, called from `fly_team_drone()`). Without one it keeps hovering,
+  is not disarmed, and the run records `landing_not_cleared` and fails.
 - **The pads.** Before any descent, `clear_pads()` (`atal/runtime/landing.py`) makes sure
   the drone holds the pad zone or is outside it (`atal/flight/pad_zone.py`). The zone is
   released only after a confirmed landing. A timeout never lets a drone in.
@@ -216,7 +231,9 @@ accepted, it ends this drone's search.
 
 ## One real decision, followed end to end
 
-From an offline team run (`python run_sar_swarm.py --offline`, run 1, seed 43). The events
+From an offline team run (`python run_sar_swarm.py --offline`, run 1, seed 43). It was recorded at step 5, before
+the managed airspace; a run today also logs `transition_*` events around takeoff and
+landing, and the times differ, but every event and function below is in today's code. The events
 below are from the run log `run_01.jsonl`, for Drone2 sweeping sector E1. Times are sim
 seconds.
 

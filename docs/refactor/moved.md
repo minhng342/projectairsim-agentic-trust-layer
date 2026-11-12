@@ -208,3 +208,14 @@ file imports a name starting with `_` from another file.
 
 The old checkout-relative spellings are not looked up anywhere else: a path that does
 not exist is an error that lists the bundled files.
+
+## Step 6c: reading
+
+| Before | Now |
+|---|---|
+| `tests/test_*.py` (flat) | `tests/<folder>/test_*.py`, one folder per `atal/` folder, plus `tests/architecture/`; whole-run tests in `tests/runtime/` |
+| `docs/phase1.md` to `phase3.md` | `docs/history/` |
+| README status table (the build log) | `docs/history/build_log.md` |
+| README "Who may see what", "Conventions", "Layout" | `docs/architecture.md` (with the reading order, diagram, rules and ownership) |
+| README "Setup", archived scripts | `docs/setup.md` |
+| README "Running" and the command tables | `docs/commands.md` |
