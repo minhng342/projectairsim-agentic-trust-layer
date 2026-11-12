@@ -139,7 +139,10 @@ is not already over. The full list with codes is at the top of `atal/trust_layer
 
 ## 6. Who sends simulator commands, and how are completion and failure decided?
 
-Only the executors talk to the simulator.
+Every action a planner proposes reaches the simulator through the executors, and nothing
+else flies the drone during the search. Two things outside the planner's reach also send
+simulator commands directly: the run's setup (arm and take off, `atal/runtime/run_single.py:
+_takeoff`) and `safe_shutdown()` (`atal/flight/shutdown.py`: hover, land, disarm).
 
 - `SectorExecutor.execute()` (`atal/flight/sector_sweep.py`) handles the SAR actions. For a
   sweep it computes the lanes (`atal/search/sweep_lanes.py: sweep_path`) and flies them with

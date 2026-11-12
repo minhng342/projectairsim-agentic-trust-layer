@@ -32,9 +32,12 @@ timing-sensitive tests fail at random.
 
 ## Supported commands
 
-These must keep working, with the same defaults, through every step. Step 3 changed how
-some of them are spelled (the two run commands and pytest are unchanged): see
-[moved.md](moved.md).
+The commands at the baseline commit. **Rule 4 was not kept in full in step 3.** The two run
+commands, `python -m pytest` and `python search_and_rescue_stack.py` work unchanged. Every
+other command in this table was replaced, and the old spelling now fails (for example
+`python -m evaluation.compare` gives `ModuleNotFoundError`; the replacement is
+`python -m atal.evaluation.compare`). The replacements are listed in [moved.md](moved.md).
+Lab notes and scripts that use the old spellings need the new ones.
 
 | Command | Needs the simulator | Purpose |
 |---|---|---|
@@ -80,40 +83,57 @@ Eight offline cases, three seeded runs each, recorded in
 python tools/reference_cases.py --check docs/refactor/reference_baseline.json
 ```
 
-The check compares, per run:
+Checked in every run of every case, whatever the reference says:
 
-- whether the victim was found, in every case;
-- whether the run passed acceptance, in every case but the obstacle one;
+- every drone landed and disarmed, and its descent succeeded;
+- the run log is complete and did not end `aborted`;
+- no run error, no failed background task, no stalled simulator;
+- in team runs, no peer-message processing error and no pad zone left held;
+- the runner's exit status agrees with its own verdicts (0 when every run passed, 1 when a
+  run failed acceptance). Anything else is treated as a crash.
+
+Compared with the reference, per run:
+
+- the run index, seed and victim sector, which must be identical;
+- whether the victim was found;
+- whether the run passed acceptance. In the obstacle case a run may fail, but only for the
+  reason `N impacts`. Any other failure reason there is reported;
 - the time to find within a tolerance (15 % or 30 s, whichever is larger), only where the
   sweep order is fixed: one drone, and the static team split.
+
+The script exits with status 1 when anything is reported, and it refuses to record a
+reference that is not sound by the first list. `tests/test_reference_cases.py` checks these
+rules.
 
 Why not exact numbers: the offline simulator is paced by the host clock, so the same seed
 gives slightly different times on each execution. One drone repeats within about 2 %. A
 cooperating team does not: the drones re-split the open sectors at every decision, so a
 small timing difference changes who sweeps what. Between two executions of this same commit
 the team time to find moved by up to 150 % (run 2 of the obstacle case: 313 s and 781 s).
-Team times are therefore recorded but not compared.
+Team times are therefore recorded but not compared. The same seed fixes the victim, not the
+team's execution.
 
 | Case | What it exercises | Found | Passed | Time to find (s), runs 0 to 2 | Time compared |
 |---|---|---|---|---|---|
-| `one_fixed` | One drone, fixed sector order | 3/3 | 3/3 | 731, 204, 636 | yes |
-| `one_llm` | One drone, scripted stand-in for the LLM, invariant guard on | 3/3 | 3/3 | 196, 1041, 805 | yes |
-| `team_fixed` | Three drones cooperating over the bus | 3/3 | 3/3 | 367, 156, 307 | no |
-| `team_llm` | Three drones, scripted stand-in for the LLM | 3/3 | 3/3 | 344, 495, 202 | no |
-| `team_dropout` | One drone fails 200 s into the search | 3/3 | 3/3 | 523, 156, 425 | no |
-| `team_static` | Fixed pre-mission split, no claims | 3/3 | 3/3 | 359, 150, 258 | yes |
-| `team_obstacle` | An obstacle in the grid: impacts, recovery, shared blocked sectors | 3/3 | 2/3 | 426, 156, 313 | no |
-| `team_self_only` | Peer clears are recorded but never accepted | 3/3 | 3/3 | 683, 156, 745 | no |
+| `one_fixed` | One drone, fixed sector order | 3/3 | 3/3 | 726, 202, 624 | yes |
+| `one_llm` | One drone, scripted stand-in for the LLM, invariant guard on | 3/3 | 3/3 | 194, 1029, 799 | yes |
+| `team_fixed` | Three drones cooperating over the bus | 3/3 | 3/3 | 361, 151, 328 | no |
+| `team_llm` | Three drones, scripted stand-in for the LLM | 3/3 | 3/3 | 337, 482, 199 | no |
+| `team_dropout` | One drone fails 200 s into the search | 3/3 | 3/3 | 521, 155, 437 | no |
+| `team_static` | Fixed pre-mission split, no claims | 3/3 | 3/3 | 364, 150, 260 | yes |
+| `team_obstacle` | An obstacle in the grid: impacts, recovery, shared blocked sectors | 3/3 | 1/3 | 425, 156, 311 | no |
+| `team_self_only` | Peer clears are recorded but never accepted | 3/3 | 3/3 | 758, 156, 589 | no |
 
-In the obstacle case, whether a drone touches the obstacle varies between executions (one
-of three runs passed in one execution, two of three in the next), and any impact fails a
-run by design. It is in the set because it exercises obstacle recovery and shared blocked
-sectors, and the victim must still be found.
+In the obstacle case, whether a drone touches the obstacle varies between executions (in
+five executions between zero and two of the three runs had an impact), and any impact fails
+a run by design. That is the only failure allowed there. It is in the set because it
+exercises obstacle recovery and shared blocked sectors, and the victim must still be found.
 
 What this means for the restructuring: the reference cases catch a broken run path, a lost
 find or a new failure. They cannot detect a small change in team search efficiency. The
 557 tests are the main protection for behaviour; a team efficiency comparison needs a
-20-run batch (`python run_sar_swarm.py --offline`, then `python -m evaluation.compare`).
+20-run batch (`python run_sar_swarm.py --offline`, then `python -m atal.evaluation.compare`).
+A 20-run batch estimates the variation between executions. It does not remove it.
 
 The reference cases cover the offline path only. The live path (Project AirSim on zeus-g)
 is checked once before any old entry point is removed.
@@ -139,9 +159,10 @@ its own change.
 | Issue | Where | Status |
 |---|---|---|
 | In one execution of the obstacle reference case, a run ended with a drone making a contingency landing outside the pads (`pad_zone_timeout`) after `return home sweep_stopped`. It did not recur in the next execution. | `run_sar_swarm.py`, `executor/pad_zone.py` | Observed offline on 2026-11-12. Not investigated. May be the intended fail-safe. |
-| Team runs are not repeatable for a given seed: time to find varies widely between executions because allocation depends on task timing. | `agent/swarm.py`, offline simulator pacing | Affects how experiments are compared; 20-run batches hide it. Not a restructuring change. |
+| Team runs are not repeatable for a given seed: time to find varies widely between executions because allocation depends on task timing. | `agent/swarm.py`, offline simulator pacing | A question of experimental method, separate from the restructuring: a 20-run batch estimates this variation, it does not remove it, and two batches with the same seeds are not the same executions. |
 | The deck mission (60 m altitude) has never been flown live; the altitude is thought to be too low for the city scene. | `missions/sar/mission.yaml` | Open since Phase 3. |
 | A live 20-run team baseline and a live one-drone run have not been done. | zeus-g | Open since Phase 3. |
 | Three root scripts are named `test_*.py` but are live demos. `pytest.ini` works around it with `testpaths = tests`. | repo root | Resolved by the restructuring (they move to `legacy/`). |
 | The test suite is timing-sensitive above two workers. | `tests/` | Open. |
+| The package only runs from a checkout of the repository. `pip install` builds a wheel, but it contains no mission or scene files, the default `--mission` and `--scenario` paths are relative to the repository root, and the default scene and output folders are found from the source layout. Outside the checkout the run commands need explicit `--mission`, `--scenario` and `--out`. | `pyproject.toml`, `atal/runtime/`, `atal/simulation/airsim.py`, `atal/evaluation/recorder.py` | Open. To decide: bundle the sample missions and scenes with a stable lookup, or keep them outside the package and require explicit paths. Needs an installed-package test from another folder before any source-root workflow is retired. |
 | Some team tests fail at random even with two workers, because they assert on which drone swept which sector. `test_full_sweep_shares_the_grid_without_duplicates` failed in 7 of 40 single executions at the baseline commit, and in 7 of 40 after step 3. `test_without_cooperation_drones_sweep_the_same_sectors` and `test_swarm_lands_one_drone_at_a_time` also failed at the baseline. | `tests/test_sar_swarm.py`, `tests/test_phase3_completion.py` | Measured 2026-11-12. Same cause as the row on team repeatability. Rerun a failed team test before treating it as a regression. |

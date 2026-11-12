@@ -5,6 +5,9 @@ code is in `atal/`; code from before the search and rescue work is in `legacy/`.
 
 ## Commands
 
+The old spellings in the left column no longer work, except where the right column says
+unchanged.
+
 | Before | Now |
 |---|---|
 | `python run_sar_mission.py ...` | unchanged (or `python -m atal.runtime.run_single ...`) |
