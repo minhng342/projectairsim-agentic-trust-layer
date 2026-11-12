@@ -6,16 +6,21 @@ import json
 import pytest
 import yaml
 
-from agent.swarm import PeerMessenger, SwarmCoordinator, SwarmReceiver
-from channel.remote_id import RemoteIdBus, RemoteIdReceiver
-from evaluation.recorder import read_run
-from gate.peer_rules import PeerClaimRules
-from models.belief import LocalBelief, PeerClaim
-from models.sar import Mission, Swarm
-from models.swarm import (PEER_MESSAGE, SectorClaimed, SectorCleared, VictimDetected,
-                          is_peer_message)
-from run_sar_swarm import main, parse_args
-from search.allocation import allocate
+from atal.agents.swarm import PeerMessenger, SwarmCoordinator, SwarmReceiver
+from atal.channels.radio import RemoteIdBus, RemoteIdReceiver
+from atal.core.belief import LocalBelief, PeerClaim
+from atal.core.peer_messages import (
+    PEER_MESSAGE,
+    SectorClaimed,
+    SectorCleared,
+    VictimDetected,
+    is_peer_message,
+)
+from atal.core.sar import Mission, Swarm
+from atal.evaluation.recorder import read_run
+from atal.runtime.run_team import main, parse_args
+from atal.search.allocation import allocate
+from atal.trust_layer.peer_rules import PeerClaimRules
 from tests.channel_fakes import ListRecorder
 from tests.test_sar_pipeline import MISSION
 
@@ -185,7 +190,7 @@ def test_victim_report_is_accepted_once_and_repeats_are_deduplicated():
     c2, _ = _member("Drone2", m, bus, clock)
     hits = []
     c1.on_peer_victim = hits.append
-    from models.belief import Detection
+    from atal.core.belief import Detection
     c2.own_detection(Detection(vehicle_id="Drone2", sim_time_s=50, x_m=1, y_m=2, altitude_m=10,
                                sector_id="A1", footprint_m=6))
     c2.messenger.send(c2._victim_msg)                       # the repeat: same msg_id
@@ -307,8 +312,8 @@ def test_team_launches_from_one_pad_area_and_flies_to_staging_points(tmp_path):
 
 
 def test_guard_allows_only_the_staging_move():
-    from gate.sar_guard import SarGuard
-    from models.action import ActionType, ProposedAction
+    from atal.core.action import ActionType, ProposedAction
+    from atal.trust_layer.invariant_guard import SarGuard
     m = mission()
     g = SarGuard(m, LocalBelief("Drone1", m), (0, 0))
 
@@ -323,7 +328,8 @@ def test_guard_allows_only_the_staging_move():
 
 def test_sim_clock_watchdog_marks_stall_and_stops():
     import asyncio
-    from run_sar_swarm import _watch_sim_clock
+
+    from atal.runtime.run_team import _watch_sim_clock
 
     class A:
         stalled = None
@@ -353,8 +359,8 @@ def test_sim_clock_watchdog_marks_stall_and_stops():
 
 def test_one_failed_sweep_does_not_end_a_drones_search(tmp_path, monkeypatch):
     """Live 2026-11-05: one path_failed in G2 sent Drone3 home for the rest of the run."""
-    from executor.sector_executor import SectorExecutor
-    from models.action import ActionType, CommandResult, CommandStatus
+    from atal.core.action import ActionType, CommandResult, CommandStatus
+    from atal.flight.sector_sweep import SectorExecutor
     real, failed = SectorExecutor.execute, []
 
     async def execute(self, action):
@@ -378,8 +384,8 @@ def test_one_failed_sweep_does_not_end_a_drones_search(tmp_path, monkeypatch):
 
 
 def test_two_failed_sweeps_in_a_row_still_end_the_search(tmp_path, monkeypatch):
-    from executor.sector_executor import SectorExecutor
-    from models.action import ActionType, CommandResult, CommandStatus
+    from atal.core.action import ActionType, CommandResult, CommandStatus
+    from atal.flight.sector_sweep import SectorExecutor
     real = SectorExecutor.execute
 
     async def execute(self, action):
@@ -456,7 +462,7 @@ def test_a_peer_processing_error_fails_the_run(tmp_path, monkeypatch):
 
 def _sep_log(tmp_path, pairs):
     """A run log with truth samples: pairs = [(t_s, {vid: (north, east, alt)})]."""
-    from evaluation.recorder import EvaluationRecorder
+    from atal.evaluation.recorder import EvaluationRecorder
     m = mission()
     rec = EvaluationRecorder(path=tmp_path / "r.jsonl", run_config={})
     for t, poses in pairs:
@@ -470,7 +476,7 @@ def _sep_log(tmp_path, pairs):
 
 
 def test_separation_floors_split_pad_zone_and_cruise(tmp_path):
-    from evaluation.swarm_metrics import separation
+    from atal.evaluation.swarm_metrics import separation
     ground = {"Drone1": (0, 0, 0), "Drone2": (0, 3, 0)}
     climb = {"Drone1": (0, 0, 20), "Drone2": (0, 3, 21)}          # 3.2 m apart on the pads
     cruise_ok = {"Drone1": (50, 50, 30), "Drone2": (50, 60, 35)}
@@ -487,7 +493,7 @@ def test_separation_floors_split_pad_zone_and_cruise(tmp_path):
 
 
 def test_acceptance_fails_on_separation_errors_and_identity_mismatches():
-    from run_sar_swarm import run_failures
+    from atal.runtime.run_team import run_failures
     base = {"victim_found": True, "drones": {}, "geofence_breaches": 0, "impacts": 0,
             "run_complete": True, "run_log_outcome": "victim_found",
             "messages": {}, "separation": {"measured": True, "pad_violations": 0,
@@ -506,7 +512,7 @@ def test_acceptance_fails_on_separation_errors_and_identity_mismatches():
 # ------------------------------------------------------------ follow-up review (04be8d7)
 def _truth_log(tmp_path, events):
     """events = [(t_s or None, {vid: (north, east, alt, pose_t_s or None)})]."""
-    from evaluation.recorder import EvaluationRecorder
+    from atal.evaluation.recorder import EvaluationRecorder
     rec = EvaluationRecorder(path=tmp_path / "t.jsonl", run_config={})
     for t, poses in events:
         rec.record("truth", sim_time_ns=None if t is None else int(t * 1e9), poses={
@@ -519,14 +525,14 @@ def _truth_log(tmp_path, events):
 
 
 def test_samples_of_one_drone_never_make_separation_measured(tmp_path):
-    from evaluation.swarm_metrics import separation
+    from atal.evaluation.swarm_metrics import separation
     log, m, d = _truth_log(tmp_path, [(t, {"Drone1": (0, 0, 0, t)}) for t in (0, 0.5, 1)])
     s = separation(log, m, d)
     assert not s["measured"] and s["unmeasured_pairs"] == ["Drone1-Drone2"]
 
 
 def test_skewed_airborne_pairs_are_gaps_not_measurements(tmp_path):
-    from evaluation.swarm_metrics import separation
+    from atal.evaluation.swarm_metrics import separation
     ev = [(0, {"Drone1": (0, 0, 0, 0), "Drone2": (0, 3, 0, 0)})]
     ev += [(t, {"Drone1": (50, 50, 30, t), "Drone2": (50, 60, 35, t - 1)}) for t in (3, 6)]
     log, m, d = _truth_log(tmp_path, ev)
@@ -536,7 +542,7 @@ def test_skewed_airborne_pairs_are_gaps_not_measurements(tmp_path):
 
 
 def test_a_long_missing_pair_interval_in_a_well_sampled_run_is_unmeasured(tmp_path):
-    from evaluation.swarm_metrics import separation
+    from atal.evaluation.swarm_metrics import separation
     both = lambda t: {"Drone1": (50, 50, 30, t), "Drone2": (50, 60, 35, t)}
     ev = [(0, {"Drone1": (0, 0, 0, 0), "Drone2": (0, 3, 0, 0)})]
     ev += [(t / 2, both(t / 2)) for t in range(1, 10)]                     # to 4.5 s
@@ -552,7 +558,7 @@ def test_a_long_missing_pair_interval_in_a_well_sampled_run_is_unmeasured(tmp_pa
 
 
 def test_missing_timestamps_and_stale_poses_are_not_measurements(tmp_path):
-    from evaluation.swarm_metrics import separation
+    from atal.evaluation.swarm_metrics import separation
     ev = [(0, {"Drone1": (0, 0, 0, 0), "Drone2": (0, 3, 0, 0)})]
     ev += [(None, {"Drone1": (50, 50, 30, 1), "Drone2": (50, 60, 35, 1)})]   # event: no time
     ev += [(t, {"Drone1": (50, 50, 30, t), "Drone2": (50, 60, 35, None)}) for t in (1, 2, 3)]

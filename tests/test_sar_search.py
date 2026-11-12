@@ -3,10 +3,10 @@ import math
 
 import pytest
 
-from models.sar import load_mission
-from search.boustrophedon import sweep_path
-from search.detection import segment_box_hit
-from search.voronoi import coverage_order, voronoi_partition
+from atal.core.sar import load_mission
+from atal.search.sweep_lanes import sweep_path
+from atal.search.voronoi import coverage_order, voronoi_partition
+from atal.simulation.victim_sensor import segment_box_hit
 
 M = load_mission("missions/sar/mission.yaml")
 G = M.grid

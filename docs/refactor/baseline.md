@@ -2,7 +2,10 @@
 
 The repository is being reorganised so the team can read, navigate and explain it. This
 file records the starting point, so every later step can be checked against it. The reading
-guide for the code as it stands is [../walkthrough.md](../walkthrough.md).
+guide for the code is [../walkthrough.md](../walkthrough.md).
+
+File paths in this document are the ones at the baseline commit. Since step 3 the files have
+new places: see [moved.md](moved.md).
 
 ## Starting point
 
@@ -29,7 +32,9 @@ timing-sensitive tests fail at random.
 
 ## Supported commands
 
-These must keep working, with the same defaults, through every step.
+These must keep working, with the same defaults, through every step. Step 3 changed how
+some of them are spelled (the two run commands and pytest are unchanged): see
+[moved.md](moved.md).
 
 | Command | Needs the simulator | Purpose |
 |---|---|---|
@@ -139,3 +144,4 @@ its own change.
 | A live 20-run team baseline and a live one-drone run have not been done. | zeus-g | Open since Phase 3. |
 | Three root scripts are named `test_*.py` but are live demos. `pytest.ini` works around it with `testpaths = tests`. | repo root | Resolved by the restructuring (they move to `legacy/`). |
 | The test suite is timing-sensitive above two workers. | `tests/` | Open. |
+| Some team tests fail at random even with two workers, because they assert on which drone swept which sector. `test_full_sweep_shares_the_grid_without_duplicates` failed in 7 of 40 single executions at the baseline commit, and in 7 of 40 after step 3. `test_without_cooperation_drones_sweep_the_same_sectors` and `test_swarm_lands_one_drone_at_a_time` also failed at the baseline. | `tests/test_sar_swarm.py`, `tests/test_phase3_completion.py` | Measured 2026-11-12. Same cause as the row on team repeatability. Rerun a failed team test before treating it as a regression. |

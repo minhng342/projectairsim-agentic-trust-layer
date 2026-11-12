@@ -5,11 +5,17 @@ import json
 
 import pytest
 
-from channel.action_port import ActionPort
-from channel.observation_feed import ObservationFeed
-from models.action import (ActionFeedback, ActionType, CommandResult, CommandStatus,
-                           FeedbackStage, ProposedAction)
-from models.observation import GateDecision, GateOutcome
+from atal.channels.action_port import ActionPort
+from atal.channels.observation_feed import ObservationFeed
+from atal.core.action import (
+    ActionFeedback,
+    ActionType,
+    CommandResult,
+    CommandStatus,
+    FeedbackStage,
+    ProposedAction,
+)
+from atal.core.observation import GateDecision, GateOutcome
 from tests.channel_fakes import ListRecorder, SnapAdapter, snapshot
 
 
@@ -413,8 +419,8 @@ def test_invalid_dict_action_is_recorded_as_given_and_marked_invalid():
 
 
 def test_summarizer_links_a_dict_action_through_to_its_result(tmp_path):
-    from evaluation.recorder import EvaluationRecorder
-    from evaluation.summarize_run import summarize
+    from atal.evaluation.recorder import EvaluationRecorder
+    from atal.evaluation.summarize_run import summarize
     adapter, clock = SnapAdapter(), Clock()
     rec = EvaluationRecorder(run_config={}, run_dir=tmp_path)
     feed = ObservationFeed(adapter, "Drone1", recorder=rec, clock=clock)

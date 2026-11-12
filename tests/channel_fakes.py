@@ -2,8 +2,13 @@
 import math
 from datetime import datetime, timezone
 
-from models.telemetry import (GroundState, Quaternion, TelemetrySnapshot, ValidationStatus,
-                              Vector3)
+from atal.core.telemetry import (
+    GroundState,
+    Quaternion,
+    TelemetrySnapshot,
+    ValidationStatus,
+    Vector3,
+)
 
 
 class ListRecorder:
