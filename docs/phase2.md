@@ -26,11 +26,11 @@ python run_sar_mission.py --planner llm --model scripted --offline \
 
 | Piece | File | Notes |
 |---|---|---|
-| LLM planner | `atal/agents/llm_sector_planner.py` (`LLMSectorPlanner`) | Pydantic AI, any model (`atal/agents/llm/model_config.py`); overrides one method of `FixedSectorPlanner` |
+| LLM planner | `atal/agents/llm_chooser.py` (`LLMChooser`, logged as `LLMSectorPlanner`) | Pydantic AI, any model (`atal/agents/llm/model_config.py`); replaces only the chooser of the Phase 1 search loop |
 | Invariant guard | `atal/trust_layer/invariant_guard.py` (`SarGuard`, `SarInvariantGate`) | the agent's output validator AND the port's gate slot |
 | Scripted model | `atal/agents/llm/scripted_model.py` | Pydantic AI `FunctionModel`: offline runs and tests |
 | TestModel | `--model test` | Pydantic AI `TestModel`: schema-shaped nonsense, so every decision is refused and falls back (plumbing test) |
-| Planner loop | `atal/agents/sector_planner.py` | the loop now asks `choose()` for each next action; Phase 1's `choose()` is "next in the fixed order" |
+| Planner loop | `atal/agents/search_loop.py` | the loop asks its chooser's `choose()` for each next action; Phase 1's `FixedChooser.choose()` is "next in the fixed order" |
 | Runner | `run_sar_mission.py` | `--planner llm`, `--model`, `--thinking`, `--decision-timeout` |
 | Metrics | `atal/evaluation/sar_metrics.py` | decisions, fallbacks, guard and gate refusals, decision latency |
 | Tracing | `atal/observability.py` | Logfire spans per run and per decision when `LOGFIRE_TOKEN` is set |

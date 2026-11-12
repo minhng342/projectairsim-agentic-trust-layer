@@ -6,7 +6,7 @@ import json
 import pytest
 import yaml
 
-from atal.agents.swarm import PeerMessenger, SwarmCoordinator, SwarmReceiver
+from atal.agents.team_coordinator import PeerMessenger, SwarmCoordinator, SwarmReceiver
 from atal.channels.radio import RemoteIdBus, RemoteIdReceiver
 from atal.core.belief import LocalBelief, PeerClaim
 from atal.core.peer_messages import (
@@ -286,6 +286,25 @@ def test_llm_swarm_with_the_scripted_model(tmp_path):
     log = read_run(batch / "run_00.jsonl")
     prompt = log.of_kind("llm_decision")[0]["prompt"]
     assert '"team"' in prompt and "assigned_to_you" in prompt
+
+
+@pytest.mark.parametrize("planner,name", [("fixed", "SwarmFixedPlanner"),
+                                          ("llm", "SwarmLLMPlanner")])
+def test_both_choosers_search_with_the_team_role(tmp_path, planner, name):
+    """The search loop with either chooser and the team role: every drone claims sectors
+    before it sweeps them and clears them after, on the radio."""
+    extra = ["--planner", planner] + (["--model", "scripted"] if planner == "llm" else [])
+    code, batch, summary = run(tmp_path, "--full-sweep", *extra)
+    m = summary["runs"][0]
+    log = read_run(batch / "run_00.jsonl")
+    assert log.events[0]["config"]["pipeline"]["planner"] == name
+    sent = {}
+    for e in log.of_kind("peer_message_sent"):
+        sent.setdefault(e["vehicle_id"], set()).add(e["msg"]["msg_type"])
+    assert set(sent) == set(m["drones"]), sent
+    assert all({"sector_claimed", "sector_cleared"} <= kinds for kinds in sent.values()), sent
+    if planner == "llm":
+        assert all(d["llm_decisions"] > 0 for d in m["drones"].values())
 
 
 def test_one_drone_through_the_swarm_runner(tmp_path):

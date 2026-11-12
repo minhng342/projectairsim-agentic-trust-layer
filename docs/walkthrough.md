@@ -1,8 +1,11 @@
 # Walkthrough: how a search and rescue run works
 
 This is the reading guide for the code **as it is today**: the files are in their new
-folders (restructuring step 3) and the run is split into small files in `atal/runtime/`
-(step 4). The planners, guard, channels and flight code are unchanged from commit `5a06556`. It answers eight questions with the real file and function names, then follows
+folders (restructuring step 3), the run is split into small files in `atal/runtime/`
+(step 4), and every drone's planner is one search loop with a chooser and a role plugged in
+(step 5). The guard, channels and flight code are unchanged from commit `5a06556`. "The
+planner" below means a drone's `SearchLoop` with its parts. It answers eight questions with
+the real file and function names, then follows
 one real decision through a recorded run. It is updated with every restructuring step, so it
 always describes the code in front of you. The folders are listed in the
 [README](../README.md#layout).
@@ -92,8 +95,8 @@ Only three callers change it:
 
 | Caller | Method | When |
 |---|---|---|
-| The planner (`atal/agents/sector_planner.py`) | `mark_started`, `mark_swept`, `mark_partial` | Before and after its own sweeps. These are marked `verified_by_self`. |
-| The coordinator (`atal/agents/swarm.py: SwarmCoordinator.on_message`) | `add_peer_claim`, `mark_peer_cleared` | When a peer message arrives. A cleared sector gets status `peer_cleared`, with the sender as source and `verified_by_self` false. |
+| The search loop (`atal/agents/search_loop.py: SearchLoop._step`, `_after_sweep`) | `mark_started`, `mark_swept`, `mark_partial` | Before and after its own sweeps. These are marked `verified_by_self`. |
+| The coordinator (`atal/agents/team_coordinator.py: SwarmCoordinator.on_message`) | `add_peer_claim`, `mark_peer_cleared` | When a peer message arrives. A cleared sector gets status `peer_cleared`, with the sender as source and `verified_by_self` false. |
 | The `detected()` callback set up in `atal/runtime/build_drone.py` | `add_detection` | When this drone's own sensor sees the victim. |
 
 The difference between "I swept it" and "a peer said it is clear" is kept in the memory and
@@ -106,25 +109,34 @@ Both return one of two typed actions defined in `atal/core/sar.py`:
 - `SweepSector(sector_id, reason)`
 - `ReturnHome(reason)`
 
-The choice is made in a method called `choose()`:
+The choice is made by the drone's chooser, in a method called `choose(remaining)`:
 
-- **Fixed:** `FixedSectorPlanner.choose()` in `atal/agents/sector_planner.py` returns the next
+- **Fixed:** `FixedChooser.choose()` in `atal/agents/fixed_chooser.py` returns the next
   sector in its coverage order that the guard allows.
-- **LLM:** `LLMSectorPlanner.choose()` in `atal/agents/llm_sector_planner.py` builds a prompt from
+- **LLM:** `LLMChooser.choose()` in `atal/agents/llm_chooser.py` builds a prompt from
   the drone's memory, runs a Pydantic AI agent whose output type is
   `[SweepSector, ReturnHome]`, and falls back to the fixed choice on a timeout or a model
   error.
 
-The loop that calls `choose()` is `FixedSectorPlanner.run()`. The LLM planner inherits that
-loop and only replaces `choose()`. In team runs, `SwarmPlannerMixin` (`atal/agents/swarm.py`)
-overrides eleven smaller hooks of the same loop, such as `_remaining()` and
-`_on_sector_swept()`. This inheritance is the main thing the restructuring will simplify.
+The loop that calls `choose()` is `SearchLoop` in `atal/agents/search_loop.py`. Every drone
+runs the same loop: `_start()` (plan, climb), then `_step()` repeated (stop?, what is left,
+choose, submit, `_after_sweep()`), then `_finish()` (fly home). Two parts plug into it:
+
+- the **chooser** (fixed or LLM): which of the remaining sectors comes next;
+- the **role**: which sectors are this drone's and who hears about it. `SoloRole` (in
+  `search_loop.py`) is the whole grid with no radio. `TeamRole`
+  (`atal/agents/team_coordinator.py`) asks the coordinator for a fresh share of the open
+  sectors at every step, claims a sector before sweeping it and clears it after.
+
+Any chooser works with any role, so the four planners of the logs (`FixedSectorPlanner`,
+`LLMSectorPlanner`, `SwarmFixedPlanner`, `SwarmLLMPlanner`) are four combinations of the
+same three files.
 
 ## 5. Where can code refuse a proposal?
 
 Three places, in the order a proposal meets them:
 
-1. **The LLM's output validator** (`guard_check` inside `LLMSectorPlanner._build_agent`).
+1. **The LLM's output validator** (`guard_check` inside `LLMChooser._build_agent`).
    It calls `SarGuard.check()`. A refused choice goes back to the model with the rule's
    code so it can choose again.
 2. **The action port** (`atal/channels/action_port.py: ActionPort.submit`). It refuses a proposal
@@ -165,7 +177,7 @@ that into the limited `ActionFeedback` the planner sees
 
 ## 7. What happens when a peer claims a sector is clear?
 
-1. The sender's `PeerMessenger.send()` (`atal/agents/swarm.py`) puts a `SectorCleared` message
+1. The sender's `PeerMessenger.send()` (`atal/agents/team_coordinator.py`) puts a `SectorCleared` message
    (`atal/core/peer_messages.py`) on the bus.
 2. `RemoteIdBus.transmit()` (`atal/channels/radio.py`) delivers it to every other drone in
    radio range.
@@ -213,7 +225,7 @@ seconds.
 | 146.6 | `sar_allocation` | Drone2 recomputes who should sweep what from its own memory and the peers it hears. | `SwarmCoordinator.my_sectors` |
 | 147.6 | `belief_update` | Drone2's memory marks E1 `in_progress`, verified by self. | `LocalBelief.mark_started` |
 | 147.7 | `peer_message_sent` | Drone2 tells the team it is taking E1 (`sector_claimed`). | `SwarmCoordinator.claim` |
-| 147.9 | `proposal` | The planner submits `sweep_sector E1`, naming the observation it decided from. | `FixedSectorPlanner._submit` |
+| 147.9 | `proposal` | The planner submits `sweep_sector E1`, naming the observation it decided from. | `SearchLoop.submit` |
 | 147.9 | `gate_decision` | The gate `sar_invariants` approves. | `SarInvariantGate.decide` |
 | 147.9 to 165.1 | `sector_started`, `follower_*` | The sector executor flies the lanes. | `SectorExecutor.execute` |
 | 165.1 | `command_result` | The executor reports `sector_swept`. | `ActionPort._gate_and_execute` |
