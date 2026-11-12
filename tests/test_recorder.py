@@ -7,7 +7,8 @@ from enum import Enum
 import pytest
 
 from atal.core.action import ActionType, CommandResult, CommandStatus
-from atal.evaluation.recorder import EvaluationRecorder, read_run
+from atal.evaluation.run_log import read_run
+from atal.runtime.recorder import EvaluationRecorder
 
 
 def rec(tmp_path, **kw):
@@ -138,8 +139,8 @@ def test_real_executor_events_reach_the_file(tmp_path):
 def test_summary_survives_events_whose_result_field_is_plain_text(tmp_path):
     """Live 2026-10-27: the executor's final_approach event has result="settled" (a string);
     the summarizer crashed treating every 'result' as a nested record."""
-    from atal.evaluation.recorder import EvaluationRecorder
     from atal.evaluation.summarize_run import summarize
+    from atal.runtime.recorder import EvaluationRecorder
     rec = EvaluationRecorder(run_config={}, run_dir=tmp_path)
     rec.record("proposal", vehicle_id="Drone1", request_id="r1", observation_id="o1",
                action={"action_type": "move_to_position"})

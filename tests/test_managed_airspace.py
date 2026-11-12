@@ -7,7 +7,7 @@ particular outcome. The manager is trusted flight-safety infrastructure and runs
 way in every comparison condition."""
 import pytest
 
-from atal.evaluation.recorder import read_run
+from atal.evaluation.run_log import read_run
 from tests.test_sar_swarm import run
 
 TOWER = "tower:12,28,12,28,20"        # 16 m square in the middle, 20 m tall: above the 10 m

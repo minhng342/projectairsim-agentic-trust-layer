@@ -34,11 +34,11 @@ from dataclasses import asdict
 from atal.channels.action_port import ActionPort
 from atal.channels.observation_feed import ObservationFeed
 from atal.core.telemetry import GroundState, ValidationStatus
-from atal.evaluation.recorder import EvaluationRecorder
 from atal.evaluation.summarize_run import summarize
 from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
 from atal.flight.shutdown import safe_shutdown
 from atal.observability import configure_observability
+from atal.runtime.recorder import EvaluationRecorder
 from atal.simulation.airsim import ProjectAirSimAdapter
 from atal.trust_layer.action_gate import BypassGate
 from atal.trust_layer.assessor import NoTrustAssessor

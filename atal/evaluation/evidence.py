@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
 
-from atal.evaluation.recorder import REPO_ROOT
+from atal.core.paths import REPO_ROOT
 
 MANIFEST = "manifest.json"
 # arguments that do not change what is flown (output location only)

@@ -28,7 +28,7 @@ Search and rescue metrics for one run, from its run log (evaluation side, ground
 import math
 
 from atal.core.sar import Mission
-from atal.evaluation.recorder import RunLog
+from atal.evaluation.run_log import RunLog
 
 
 def _tracks(log: RunLog) -> dict[str, list[tuple[float, float, float, float]]]:

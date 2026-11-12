@@ -209,7 +209,7 @@ accepted, it ends this drone's search.
   event, waits for every background task, and records any that failed as
   `background_error`.
 - **The record.** The outermost `finally` calls `recorder.close(outcome)`
-  (`atal/evaluation/recorder.py`), so the run log is complete even after an error.
+  (`atal/runtime/recorder.py`), so the run log is complete even after an error.
 - **Watchdogs** that can end a run early: `watch_mission_time` (mission time limit),
   `sample_truth` (geofence breach or impact), `watch_sim_clock` (live simulator froze), all in
   `atal/runtime/watchers.py`.

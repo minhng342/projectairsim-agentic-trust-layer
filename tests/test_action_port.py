@@ -419,8 +419,8 @@ def test_invalid_dict_action_is_recorded_as_given_and_marked_invalid():
 
 
 def test_summarizer_links_a_dict_action_through_to_its_result(tmp_path):
-    from atal.evaluation.recorder import EvaluationRecorder
     from atal.evaluation.summarize_run import summarize
+    from atal.runtime.recorder import EvaluationRecorder
     adapter, clock = SnapAdapter(), Clock()
     rec = EvaluationRecorder(run_config={}, run_dir=tmp_path)
     feed = ObservationFeed(adapter, "Drone1", recorder=rec, clock=clock)

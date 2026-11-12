@@ -33,9 +33,9 @@ from dataclasses import asdict, replace
 
 from atal.core.action import CommandStatus
 from atal.core.telemetry import GroundState, ValidationStatus
-from atal.evaluation.recorder import EvaluationRecorder
 from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
 from atal.flight.shutdown import safe_shutdown
+from atal.runtime.recorder import EvaluationRecorder
 from atal.simulation.airsim import ProjectAirSimAdapter
 
 VEHICLE = "Drone1"

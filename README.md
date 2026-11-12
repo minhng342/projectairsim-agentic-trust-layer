@@ -278,7 +278,7 @@ atal/
     remote_id.py              RemoteIdReport
     peer_messages.py          SectorClaimed / SectorCleared / VictimDetected
   evaluation/                 run evidence: written during a run, read after it
-    recorder.py               JSONL run log; read_run()
+    run_log.py                read_run(): load a run log (format: core/events.py; writer: runtime/recorder.py)
     sar_metrics.py            time to find, coverage, sectors swept, geofence
     swarm_metrics.py          team metrics: duplicates, message delivery, per-drone work
     compare.py                paired comparison of batches

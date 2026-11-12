@@ -26,10 +26,10 @@ import time
 from dataclasses import asdict
 
 from atal.core.telemetry import GroundState, ValidationStatus
-from atal.evaluation.recorder import EvaluationRecorder
 from atal.flight.executor import ProjectAirSimExecutor
 from atal.flight.path_follower import FollowerConfig, FollowMode, PathFollower
 from atal.flight.shutdown import safe_shutdown
+from atal.runtime.recorder import EvaluationRecorder
 from atal.simulation.airsim import ProjectAirSimAdapter
 
 VEHICLE = "Drone1"

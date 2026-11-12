@@ -27,10 +27,10 @@ import time
 
 from atal.channels.action_port import ActionPort
 from atal.channels.observation_feed import ObservationFeed
-from atal.evaluation.recorder import EvaluationRecorder
 from atal.evaluation.summarize_run import summarize
 from atal.flight.executor import ProjectAirSimExecutor
 from atal.observability import configure_observability
+from atal.runtime.recorder import EvaluationRecorder
 from legacy.llm_pilot.llm_pilot import FlightRules, PilotLimits
 from legacy.llm_pilot.pilot_setup import HARNESSES, prepare_pilot
 from tests.test_executor import FAST, MultiAdapter

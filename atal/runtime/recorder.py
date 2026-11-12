@@ -1,5 +1,5 @@
 """
-Evaluation recorder: the experiment's record of truth. One JSONL file per run.
+Run recorder: the experiment's record of truth. One JSONL file per run.
 
     rec = EvaluationRecorder(run_config={...}, sim_clock=lambda: ...)
     rec.record("proposal", vehicle_id="Drone1", request_id=..., ...)
@@ -15,49 +15,26 @@ Each line is one event:
 Written DURING the run: every line is flushed as it is written, so a crash,
 Ctrl+C or power-off keeps everything up to that point. The first line is
 run_start (run id, config, thresholds, git commit + dirty files, versions);
-a complete run ends with run_end. read_run() reports a run without run_end, or
-with a cut-off last line, as incomplete instead of failing to load it.
+a complete run ends with run_end. The line format is atal/core/events.py; the
+reader is atal/evaluation/run_log.py.
 
-The recorder is evaluation side: it may hold ground truth, clean payloads and
+The recorder is on the evaluation side of the truth line: it may hold ground truth, clean payloads and
 attack details that agents, the trust assessor and the gate must never see.
 Recording problems never stop a flight: a failed write is counted, not raised.
 """
 import json
-import math
 import os
 import platform
 import subprocess
 import sys
 import threading
 import time
-from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
-from enum import Enum
 from pathlib import Path
 from uuid import uuid4
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _clean(v):
-    """JSON-safe: pydantic models, dataclasses, enums, datetimes, tuples; NaN/inf -> None."""
-    if hasattr(v, "model_dump"):
-        v = v.model_dump(mode="json")
-    elif is_dataclass(v) and not isinstance(v, type):
-        v = asdict(v)
-    if isinstance(v, dict):
-        return {str(k): _clean(x) for k, x in v.items()}
-    if isinstance(v, (list, tuple, set, frozenset)):
-        return [_clean(x) for x in v]
-    if isinstance(v, float):
-        return v if math.isfinite(v) else None
-    if isinstance(v, Enum):
-        return _clean(v.value)
-    if isinstance(v, datetime):
-        return v.isoformat()
-    if v is None or isinstance(v, (str, int, bool)):
-        return v
-    return repr(v)
+from atal.core.events import RUN_END, RUN_START, json_safe
+from atal.core.paths import REPO_ROOT
 
 
 def git_info(root: Path = REPO_ROOT) -> dict:
@@ -103,7 +80,7 @@ class EvaluationRecorder:
         self.closed = False
         self.write_failures = 0
         self.counts: dict[str, int] = {}
-        self.record("run_start", config=run_config or {},
+        self.record(RUN_START, config=run_config or {},
                     git=git_info() if include_git else None, versions=versions(),
                     argv=sys.argv, pid=os.getpid())
 
@@ -128,7 +105,7 @@ class EvaluationRecorder:
                      "sim_time_ns": sim_time_ns}
             event.update(fields)
             try:
-                self._file.write(json.dumps(_clean(event), allow_nan=False) + "\n")
+                self._file.write(json.dumps(json_safe(event), allow_nan=False) + "\n")
                 self._file.flush()
             except Exception:
                 self.write_failures += 1
@@ -149,7 +126,7 @@ class EvaluationRecorder:
     def close(self, outcome: str, **fields) -> None:
         if self.closed:
             return
-        self.record("run_end", outcome=outcome, event_counts=dict(self.counts),
+        self.record(RUN_END, outcome=outcome, event_counts=dict(self.counts),
                     write_failures=self.write_failures, **fields)
         with self._lock:
             self.closed = True
@@ -170,39 +147,3 @@ class EvaluationRecorder:
             else:
                 self.close("aborted", error=f"{exc_type.__name__}: {exc}")
         return False
-
-
-@dataclass
-class RunLog:
-    path: Path
-    events: list[dict]
-    complete: bool            # ends with run_end
-    truncated_tail: bool      # last line was cut off mid-write
-    bad_lines: int
-
-    @property
-    def outcome(self) -> str | None:
-        return self.events[-1].get("outcome") if self.complete else None
-
-    def of_kind(self, kind: str) -> list[dict]:
-        return [e for e in self.events if e.get("kind") == kind]
-
-
-def read_run(path) -> RunLog:
-    """Load a run log, tolerating an incomplete run (crash, Ctrl+C, cut-off last line)."""
-    path = Path(path)
-    events, bad, truncated = [], 0, False
-    lines = path.read_text(encoding="utf-8").split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    for i, line in enumerate(lines):
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            if i == len(lines) - 1:
-                truncated = True
-            else:
-                bad += 1
-    complete = bool(events) and events[-1].get("kind") == "run_end"
-    return RunLog(path=path, events=events, complete=complete, truncated_tail=truncated,
-                  bad_lines=bad)

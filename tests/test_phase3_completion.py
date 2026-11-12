@@ -13,7 +13,7 @@ from atal.core.sar import Mission
 from atal.evaluation.archive import main as archive_main
 from atal.evaluation.compare import bootstrap_ci, load_batch, paired_comparison, table
 from atal.evaluation.evidence import MANIFEST, verify, write_manifest
-from atal.evaluation.recorder import read_run
+from atal.evaluation.run_log import read_run
 from atal.flight.executor import ProjectAirSimExecutor
 from atal.flight.path_follower import FollowerConfig
 from atal.flight.sector_sweep import SectorExecutor

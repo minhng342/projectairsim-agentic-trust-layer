@@ -8,7 +8,7 @@ from atal.agents.fixed_chooser import FixedChooser
 from atal.core.action import ActionType, CommandResult, CommandStatus
 from atal.core.belief import Detection
 from atal.core.sar import Mission
-from atal.evaluation.recorder import read_run
+from atal.evaluation.run_log import read_run
 from atal.evaluation.sar_metrics import coverage_raster
 from atal.flight.sector_sweep import SectorExecutor
 from atal.runtime.acceptance import single_run_failures as run_failures

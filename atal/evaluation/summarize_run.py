@@ -11,7 +11,7 @@ where the drone really ended up (ground truth, evaluation side only).
 """
 import sys
 
-from atal.evaluation.recorder import read_run
+from atal.evaluation.run_log import read_run
 
 
 def summarize(path) -> str:

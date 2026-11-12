@@ -10,7 +10,7 @@ from atal.core.action import ActionType, ProposedAction
 from atal.core.belief import Detection, LocalBelief
 from atal.core.observation import GateOutcome
 from atal.core.sar import DroneState, Mission, ReturnHome, SweepSector, load_mission
-from atal.evaluation.recorder import read_run
+from atal.evaluation.run_log import read_run
 from atal.observability import span
 from atal.trust_layer.invariant_guard import SarGuard, SarInvariantGate
 from tests.test_sar_pipeline import MISSION, run

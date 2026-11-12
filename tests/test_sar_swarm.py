@@ -12,13 +12,11 @@ from atal.channels.radio import RemoteIdBus, RemoteIdReceiver
 from atal.core.belief import LocalBelief, PeerClaim
 from atal.core.peer_messages import (
     PEER_MESSAGE,
-    SectorClaimed,
     SectorCleared,
-    VictimDetected,
     is_peer_message,
 )
 from atal.core.sar import Mission, Swarm
-from atal.evaluation.recorder import read_run
+from atal.evaluation.run_log import read_run
 from atal.runtime.run_team import main, parse_args
 from atal.search.allocation import allocate
 from atal.trust_layer.peer_rules import PeerClaimRules
@@ -482,7 +480,7 @@ def test_a_peer_processing_error_fails_the_run(tmp_path, monkeypatch):
 
 def _sep_log(tmp_path, pairs):
     """A run log with truth samples: pairs = [(t_s, {vid: (north, east, alt)})]."""
-    from atal.evaluation.recorder import EvaluationRecorder
+    from atal.runtime.recorder import EvaluationRecorder
     m = mission()
     rec = EvaluationRecorder(path=tmp_path / "r.jsonl", run_config={})
     for t, poses in pairs:
@@ -532,7 +530,7 @@ def test_acceptance_fails_on_separation_errors_and_identity_mismatches():
 # ------------------------------------------------------------ follow-up review (04be8d7)
 def _truth_log(tmp_path, events):
     """events = [(t_s or None, {vid: (north, east, alt, pose_t_s or None)})]."""
-    from atal.evaluation.recorder import EvaluationRecorder
+    from atal.runtime.recorder import EvaluationRecorder
     rec = EvaluationRecorder(path=tmp_path / "t.jsonl", run_config={})
     for t, poses in events:
         rec.record("truth", sim_time_ns=None if t is None else int(t * 1e9), poses={
