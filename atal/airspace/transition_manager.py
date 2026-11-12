@@ -18,6 +18,13 @@ never changes a drone's beliefs, and gives the agents no positions. The same man
 in every comparison condition, so its contribution to separation is the same everywhere
 and is not evidence for the agents' trust layer.
 
+Traffic pauses (policy section 8a): a queued request blocked by a drone that can move
+horizontally inside its span orders that drone to pause (on_pause); a stop-line order is
+the same kind of pause. Each pause has an owner, the reservation that caused it; a drone
+resumes (on_resume) only when no owner is left. A paused drone stops blocking only once it
+is confirmed stationary and at least d_h from the column. An owner that becomes a keep-out
+keeps its pauses; one replaced by its follow-up hands them over in the same step.
+
 Everything here runs in one event loop and nothing awaits, so a check and the state change
 it allows (a grant, the start of a move) happen in one step.
 
@@ -143,7 +150,7 @@ class _Track:
 class TransitionManager:
     def __init__(self, roster, levels: dict[str, list[float]], bounds: Bounds | None = None,
                  ceiling_m: float | None = None, ground_column_m: float | None = None,
-                 recorder=None):
+                 recorder=None, on_pause=None, on_resume=None):
         self.bounds = bounds = bounds or Bounds()
         self.levels = {vid: [float(a) for a in alts] for vid, alts in levels.items()}
         self.ceiling_m = ceiling_m
@@ -160,6 +167,12 @@ class TransitionManager:
         self.events: list[dict] = []
         self.stop_orders: list[StopOrder] = []
         self._recorder = recorder
+        # traffic pauses: vehicle -> the reservations it is paused for
+        self.pauses: dict[str, set[str]] = {}
+        self._on_pause, self._on_resume = on_pause, on_resume
+        self._paused_since: dict[str, float] = {}
+        self.pause_count: dict[str, int] = {}
+        self.paused_s: dict[str, float] = {}
 
     # ------------------------------------------------------------ surveillance
     def update(self, now_s: float, samples: dict[str, Sample]) -> list[StopOrder]:
@@ -213,6 +226,12 @@ class TransitionManager:
         if stationary:
             return abs(alt - tr.still_alt) <= b.e_z
         return any(abs(alt - lv) <= 1e-6 for lv in self.levels.get(vid, []))
+
+    def stationary(self, vid: str) -> bool:
+        """Confirmed stationary wherever it is: still for confirm_hold_s, fresh."""
+        tr = self.tracks.get(vid)
+        return (self.fresh(vid) and tr.still_since is not None
+                and self.now - tr.still_since >= self.bounds.confirm_hold_s - 1e-9)
 
     def grounded_at(self, vid: str, xy) -> bool:
         tr = self.tracks.get(vid)
@@ -307,6 +326,7 @@ class TransitionManager:
         r.valid_until = self.now + self.bounds.validity_s(abs(r.to_m - r.from_m))
         if r.replaces:
             old = self.reservations[r.replaces]
+            self._hand_over(old.reservation_id, r.reservation_id)
             self._end(old, State.SUPERSEDED, f"taken over by {r.reservation_id}")
         self._event("transition_started", **self._fields(r))
         return "started"
@@ -370,6 +390,14 @@ class TransitionManager:
                 continue
             s = tr.sample
             d = math.dist(s.xy, r.center_xy)
+            if self.pauses.get(vid) and not s.grounded:
+                # paused: blocks until confirmed stationary, then like a holding drone
+                if r.contains(s.alt_m):
+                    if not self.stationary(vid):
+                        out.append(f"pausing:{vid}")
+                    elif d < b.d_h:
+                        out.append(f"holding:{vid}")
+                continue
             if s.grounded or tr.phase == Phase.GROUNDED:
                 if r.contains(s.alt_m) and d <= self.ground_column_m:
                     out.append(f"ground:{vid}")                             # its pad column
@@ -399,6 +427,7 @@ class TransitionManager:
             ahead = [w for w, w_why in waiting if w.overlaps(*r.span)
                      and math.dist(w.center_xy, r.center_xy) < self.bounds.d_h
                      and f"holding:{r.vehicle_id}" not in w_why]
+            self._pause_inside(r)
             why = self.blockers(r)
             if not why and not ahead:
                 r.state, r.granted_at = State.GRANTED, self.now
@@ -476,6 +505,69 @@ class TransitionManager:
     def _end(self, r: Reservation, state: State, why: str) -> None:
         r.state, r.reason, r.ended_at = state, why, self.now
         self._event(f"transition_{state.value}", **self._fields(r))
+        self._release_owner(r.reservation_id)
+
+    # ------------------------------------------------------------ traffic pauses
+    def _pause(self, vid: str, owner: str, why: str) -> None:
+        owners = self.pauses.setdefault(vid, set())
+        if owner in owners:
+            return
+        first = not owners
+        owners.add(owner)
+        self._event("traffic_pause", vehicle_id=vid, owner=owner, reason=why,
+                    owners=sorted(owners))
+        if first:
+            self._paused_since[vid] = self.now
+            self.pause_count[vid] = self.pause_count.get(vid, 0) + 1
+            if self._on_pause is not None:
+                self._on_pause(vid)
+
+    def _pause_inside(self, r: Reservation) -> None:
+        """Every drone that could move horizontally inside r's span and within its
+        exclusion radius (whether or not already paused for something else) is paused,
+        with r as an owner, so it stays stopped for as long as r needs it."""
+        radius = self.bounds.exclusion_radius(abs(r.to_m - r.from_m))
+        for vid in sorted(self.roster):
+            tr = self.tracks[vid]
+            s = tr.sample
+            if vid == r.vehicle_id or s is None or s.grounded:
+                continue
+            if (tr.phase in MOVERS or self.pauses.get(vid)) and r.contains(s.alt_m) \
+                    and math.dist(s.xy, r.center_xy) <= radius:
+                self._pause(vid, r.reservation_id, "rule 5")
+
+    def _release_owner(self, owner: str) -> None:
+        for vid, owners in list(self.pauses.items()):
+            if owner not in owners:
+                continue
+            owners.discard(owner)
+            if owners:
+                self._event("traffic_pause_owner_ended", vehicle_id=vid, owner=owner,
+                            owners=sorted(owners))
+                continue
+            del self.pauses[vid]
+            since = self._paused_since.pop(vid, self.now)
+            self.paused_s[vid] = round(self.paused_s.get(vid, 0.0) + self.now - since, 3)
+            self._event("traffic_resume", vehicle_id=vid, owner=owner,
+                        paused_s=round(self.now - since, 3))
+            if self._on_resume is not None:
+                self._on_resume(vid)
+
+    def _hand_over(self, old: str, new: str) -> None:
+        """A keep-out replaced by its follow-up: its pauses move over in one step."""
+        for owners in self.pauses.values():
+            if old in owners:
+                owners.add(new)
+
+    def paused(self, vid: str) -> bool:
+        return bool(self.pauses.get(vid))
+
+    def paused_time(self) -> dict[str, float]:
+        """Total paused sim time per drone, a pause still in progress counted up to now."""
+        out = dict(self.paused_s)
+        for vid, since in self._paused_since.items():
+            out[vid] = round(out.get(vid, 0.0) + (self.now - since), 3)
+        return out
 
     def _denied(self, vid, request_id, kind, center_xy, from_m, to_m, wait_until, why,
                 store=True) -> Reservation:
@@ -527,13 +619,14 @@ class TransitionManager:
                 if vid == r.vehicle_id or s is None or s.grounded or tr.phase not in MOVERS:
                     continue
                 d = math.dist(s.xy, r.center_xy)
-                if r.contains(s.alt_m) and d < b.r_stop:
+                if (r.contains(s.alt_m) and d < b.r_stop
+                        and r.reservation_id not in self.pauses.get(vid, ())):
                     o = StopOrder(vid, r.reservation_id, round(d, 2), self.now)
                     out.append(o)
                     self.stop_orders.append(o)
-                    tr.phase = Phase.HOLDING
                     self._event("stop_order", vehicle_id=vid, reservation_id=r.reservation_id,
                                 distance_m=o.distance_m)
+                    self._pause(vid, r.reservation_id, "stop-line")
         return out
 
     def leg_allowed(self, vid: str, from_xy, to_xy, alt_m: float) -> bool:
@@ -581,6 +674,8 @@ class TransitionManager:
                 "expired": count(State.EXPIRED), "cancelled": count(State.CANCELLED),
                 "keep_outs": count(State.KEEP_OUT) + count(State.SUPERSEDED),
                 "stop_orders": len(self.stop_orders),
+                "pauses": dict(self.pause_count),
+                "paused_s": self.paused_time(),
                 "wait_total_s": round(sum(waits), 2),
                 "wait_max_s": round(max(waits), 2) if waits else 0.0,
                 "flags": self.flags()}

@@ -252,7 +252,8 @@ def test_a_searching_drone_inside_the_span_blocks_within_the_exclusion_radius():
     phases(w.mgr, D0=Phase.REQUEST, D1=Phase.SEARCHING)
     w.step(1.4)
     r = w.mgr.request("D0", "a", Kind.CLIMB, (0, 0), 150, 180, wait_until=w.t + 60)
-    assert r.state == State.REQUESTED and r.reason == "mover:D1"     # 212 m < 243.5 m
+    assert r.state == State.REQUESTED and r.reason == "pausing:D1"   # 212 m < 243.5 m
+    assert w.mgr.paused("D1")                                        # so it is paused
     # a mover at a level outside the span does not block
     w2 = World({"D0": air(0, 0, 150), "D1": air(20, 0, 200, vh=5.0)},
                roster=["D0", "D1"])
@@ -404,7 +405,7 @@ def test_a_drone_crossing_toward_a_move_is_ordered_to_stop_at_r_stop():
             break
     assert orders and orders[0].vehicle_id == "D1"
     assert 21.5 - 2.0 <= orders[0].distance_m < 21.5          # stopped at the stop-line
-    assert m.tracks["D1"].phase == Phase.HOLDING
+    assert m.paused("D1") and m.pauses["D1"] == {r.reservation_id}   # a pause, owned by r
     assert not m.leg_allowed("D1", (60, 50), (60, 80), 160)    # passes 10 m from it
     assert m.leg_allowed("D1", (100, 50), (100, 80), 160)
     assert m.leg_allowed("D1", (60, 50), (60, 80), 200)        # outside the span
@@ -486,3 +487,158 @@ def test_the_summary_counts_requests_waits_and_outcomes():
     assert s["requests"] == 2 and s["denied"] == 1 and s["granted"] == 1
     assert s["wait_total_s"] == pytest.approx(r.granted_at - r.requested_at)
     assert s["wait_total_s"] > 0
+
+
+# ---------------------------------------------------------------- traffic pauses
+class Calls:
+    def __init__(self):
+        self.log = []
+
+    def pause(self, vid):
+        self.log.append(("pause", vid))
+
+    def resume(self, vid):
+        self.log.append(("resume", vid))
+
+
+def paused_world(positions, roster, bounds=None):
+    calls = Calls()
+    w = World(positions, roster=roster, on_pause=calls.pause, on_resume=calls.resume,
+              **({"bounds": bounds} if bounds else {}))
+    return w, calls
+
+
+def stop(w, vid):
+    w.pos[vid].update(vh=0.0)
+
+
+def test_a_searching_teammate_inside_the_span_is_paused_then_the_climb_is_granted():
+    w, calls = paused_world({"D0": air(50, 50, 150), "D1": air(120, 50, 160, vh=5.0)},
+                            ["D0", "D1"])
+    phases(w.mgr, D0=Phase.REQUEST, D1=Phase.SEARCHING)
+    w.step(1.4)
+    m = w.mgr
+    r = m.request("D0", "a", Kind.CLIMB, (50, 50), 150, 180, wait_until=w.t + 60)
+    assert r.state == State.REQUESTED and calls.log == [("pause", "D1")]
+    w.step(0.4)
+    assert r.reason == "pausing:D1"                  # still moving: not yet
+    stop(w, "D1")                                    # the executor has hovered
+    w.step(0.6)
+    assert r.state == State.REQUESTED                # stationary for less than 1 s
+    w.step(0.8)
+    assert r.state == State.GRANTED                  # stationary and 70 m >= d_h
+    m.start(r.reservation_id, "a", "D0")
+    w.move_to("D0", 180, 30)
+    w.step(3.4)
+    assert r.state == State.COMPLETED
+    assert calls.log == [("pause", "D1"), ("resume", "D1")]
+    s = m.summary()
+    assert s["pauses"] == {"D1": 1} and s["paused_s"]["D1"] > 30
+
+
+def test_a_teammate_that_stops_too_close_is_not_moved_and_the_request_runs_out():
+    w, calls = paused_world({"D0": air(50, 50, 150), "D1": air(56, 50, 160, vh=5.0)},
+                            ["D0", "D1"])
+    phases(w.mgr, D0=Phase.REQUEST, D1=Phase.SEARCHING)
+    w.step(1.4)
+    m = w.mgr
+    r = m.request("D0", "a", Kind.CLIMB, (50, 50), 150, 180, wait_until=w.t + 5)
+    stop(w, "D1")
+    w.step(2.0)
+    assert r.state == State.REQUESTED and r.reason == "holding:D1"   # 6 m < d_h 8 m
+    w.step(3.2)
+    assert r.state == State.EXPIRED
+    assert calls.log == [("pause", "D1"), ("resume", "D1")]          # released, not moved
+    assert w.pos["D1"]["x"] == 56
+
+
+def test_the_clearance_uses_the_configured_d_h():
+    b = Bounds(e_h=3.0)                                  # d_h = 5 + 2 x 3 = 11 m
+    w, _ = paused_world({"D0": air(50, 50, 150), "D1": air(60, 50, 160, vh=5.0)},
+                        ["D0", "D1"], bounds=b)
+    phases(w.mgr, D0=Phase.REQUEST, D1=Phase.SEARCHING)
+    w.step(1.4)
+    r = w.mgr.request("D0", "a", Kind.CLIMB, (50, 50), 150, 180, wait_until=w.t + 60)
+    stop(w, "D1")
+    w.step(2.0)
+    assert r.state == State.REQUESTED and r.reason == "holding:D1"   # 10 m < 11 m
+
+
+def test_a_drone_paused_for_two_reasons_resumes_only_when_both_end():
+    w, calls = paused_world({"D0": air(50, 50, 150), "D1": air(150, 150, 160),
+                             "D2": air(100, 60, 170, vh=5.0)}, TEAM)
+    phases(w.mgr, D0=Phase.REQUEST, D1=Phase.REQUEST, D2=Phase.SEARCHING)
+    w.step(1.4)
+    m = w.mgr
+    a = m.request("D0", "a", Kind.CLIMB, (50, 50), 150, 180, wait_until=w.t + 60)
+    b = m.request("D1", "b", Kind.CLIMB, (150, 150), 160, 190, wait_until=w.t + 60)
+    assert m.pauses["D2"] == {a.reservation_id, b.reservation_id}
+    stop(w, "D2")
+    w.step(1.4)
+    assert a.state == b.state == State.GRANTED
+    m.start(a.reservation_id, "a", "D0")
+    m.start(b.reservation_id, "b", "D1")
+    for k in range(1, 151):                     # D0 climbs in 15 s, D1 in 30 s
+        w.pos["D0"]["alt"] = 150 + 30 * min(1.0, k / 75)
+        w.pos["D1"]["alt"] = 160 + 30 * k / 150
+        w.step()
+        if k == 110:
+            assert a.state == State.COMPLETED and b.state == State.ACTIVE
+            assert m.paused("D2") and calls.log == [("pause", "D2")]   # still paused for b
+    w.step(3.4)
+    assert b.state == State.COMPLETED
+    assert calls.log == [("pause", "D2"), ("resume", "D2")]
+
+
+def test_a_cancelled_request_releases_its_pauses():
+    w, calls = paused_world({"D0": air(50, 50, 150), "D1": air(120, 50, 160, vh=5.0)},
+                            ["D0", "D1"])
+    phases(w.mgr, D0=Phase.REQUEST, D1=Phase.SEARCHING)
+    w.step(1.4)
+    r = w.mgr.request("D0", "a", Kind.CLIMB, (50, 50), 150, 180, wait_until=w.t + 60)
+    assert w.mgr.paused("D1")
+    assert w.mgr.cancel("a", "D0") == "cancelled"
+    assert not w.mgr.paused("D1") and calls.log[-1] == ("resume", "D1")
+    assert r.state == State.CANCELLED
+
+
+def test_a_move_that_becomes_stuck_keeps_its_pauses_and_hands_them_to_the_follow_up():
+    w, calls = paused_world({"D0": air(50, 50, 150), "D1": air(120, 50, 160, vh=5.0)},
+                            ["D0", "D1"])
+    phases(w.mgr, D0=Phase.REQUEST, D1=Phase.SEARCHING)
+    w.step(1.4)
+    m = w.mgr
+    r = m.request("D0", "a", Kind.CLIMB, (50, 50), 150, 180, wait_until=w.t + 60)
+    stop(w, "D1")
+    w.step(1.4)
+    m.start(r.reservation_id, "a", "D0")
+    w.move_to("D0", 163, 13)
+    m.report_stuck("D0", "blocked")
+    w.step(1.2)
+    assert r.state == State.KEEP_OUT and m.pauses["D1"] == {r.reservation_id}
+    f = m.request("D0", "b", Kind.CLIMB, (50, 50), 163, 180, wait_until=w.t + 60,
+                  from_stationary=True)
+    assert f.state == State.GRANTED
+    m.start(f.reservation_id, "b", "D0")
+    assert r.state == State.SUPERSEDED
+    assert m.pauses["D1"] == {f.reservation_id}          # handed over in the same step
+    assert calls.log == [("pause", "D1")]                 # never resumed in between
+    w.move_to("D0", 180, 17)
+    w.step(3.4)
+    assert f.state == State.COMPLETED and calls.log[-1] == ("resume", "D1")
+
+
+def test_a_keep_out_that_stays_keeps_its_pauses():
+    w, calls = paused_world({"D0": air(50, 50, 150), "D1": air(120, 50, 160, vh=5.0)},
+                            ["D0", "D1"])
+    phases(w.mgr, D0=Phase.REQUEST, D1=Phase.SEARCHING)
+    w.step(1.4)
+    m = w.mgr
+    r = m.request("D0", "a", Kind.CLIMB, (50, 50), 150, 180, wait_until=w.t + 60)
+    stop(w, "D1")
+    w.step(1.4)
+    m.start(r.reservation_id, "a", "D0")
+    w.move_to("D0", 163, 13)
+    w.step(60)                                            # overran: a keep-out, for good
+    assert r.state == State.KEEP_OUT and m.paused("D1")
+    assert calls.log == [("pause", "D1")]
