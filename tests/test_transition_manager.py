@@ -642,3 +642,31 @@ def test_a_keep_out_that_stays_keeps_its_pauses():
     w.step(60)                                            # overran: a keep-out, for good
     assert r.state == State.KEEP_OUT and m.paused("D1")
     assert calls.log == [("pause", "D1")]
+
+
+
+def test_a_drone_whose_move_just_completed_still_blocks_a_crossing_move():
+    """Found in a team run (4.39 m in cruise): D0's climb completed in the same update in
+    which D1's descent, 4 m away, was granted through D0's new altitude, while D0's phase
+    still said MOVING. A drone in the span within d_h blocks in any phase."""
+    w = World({"D0": air(0, 0, 180), "D1": air(4, 0, 190), "D2": air(300, 300, 170)})
+    phases(w.mgr, D0=Phase.MOVING, D1=Phase.HOLDING, D2=Phase.HOLDING)
+    w.step(2.0)
+    down = w.mgr.request("D1", "d", Kind.DESCENT, (4, 0), 190, 160, wait_until=w.t + 60)
+    w.step(1.0)
+    assert down.state == State.REQUESTED
+    assert "occupied:D0" in w.mgr.blockers(down)
+
+
+def test_a_completed_move_leaves_its_drone_holding():
+    w = World({"D0": air(0, 0, 150), "D1": air(300, 0, 160), "D2": air(300, 300, 170)})
+    phases(w.mgr, D0=Phase.HOLDING, D1=Phase.HOLDING, D2=Phase.HOLDING)
+    w.step(2.0)
+    up = w.mgr.request("D0", "c", Kind.CLIMB, (0, 0), 150, 180, wait_until=w.t + 60)
+    w.step(DT)
+    assert w.mgr.start(up.reservation_id, "c", "D0") == "started"
+    w.mgr.set_phase("D0", Phase.MOVING)
+    w.move_to("D0", 180, 30.0)
+    w.step(4.0)
+    assert up.state == State.COMPLETED
+    assert w.mgr.tracks["D0"].phase == Phase.HOLDING

@@ -210,7 +210,8 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
                                 sizes={v: len(c) for v, c in static.items()})
             # the trusted transition manager (managed airspace): every vertical move of
             # every drone is a reservation (atal/airspace/, atal/runtime/airspace.py)
-            airspace = TeamAirspace.build(mission, vids, recorder, timing)
+            airspace = TeamAirspace.build(mission, vids, recorder, timing,
+                                          pad_zone_s=rates.PAD_WAIT_S)
             shared = TeamParts(bus, pads, static, mission.swarm.staging or [], len(specs),
                                airspace=airspace)
 
@@ -263,6 +264,7 @@ async def _run_one(args, mission, scenario, run_index, out_dir: Path, timing: Ti
         d["recoveries"] = r["planner"].recoveries if r["planner"] else None
         d["blocked"] = r["planner"].blocked if r["planner"] else []
         d["landing_cleared"] = r.get("landing_cleared")
+        d["landing_times"] = r.get("landing_times")     # queue wait, descent, cleanup
         d["landing_not_cleared"] = bool(r["shutdown"] and r["shutdown"].landing_not_cleared)
         rec = getattr(team_parts.get(vid), "recovery", None) if team_parts else None
         d["recovery_outcomes"] = rec.summary() if rec is not None else None

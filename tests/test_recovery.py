@@ -295,3 +295,4 @@ def test_a_landing_onto_an_occupied_pad_is_never_cleared():
     assert run(w, body) is False
     assert any(k == "landing_not_cleared" for k, _ in recs)
     assert w.d["D1"]["alt"] == pytest.approx(160)
+

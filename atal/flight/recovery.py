@@ -88,6 +88,7 @@ class Recovery:
         self.episodes: list[Episode] = []
         self.outcome: str | None = None  # "lost" or "unresolved" once the drone gives up
         self.startup = None              # its startup reservation (set by the runner)
+        self.landing_wait: dict | None = None   # the landing request's queue wait
         self._ids = itertools.count(1)
 
     # ------------------------------------------------------------ where it flies
@@ -185,34 +186,72 @@ class Recovery:
     def returning(self) -> None:
         self.phase(Phase.RETURNING)
 
+    def home_blocked(self, why: str) -> None:
+        """The flight home at the transit level failed too: the drone drops out (LOST)
+        and the runner lands it where it is, under a landing reservation."""
+        if self.outcome is None:
+            self._lost(why)
+
+    def search_over(self, return_code: str | None) -> None:
+        """The search and its return flight are over. An episode still open (the drone
+        was up at a transit level when the search ended) gets its outcome here:
+        completed if it flew home at its transit level (home_reached, or held off the
+        pads by a pad_zone_timeout), otherwise lost (it lands where it is)."""
+        e = self.episode
+        if e is None or self.outcome is not None:
+            return
+        if return_code in ("home_reached", "pad_zone_timeout"):
+            self._close("completed", f"returned at its transit level ({return_code})")
+        else:
+            self._lost(f"search over at a transit level; return home: {return_code}")
+
     def home_reached(self) -> None:
         """Home over the pad at the transit level: the episode is complete."""
         if self.episode is not None:
             self._close("completed", "home at its transit level")
 
-    async def clear_landing(self, ground_m: float = 0.0) -> bool:
+    async def clear_landing(self, ground_m: float = 0.0, deadline_s: float | None = None,
+                            ) -> bool:
         """Landing sequence steps 3 to 5 (policy section 11): the drone is above its pad
         (or at its slot after a pad_zone_timeout) holding the zone, at its current level.
         Confirm holding there, request a landing reservation bound to this position and
         level, and do the atomic start. True: descend and land now. False: no
-        reservation in max_hold_s (the drone stays holding; never land, never disarm)."""
+        reservation by deadline_s (the drone stays holding; never land, never disarm).
+
+        deadline_s is the drone's cleanup deadline in sim time, fixed once by the caller
+        (atal/airspace/landing_queue.py); None means now + max_hold_s. Every request made
+        here waits until that same deadline, so retries never extend it. The queue wait
+        (request to grant) is recorded as landing_queue."""
         self.phase(Phase.HOLDING)
-        start_t = self._now()
-        while self._now() - start_t < self.max_hold_s:
+        deadline = self._now() + self.max_hold_s if deadline_s is None else deadline_s
+        self.landing_wait = None
+        while self._now() < deadline:
             if not await self._confirm_holding(self.level, stationary=False):
                 return False
-            r = await self._ask(Kind.LANDING, self.level, ground_m,
-                                self.max_hold_s - (self._now() - start_t), stationary=False)
+            r = await self._ask(Kind.LANDING, self.level, ground_m, until=deadline,
+                                stationary=False)
             if r.state == State.DENIED and r.reason == "not_holding":
                 await self._sleep(self.poll_s)
                 continue
+            self.landing_wait = {"requested_at": r.requested_at, "granted_at": r.granted_at,
+                                 "deadline": round(deadline, 2), "state": r.state.value,
+                                 "queue_wait_s": round((r.granted_at if r.granted_at
+                                                        is not None else self._now())
+                                                       - r.requested_at, 2)}
+            self._record("landing_queue", **self.landing_wait, reason=r.reason)
             if r.state != State.GRANTED:
                 self._record("landing_not_cleared", reason=r.reason or r.state.value)
                 return False
-            if self.mgr.start(r.reservation_id, r.request_id, self.vehicle_id) == "started":
-                self.phase(Phase.MOVING)
-                return True
-        self._record("landing_not_cleared", reason="max_hold_s")
+            while True:            # the atomic start, within the grant's start_by
+                answer = self.mgr.start(r.reservation_id, r.request_id, self.vehicle_id)
+                if answer == "started":
+                    self.phase(Phase.MOVING)
+                    return True
+                if answer != "not_holding":                  # lapsed or cancelled
+                    self._record("landing_not_cleared", reason=f"grant not started: {answer}")
+                    return False
+                await self._sleep(self.poll_s)
+        self._record("landing_not_cleared", reason="cleanup deadline passed")
         return False
 
     # ------------------------------------------------------------ one vertical move
@@ -247,7 +286,7 @@ class Recovery:
 
     async def _move(self, r, kind: Kind, from_m: float, to_m: float) -> str:
         self.phase(Phase.MOVING)
-        done = await self.flight.change_altitude(to_m)
+        done = await self._within_validity(r, self.flight.change_altitude(to_m))
         if done == "completed" and await self._settled(r):
             return "completed"
         # stopped partway (or did not settle): STUCK, a keep-out with no gap
@@ -276,7 +315,7 @@ class Recovery:
             if self.mgr.start(f.reservation_id, f.request_id, self.vehicle_id) != "started":
                 continue
             self.phase(Phase.MOVING)
-            again = await self.flight.change_altitude(retry_to)
+            again = await self._within_validity(f, self.flight.change_altitude(retry_to))
             if again == "completed" and await self._settled(f):
                 self.phase(Phase.HOLDING)
                 return "completed" if retry_to == to_m else "back_up"
@@ -285,19 +324,37 @@ class Recovery:
             await self.flight.hold()
         return "stuck"
 
-    async def _ask(self, kind, from_m, to_m, wait_s, stationary):
-        """Request and wait for the answer; the drone keeps holding meanwhile."""
+    async def _ask(self, kind, from_m, to_m, wait_s=None, stationary=False, until=None):
+        """Request and wait for the answer; the drone keeps holding meanwhile. The
+        request waits wait_s from now, or until the absolute sim time until."""
         tel = self.flight.telemetry()
         now = self._now()
         rid = f"{self.vehicle_id}-{kind.value}-{next(self._ids)}"
         self.phase(Phase.REQUEST if not stationary else Phase.STUCK)
         r = self.mgr.request(self.vehicle_id, rid, kind, (tel.x_m, tel.y_m), from_m, to_m,
-                             wait_until=now + wait_s, from_stationary=stationary)
+                             wait_until=until if until is not None else now + wait_s,
+                             from_stationary=stationary)
         while r.state == State.REQUESTED:
             await self._sleep(self.poll_s)
         if r.state == State.GRANTED and self._now() > r.start_by:
             self.mgr.cancel(rid, self.vehicle_id)        # a late grant is never used
         return r
+
+    async def _within_validity(self, r, move) -> str:
+        """Run a reserved move, but never past its validity time: once the manager turns
+        the reservation into a keep-out (or valid_until passes) the command is dropped
+        and the drone holds, so a move that cannot finish (a roof under the column, a
+        command that never returns) becomes STUCK instead of waiting on a host timeout."""
+        task = asyncio.ensure_future(move)
+        while not task.done():
+            if r.state == State.KEEP_OUT or (r.valid_until is not None
+                                             and self._now() > r.valid_until):
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+                return "overran_validity"
+            await self._sleep(self.poll_s)
+        return task.result()
 
     async def _settled(self, r) -> bool:
         """Wait for the manager's own surveillance to complete the reservation."""

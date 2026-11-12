@@ -252,7 +252,8 @@ class SectorExecutor:
                             else edge)
                     waypoints = [here, self.home_xy]
                 self._emit("pad_zone_wait", request_id=action.request_id, held_by=z.holder)
-                if not await z.acquire(self.vehicle_id, timeout_s=self.pad_wait_s):
+                wait_s = self.pad_wait_s() if callable(self.pad_wait_s) else self.pad_wait_s
+                if not await z.acquire(self.vehicle_id, timeout_s=wait_s):
                     # never fly in without the zone: hold outside it; the runner lands
                     # the drone here, outside the zone (a recorded contingency landing)
                     self.current_sector = None
@@ -261,7 +262,7 @@ class SectorExecutor:
                                held_by=z.holder, position=here)
                     return result(CommandStatus.FAILED, "pad_zone_timeout",
                                   f"the pad zone stayed held by {z.holder} for "
-                                  f"{self.pad_wait_s:g} s; holding outside it", True)
+                                  f"{wait_s:g} s; holding outside it", True)
             self.current_sector = None
             self._emit("return_home_started", home=self.home_xy, request_id=action.request_id)
 

@@ -404,8 +404,14 @@ class TransitionManager:
             elif tr.phase in HOLDERS:
                 if r.contains(s.alt_m) and d < b.d_h:
                     out.append(f"holding:{vid}")                            # rule 4
-            elif tr.phase in MOVERS and r.contains(s.alt_m) and d <= radius:
-                out.append(f"mover:{vid}")                                  # rule 5
+            elif tr.phase in MOVERS:
+                if r.contains(s.alt_m) and d <= radius:
+                    out.append(f"mover:{vid}")                              # rule 5
+            elif r.contains(s.alt_m) and d < b.d_h:
+                # any other phase (MOVING, STUCK, ...): wherever it is now, inside the
+                # span and within d_h it blocks, with or without an open reservation
+                # (a move that has just completed leaves the drone there)
+                out.append(f"occupied:{vid}")
         return out
 
     def _grant_pass(self) -> None:
@@ -477,6 +483,8 @@ class TransitionManager:
                 if self.now - r.settle_since >= b.settle_s - 1e-9:
                     self._end(r, State.COMPLETED, "settled at the target")
                     tr.anchor_alt = r.to_m
+                    if tr.phase == Phase.MOVING:
+                        tr.phase = Phase.HOLDING   # until its drone says what it does next
             else:
                 r.settle_since = None                  # drifted: the settle timer restarts
                 if self.now > r.valid_until + 1e-9:

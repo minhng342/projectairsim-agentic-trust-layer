@@ -499,8 +499,11 @@ class SearchLoop:
         if self.recovery is not None:
             if await self.recovery.recover("return home blocked") != "transit":
                 return None
-            return await self._fly_home(f"return home at transit level "
-                                        f"{self.recovery.level:g} m")
+            again = await self._fly_home(f"return home at transit level "
+                                         f"{self.recovery.level:g} m")
+            if again is None or again.code != "home_reached":
+                self.recovery.home_blocked("return home blocked at the transit level too")
+            return again
         _, state = await self.observe()
         if state is None:
             return None
@@ -577,6 +580,8 @@ class SearchLoop:
         self.phase = "ended"
         self.return_code = fb.code if fb else None
         self.record("return_home", code=self.return_code)
+        if self.recovery is not None:
+            self.recovery.search_over(self.return_code)
         return self._done(outcome, reason)
 
     def _done(self, outcome, reason) -> SearchResult:

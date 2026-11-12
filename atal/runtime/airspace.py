@@ -17,6 +17,7 @@ agents' trust layer.
 import asyncio
 
 from atal.airspace.bounds import Bounds, Levels
+from atal.airspace.landing_queue import CleanupDeadline, QueueBudget
 from atal.airspace.transition_manager import Kind, Phase, Sample, State, TransitionManager
 from atal.core.telemetry import GroundState, ValidationStatus
 
@@ -25,15 +26,17 @@ SURVEY_SIM_S = 0.2          # the manager's surveillance period (5 Hz of sim tim
 
 class TeamAirspace:
     def __init__(self, manager: TransitionManager, levels: Levels, vids: list[str], timing,
-                 recorder):
+                 recorder, budget: QueueBudget):
         self.manager, self.levels, self.vids = manager, levels, list(vids)
+        self.budget = budget                 # startup and landing waits (landing_queue.py)
         self.timing, self.recorder = timing, recorder
         self._startups: dict | None = None
         self._lock = asyncio.Lock()
         self.startup_wait_s: dict[str, float] = {}
 
     @classmethod
-    def build(cls, mission, vids, recorder, timing) -> "TeamAirspace | None":
+    def build(cls, mission, vids, recorder, timing, pad_zone_s: float
+              ) -> "TeamAirspace | None":
         sw = mission.swarm
         if sw.airspace != "managed":
             return None
@@ -48,13 +51,19 @@ class TeamAirspace:
         mgr = TransitionManager(vids, {v: levels.of(i) for i, v in enumerate(vids)},
                                 bounds=bounds, ceiling_m=mission.limits.altitude_ceiling_m,
                                 recorder=recorder)
+        budget = QueueBudget.derive(levels, bounds, pad_zone_s)
         recorder.record("airspace", source="transition_manager", managed=True,
                         levels={v: levels.of(i) for i, v in enumerate(vids)},
                         ceiling_m=mission.limits.altitude_ceiling_m, d_h=bounds.d_h,
                         r_stop=round(bounds.r_stop, 2), v_h=bounds.v_h,
+                        queue_budget=budget.record(),
                         note="trusted flight-safety infrastructure; the same in every "
                              "condition; not evidence for the agents' trust layer")
-        return cls(mgr, levels, vids, timing, recorder)
+        return cls(mgr, levels, vids, timing, recorder, budget)
+
+    def cleanup_deadline(self) -> CleanupDeadline:
+        """A new drone's overall cleanup deadline (fixed when its cleanup begins)."""
+        return CleanupDeadline(self.budget, lambda: self.manager.now or 0.0)
 
     # ------------------------------------------------------------ wiring
     def attach(self, team: dict) -> None:
@@ -85,13 +94,13 @@ class TeamAirspace:
             await asyncio.sleep(period)
 
     # ------------------------------------------------------------ startup
-    async def startup(self, vid: str, pad_xy, launch_alt_m: float, wait_s: float):
+    async def startup(self, vid: str, pad_xy, launch_alt_m: float):
         """Wait for this drone's startup reservation (granted top-down: the highest level
         first) and start it. Returns the ACTIVE reservation, or None if it was not
         granted in time (the drone then stays on its pad)."""
         async with self._lock:
             if self._startups is None:
-                self._startups = await self._request_all(wait_s)
+                self._startups = await self._request_all(self.budget.startup_queue_s)
         r = self._startups.get(vid)
         if r is None:
             return None
@@ -141,10 +150,3 @@ class TeamAirspace:
         s["startup_wait_s"] = dict(self.startup_wait_s)
         s["on_roster"] = sorted(self.manager.roster)
         return s
-
-
-def startup_wait_limit_s(levels: Levels, bounds: Bounds, n: int) -> float:
-    """How long a startup request may wait: every higher drone's climb, with margin."""
-    top = levels.search(n - 1)
-    return n * (bounds.validity_s(top) + 30.0)
-
