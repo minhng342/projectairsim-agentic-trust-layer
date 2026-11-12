@@ -34,7 +34,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from atal.core.events import RUN_END, RUN_START, json_safe
-from atal.core.paths import REPO_ROOT
+from atal.core.paths import REPO_ROOT, runs_dir
 
 
 def git_info(root: Path = REPO_ROOT) -> dict:
@@ -53,7 +53,7 @@ def versions() -> dict:
     out = {"python": sys.version.split()[0], "platform": platform.platform()}
     try:
         from importlib.metadata import version
-        for pkg in ("projectairsim", "pydantic"):
+        for pkg in ("atal", "projectairsim", "pydantic"):
             try:
                 out[pkg] = version(pkg)
             except Exception:
@@ -65,11 +65,11 @@ def versions() -> dict:
 
 class EvaluationRecorder:
     def __init__(self, run_config: dict | None = None, path: str | os.PathLike | None = None,
-                 run_dir: str | os.PathLike = REPO_ROOT / "runs", sim_clock=None,
+                 run_dir: str | os.PathLike | None = None, sim_clock=None,
                  clock=time.monotonic, include_git: bool = True):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         self.run_id = f"{stamp}-{uuid4().hex[:6]}"
-        self.path = Path(path) if path else Path(run_dir) / f"run_{self.run_id}.jsonl"
+        self.path = Path(path) if path else Path(run_dir or runs_dir()) / f"run_{self.run_id}.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._sim_clock = sim_clock
         self._clock = clock

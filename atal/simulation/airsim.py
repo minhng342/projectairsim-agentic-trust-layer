@@ -46,6 +46,7 @@ from datetime import datetime, timezone
 
 from projectairsim import Drone, ProjectAirSimClient, World
 
+from atal.core.paths import bundled_scene_dir
 from atal.core.telemetry import (
     CollisionState,
     GroundState,
@@ -56,8 +57,7 @@ from atal.core.telemetry import (
 )
 from atal.simulation.telemetry_checks import ValidationLimits, validate_snapshot
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_SIM_CONFIG = os.path.join(_REPO_ROOT, "sim_config") + os.sep
+DEFAULT_SIM_CONFIG = str(bundled_scene_dir()) + os.sep     # atal/configs/sim_config (read-only)
 
 NAN = float("nan")
 

@@ -5,15 +5,15 @@ import yaml
 
 from atal.core.action import ActionType, ProposedAction, ReturnHome, SweepSector
 from atal.core.mission import PlanFileError, load_mission
+from atal.core.paths import read_config
 from atal.core.scenario import load_scenario
 from atal.core.sector_grid import parse_sector_id, sector_id
 
-DECK = "missions/sar/mission.yaml"
+DECK = "bundled:missions/sar/mission.yaml"
 
 
 def deck_dict():
-    with open(DECK, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    return yaml.safe_load(read_config(DECK)[1])
 
 
 def write(tmp_path, data, name="m.yaml"):
@@ -32,15 +32,15 @@ def test_deck_mission_loads_with_slide_13_derived_values():
 
 def test_deck_scenario_loads_and_keeps_the_victim_out_of_the_mission():
     m = load_mission(DECK)
-    sc = load_scenario("missions/sar/scenario.yaml", m)
+    sc = load_scenario("bundled:missions/sar/scenario.yaml", m)
     assert (sc.victim.x_m, sc.victim.y_m) == (430, 560) and sc.runs == 10
     assert m.grid.sector_at(430, 560) == "F5"
     assert "victim" not in m.model_dump()
 
 
 def test_dev_files_load():
-    m = load_mission("missions/sar/mission_dev.yaml")
-    sc = load_scenario("missions/sar/scenario_dev.yaml", m)
+    m = load_mission("bundled:missions/sar/mission_dev.yaml")
+    sc = load_scenario("bundled:missions/sar/scenario_dev.yaml", m)
     assert m.passes_per_sector == 3 and sc.randomize_victim
     victims = {(v.x_m, v.y_m) for v in (sc.victim_for_run(m, i) for i in range(10))}
     assert len(victims) == 10                                   # a different spot per run

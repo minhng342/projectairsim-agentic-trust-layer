@@ -5,7 +5,7 @@ from legacy.corridor.mission import MissionPlan
 
 
 def test_corridor_run_plots_planned_corridors_and_flown_tracks(tmp_path):
-    plan = MissionPlan.load("missions/inspection_5.json")
+    plan = MissionPlan.load("legacy/corridor/missions/inspection_5.json")
     rec = EvaluationRecorder(path=tmp_path / "run.jsonl", include_git=False,
                              run_config={"script": "test_corridors_live.py",
                                          "mission": plan.model_dump(mode="json")})

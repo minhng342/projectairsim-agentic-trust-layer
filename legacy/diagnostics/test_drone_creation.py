@@ -8,13 +8,14 @@ Run from the repo root with Blocks.exe running.
 """
 import asyncio
 import math
-import os
 
 from projectairsim import Drone, ProjectAirSimClient, World
 from projectairsim.utils import projectairsim_log
 
+from atal.simulation.airsim import DEFAULT_SIM_CONFIG
+
 # Scene/robot configs vendored in this repo (copied from Project AirSim v1.0.1 samples)
-SIM_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "sim_config") + os.sep
+SIM_CONFIG = DEFAULT_SIM_CONFIG             # the bundled scenes (atal/configs/sim_config)
 SCENE = "scene_basic_drone.jsonc"   # swap for your multi-drone scene
 DRONE_NAMES = ["Drone1"]            # must match actor names in the scene
 

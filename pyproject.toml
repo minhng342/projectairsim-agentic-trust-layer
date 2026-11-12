@@ -10,11 +10,18 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"    # the projectairsim client does not install on 3.13
 dynamic = ["dependencies"]
 
+[project.scripts]
+atal = "atal.runtime.cli:main"
+
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }
 
 [tool.setuptools.packages.find]
 include = ["atal*"]
+
+# the sample missions, scenarios and scenes travel with the package (atal/core/paths.py)
+[tool.setuptools.package-data]
+atal = ["configs/missions/*/*.yaml", "configs/sim_config/*.jsonc"]
 
 [tool.ruff]
 line-length = 100

@@ -3,8 +3,8 @@ Phase 0 base scenario: five inspection drones fly crossing corridors, hear each 
 over Remote ID, and their (scripted) mission agents send maneuvers through the trust
 layer's interfaces. No attacks, no defenses.
 
-    python -m legacy.corridor.corridors_live [--mission missions/inspection_5.json] [--no-maneuvers]
-    python -m legacy.corridor.corridors_live --mission missions/inspection_5_conflict.json --llm Drone2,Drone3
+    python -m legacy.corridor.corridors_live [--mission legacy/corridor/missions/inspection_5.json] [--no-maneuvers]
+    python -m legacy.corridor.corridors_live --mission legacy/corridor/missions/inspection_5_conflict.json --llm Drone2,Drone3
 
 --llm  these drones get an LLM MissionPilot (Pydantic AI; model from --model / LLM_MODEL,
        shared by all of them, so they share one request pace) instead of the scripted
@@ -338,7 +338,7 @@ async def main(args) -> int:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mission", default="missions/inspection_5.json")
+    ap.add_argument("--mission", default="legacy/corridor/missions/inspection_5.json")
     ap.add_argument("--no-maneuvers", action="store_true")
     ap.add_argument("--llm", default="", help="comma list of drones flown by LLM agents")
     ap.add_argument("--model", default=None, help="Pydantic AI model spec (else LLM_MODEL)")

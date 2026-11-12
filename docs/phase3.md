@@ -11,8 +11,8 @@ other on a shared bus, and each drone's planner uses what it heard.
 # offline, 3 drones, the dev mission, 20 seeded runs (the Phase 3 baseline)
 python run_sar_swarm.py --offline
 # the same victims with one drone (Phase 1 planner, same guard), for the paired comparison
-python run_sar_mission.py --offline --mission missions/sar/mission_dev.yaml \
-    --scenario missions/sar/scenario_dev.yaml --runs 20 --gate invariants
+python run_sar_mission.py --offline --mission bundled:missions/sar/mission_dev.yaml \
+    --scenario bundled:missions/sar/scenario_dev.yaml --runs 20 --gate invariants
 # Pydantic AI agents in each drone, scripted model (no server) or a real one
 python run_sar_swarm.py --offline --planner llm --model scripted
 python run_sar_swarm.py --planner llm --model ollama:qwen3.5:9b --thinking off --runs 1   # live
@@ -44,7 +44,7 @@ Output per batch: `runs/sar_swarm/<batch>/run_NN.jsonl` (one log for the whole t
 | Runner | `run_sar_swarm.py` | N seeded runs, 3 drones, one bus, layers, `--planner fixed|llm`, `--radio-range`, `--peer-clear-rule`, `--layer-spacing`, `--drones N`, `--full-sweep` |
 | Metrics | `atal/evaluation/swarm_metrics.py` (`swarm_metrics`, `batch_baseline`) | team and per-drone metrics, the baseline block |
 | Plot | `atal/evaluation/plot_tracks.py` | multi-drone runs: sectors tinted by who swept them, `xN` when swept N times |
-| Scenarios, scene | `missions/sar/scenario_swarm_dev.yaml`, `scenario_swarm.yaml`, `sim_config/scene_sar_three_drones.jsonc` | starts spread along the south edge |
+| Scenarios, scene | `atal/configs/missions/sar/scenario_swarm_dev.yaml`, `scenario_swarm.yaml`, `atal/configs/sim_config/scene_sar_three_drones.jsonc` | starts spread along the south edge |
 
 ## Inside one drone
 
