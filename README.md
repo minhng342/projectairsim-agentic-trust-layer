@@ -7,8 +7,8 @@ teammates' radio messages. Deterministic checks refuse unsafe actions and decide
 claims may change a drone's beliefs. The research question is how fast a team finds the
 victim, and what a dishonest teammate does to that.
 
-Phases 0 to 3 are built: one drone without an LLM, one LLM drone, and three cooperating
-honest drones. Phases 4 (an insider attack) and 5 (defenses) are paused while the code is
+Phases 0 to 2 are built: one drone without an LLM, and one LLM drone. Phases 3 (three cooperating
+honest drones), 4 (an insider attack), and 5 (defenses) are paused while the code is
 made easy to read and explain.
 
 ## Start here
