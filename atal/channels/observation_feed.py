@@ -51,7 +51,7 @@ from atal.trust_layer.assessor import NoTrustAssessor
 VERDICT_FIELDS = {"validation_status", "validation_errors", "validation_warnings"}
 
 
-def _hook_name(hook) -> str:
+def hook_name(hook) -> str:
     return getattr(hook, "name", None) or getattr(hook, "__name__", None) or type(hook).__name__
 
 
@@ -190,16 +190,16 @@ class ObservationFeed:
             try:
                 out = hook(payload, ctx)
             except Exception as err:   # a broken hook is a lost message, never a crash
-                self._record("observation_dropped", sequence=seq, hook=_hook_name(hook),
+                self._record("observation_dropped", sequence=seq, hook=hook_name(hook),
                              reason=f"hook raised {type(err).__name__}: {err}",
                              source_validation=source_validation)
                 return None
             if out is None:
-                self._record("observation_dropped", sequence=seq, hook=_hook_name(hook),
+                self._record("observation_dropped", sequence=seq, hook=hook_name(hook),
                              reason="dropped by hook", source_validation=source_validation)
                 return None
             if out != before:
-                changed_by.append(_hook_name(hook))
+                changed_by.append(hook_name(hook))
             payload = out
         # anything a hook tried to add under a verdict name is not a verdict
         for f in VERDICT_FIELDS & set(payload):

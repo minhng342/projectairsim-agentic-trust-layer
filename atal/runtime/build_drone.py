@@ -18,9 +18,10 @@ from typing import Any
 from atal.agents.fixed_chooser import FixedChooser
 from atal.agents.llm_chooser import LLMChooser
 from atal.agents.search_loop import SearchLoop
-from atal.agents.team_coordinator import PeerMessenger, SwarmCoordinator, SwarmReceiver, TeamRole
+from atal.agents.team_coordinator import SwarmCoordinator, TeamRole
 from atal.channels.action_port import ActionPort
 from atal.channels.observation_feed import ObservationFeed
+from atal.channels.peer_link import PeerMessenger, SwarmReceiver
 from atal.channels.radio import RemoteIdBroadcaster, RemoteIdReceiver
 from atal.core.belief import LocalBelief
 from atal.flight.recovery import DroneFlight, Recovery

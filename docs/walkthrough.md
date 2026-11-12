@@ -177,7 +177,7 @@ that into the limited `ActionFeedback` the planner sees
 
 ## 7. What happens when a peer claims a sector is clear?
 
-1. The sender's `PeerMessenger.send()` (`atal/agents/team_coordinator.py`) puts a `SectorCleared` message
+1. The sender's `PeerMessenger.send()` (`atal/channels/peer_link.py`) puts a `SectorCleared` message
    (`atal/core/peer_messages.py`) on the bus.
 2. `RemoteIdBus.transmit()` (`atal/channels/radio.py`) delivers it to every other drone in
    radio range.

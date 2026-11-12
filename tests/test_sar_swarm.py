@@ -6,7 +6,8 @@ import json
 import pytest
 import yaml
 
-from atal.agents.team_coordinator import PeerMessenger, SwarmCoordinator, SwarmReceiver
+from atal.agents.team_coordinator import SwarmCoordinator
+from atal.channels.peer_link import PeerMessenger, SwarmReceiver
 from atal.channels.radio import RemoteIdBus, RemoteIdReceiver
 from atal.core.belief import LocalBelief, PeerClaim
 from atal.core.peer_messages import (
