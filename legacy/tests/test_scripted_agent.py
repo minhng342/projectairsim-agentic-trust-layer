@@ -128,7 +128,7 @@ def test_no_observation_aborts_without_acting():
 
 
 def test_bad_action_from_nan_observation_aborts_cleanly():
-    from atal.attacks.hooks import HookContext  # noqa: F401
+    from atal.core.contracts import HookContext  # noqa: F401
 
     def wreck(payload, ctx):
         payload["position_ned_m"] = None

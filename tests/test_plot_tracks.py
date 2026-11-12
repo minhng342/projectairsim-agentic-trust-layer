@@ -1,6 +1,6 @@
 """Top-down track plot (atal/evaluation/plot_tracks.py) for corridor (Phase 0) run logs."""
 from atal.evaluation.plot_tracks import plot_run
-from atal.evaluation.recorder import EvaluationRecorder
+from atal.runtime.recorder import EvaluationRecorder
 from legacy.corridor.mission import MissionPlan
 
 

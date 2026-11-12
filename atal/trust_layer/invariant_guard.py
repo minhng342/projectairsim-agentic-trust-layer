@@ -43,8 +43,8 @@ from dataclasses import dataclass
 
 from atal.core.action import ActionType, ProposedAction
 from atal.core.belief import LocalBelief
+from atal.core.mission import Mission
 from atal.core.observation import GateDecision, GateOutcome, Observation
-from atal.core.sar import Mission
 from atal.search.sweep_lanes import sweep_path
 
 

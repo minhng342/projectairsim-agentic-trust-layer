@@ -31,8 +31,8 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from atal.core.action import SECTOR_ID_PATTERN
 from atal.core.observation import new_id
+from atal.core.sector_grid import SECTOR_ID_PATTERN
 
 
 class _PeerMessage(BaseModel):

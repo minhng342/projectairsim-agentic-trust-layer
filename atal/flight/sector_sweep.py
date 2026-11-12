@@ -55,7 +55,7 @@ import time
 from types import SimpleNamespace as _Leg
 
 from atal.core.action import ActionType, CommandResult, CommandStatus, ProposedAction
-from atal.core.sar import Mission
+from atal.core.mission import Mission
 from atal.flight.path_follower import (
     FollowerConfig,
     FollowMode,

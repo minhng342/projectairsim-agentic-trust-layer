@@ -22,7 +22,7 @@ adjacent. Each sector is then swept boustrophedon (atal/search/sweep_lanes.py).
 import math
 from collections.abc import Iterable, Mapping
 
-from atal.core.sar import SectorGrid
+from atal.core.sector_grid import SectorGrid
 
 
 def voronoi_partition(grid: SectorGrid, positions: Mapping[str, tuple[float, float]],

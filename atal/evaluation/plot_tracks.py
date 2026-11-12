@@ -16,7 +16,7 @@ import math
 import sys
 from pathlib import Path
 
-from atal.evaluation.recorder import read_run
+from atal.evaluation.run_log import read_run
 
 COLORS = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#be185d",
           "#4d7c0f", "#a16207", "#475569"]
@@ -100,7 +100,7 @@ def plot_run(path, out=None) -> Path:
     step = 0.5 / c.s if c.s else 0.5
 
     if is_sar:
-        from atal.core.sar import Mission
+        from atal.core.mission import Mission
         ms = Mission.model_validate(mission)
         status, swept_by = {}, {}
         team = len(tracks) > 1

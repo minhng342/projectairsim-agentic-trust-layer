@@ -16,12 +16,7 @@ scenarios belong in their own module.
 import copy
 from dataclasses import dataclass
 
-
-@dataclass(frozen=True)
-class HookContext:
-    vehicle_id: str
-    sequence: int
-    received_host_s: float
+from atal.core.contracts import HookContext
 
 
 @dataclass

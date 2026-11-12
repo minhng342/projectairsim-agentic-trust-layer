@@ -15,10 +15,13 @@ Design rules
 import math
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Annotated, Literal, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from atal.core.sector_grid import SECTOR_ID_PATTERN
+from atal.core.strict import Strict
 from atal.core.telemetry import TelemetrySnapshot
 
 
@@ -46,8 +49,6 @@ class ActionType(str, Enum):
 PARAMS = ("heading_deg", "track_deg", "speed_mps", "altitude_m",
           "north_m", "east_m", "duration_s", "sector_id")
 FLOAT_PARAMS = PARAMS[:-1]
-# Grid sector ids: column letter (along y / east) + row number (along x / north), e.g. "F5".
-SECTOR_ID_PATTERN = r"^[A-Z][1-9][0-9]?$"
 
 REQUIRED: dict[ActionType, set[str]] = {
     ActionType.HOLD: set(),
@@ -173,3 +174,41 @@ class ActionFeedback(BaseModel):
     @property
     def succeeded(self) -> bool:
         return self.status == CommandStatus.SUCCEEDED
+
+
+# ------------------------------------------------------------------ search and rescue plan actions
+# What a chooser (fixed or LLM) picks; each converts to a ProposedAction for the executor.
+class DroneState(Strict):
+    """What the planner knows about its own drone (from its own observation)."""
+    vehicle_id: str
+    sim_time_s: float
+    x_m: float
+    y_m: float
+    altitude_m: float
+    sector_id: str | None                  # the sector below it, None outside the grid
+    airborne: bool
+
+
+class SweepSector(Strict):
+    """Sweep one sector with a boustrophedon pattern at mission altitude and speed."""
+    kind: Literal["sweep_sector"] = "sweep_sector"
+    sector_id: str = Field(pattern=SECTOR_ID_PATTERN)
+    reason: str = Field(min_length=1, max_length=500)
+
+    def to_proposed(self, vehicle_id: str) -> ProposedAction:
+        return ProposedAction(vehicle_id=vehicle_id, action_type=ActionType.SWEEP_SECTOR,
+                              sector_id=self.sector_id, reason=self.reason)
+
+
+class ReturnHome(Strict):
+    """Fly back over the launch point at mission altitude."""
+    kind: Literal["return_home"] = "return_home"
+    reason: str = Field(min_length=1, max_length=500)
+
+    def to_proposed(self, vehicle_id: str) -> ProposedAction:
+        return ProposedAction(vehicle_id=vehicle_id, action_type=ActionType.RETURN_HOME,
+                              reason=self.reason)
+
+
+# Phase 2 adds VerifySector and ReportVictim; the agent's output type is this union.
+SarAction = Annotated[Union[SweepSector, ReturnHome], Field(discriminator="kind")]

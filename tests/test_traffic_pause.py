@@ -6,7 +6,7 @@ import asyncio
 import math
 
 from atal.core.action import ActionType, ProposedAction
-from atal.core.sar import Mission
+from atal.core.mission import Mission
 from atal.flight.executor import ProjectAirSimExecutor
 from atal.flight.path_follower import FollowerConfig
 from atal.flight.sector_sweep import SectorExecutor

@@ -27,11 +27,11 @@ Search and rescue metrics for one run, from its run log (evaluation side, ground
 """
 import math
 
-from atal.core.sar import Mission
-from atal.evaluation.recorder import RunLog
+from atal.core.mission import Mission
+from atal.evaluation.run_log import RunLog
 
 
-def _tracks(log: RunLog) -> dict[str, list[tuple[float, float, float, float]]]:
+def truth_tracks(log: RunLog) -> dict[str, list[tuple[float, float, float, float]]]:
     """vehicle -> [(sim_s, x, y, alt)] from truth events."""
     out: dict[str, list] = {}
     for e in log.of_kind("truth"):
@@ -92,7 +92,7 @@ def coverage_raster(mission: Mission, track, altitude_tolerance_m: float = 5.0,
     return covered, nx * ny, (cx, cy)
 
 
-def _is_impact(c: dict) -> bool:
+def is_impact(c: dict) -> bool:
     """A fast hit on anything, or any touch on a surface that can't hold the drone up (a
     wall). Resting on the ground or a roof (upward normal) is not an impact, including the
     spawn contact, whose speed is unknown because the pose window is still empty."""
@@ -112,7 +112,7 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
     t_plan = plan["sim_time_ns"] / 1e9 if plan and plan.get("sim_time_ns") else None
     t_det = det["detection"]["sim_time_s"] if det else None
     t_end = end["sim_time_ns"] / 1e9 if end and end.get("sim_time_ns") else None
-    track = _tracks(log).get(vid, [])
+    track = truth_tracks(log).get(vid, [])
     covered, total, _ = coverage_raster(mission, track)
     alt, tol = mission.flight.altitude_m, 5.0
     dist = 0.0
@@ -136,7 +136,7 @@ def sar_metrics(log: RunLog, mission: Mission | None = None) -> dict:
             else:
                 swept.discard(s["sector_id"])
     cols = [e.get("collision") or {} for e in log.of_kind("collision")]
-    impacts = [c for c in cols if _is_impact(c)]
+    impacts = [c for c in cols if is_impact(c)]
     obstacle = {"obstacle_incidents": len(log.of_kind("obstacle")),
                 "obstacles_recovered": len(log.of_kind("obstacle_recovered")),
                 "blocked_sectors": (end.get("blocked") or []) if end else [],

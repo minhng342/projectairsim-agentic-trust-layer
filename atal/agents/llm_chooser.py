@@ -13,7 +13,7 @@ One decision = one short Pydantic AI run, no tools:
     input   the situation: own position, time used / left, a map of the grid from the
             drone's memory, the nearest unsearched sectors with distance and an estimated
             time, and the prior if the mission enables one (computed here, from the mission)
-    output  SweepSector | ReturnHome (typed; atal/core/sar.py)
+    output  SweepSector | ReturnHome (typed; atal/core/action.py)
     check   the invariant guard (atal/trust_layer/invariant_guard.py) as the output validator: a choice that
             breaks a rule goes back to the model with the rule's message, up to
             `retries` times
@@ -37,7 +37,8 @@ import time
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimits
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
 
-from atal.core.sar import Mission, ReturnHome, SweepSector
+from atal.core.action import ReturnHome, SweepSector
+from atal.core.mission import Mission
 from atal.observability import span
 
 NEAREST_LISTED = 8

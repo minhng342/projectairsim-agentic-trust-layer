@@ -20,9 +20,9 @@ import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from atal.core.paths import REPO_ROOT
 from atal.evaluation.compare import load_batch, table
 from atal.evaluation.evidence import MANIFEST, verify
-from atal.evaluation.recorder import REPO_ROOT
 
 
 def _describe(summary: dict) -> str:

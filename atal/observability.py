@@ -5,7 +5,7 @@ Optional Logfire tracing of every model request and tool call (Pydantic AI agent
     configure_observability()        # call once at startup, before running agents
 
 On only if LOGFIRE_TOKEN is set (environment or the repo's .env); otherwise this does
-nothing and runs are unaffected. The JSONL run record (atal/evaluation/recorder.py) is the
+nothing and runs are unaffected. The JSONL run record (atal/runtime/recorder.py) is the
 experiment's source of truth either way; Logfire is for watching and browsing runs.
 """
 import os

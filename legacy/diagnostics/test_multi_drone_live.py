@@ -47,15 +47,14 @@ from dataclasses import asdict
 from atal.channels.action_port import ActionPort
 from atal.channels.observation_feed import ObservationFeed
 from atal.core.action import ActionType, CommandStatus, ProposedAction
+from atal.core.contracts import BypassGate, NoTrustAssessor
 from atal.core.telemetry import GroundState, ValidationStatus
-from atal.evaluation.recorder import EvaluationRecorder
 from atal.evaluation.separation import SeparationTracker, assess, format_report
 from atal.evaluation.summarize_run import summarize
 from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
 from atal.flight.shutdown import safe_shutdown
+from atal.runtime.recorder import EvaluationRecorder
 from atal.simulation.airsim import ProjectAirSimAdapter
-from atal.trust_layer.action_gate import BypassGate
-from atal.trust_layer.assessor import NoTrustAssessor
 from legacy.fleet import PhaseBarrier, run_all_or_cancel
 from legacy.llm_pilot.scripted_agent import MissionStep, ScriptedMissionAgent
 

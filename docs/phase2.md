@@ -61,7 +61,7 @@ flowchart LR
   estimated time, and, if the mission enables a prior, the most likely unsearched sectors.
   Memory is the belief file, not the chat history, so the prompt does not grow over a long
   search and what the model knows is exactly what `run_NN.memory.json` says.
-- **Output.** A typed action, `SweepSector | ReturnHome` (`atal/core/sar.py`). There are no tools:
+- **Output.** A typed action, `SweepSector | ReturnHome` (`atal/core/action.py`). There are no tools:
   the model never calls the simulator.
 - **Guard.** The output validator runs the guard. A refused choice goes back to the model with
   the rule's code and message (for example `already_swept: A1 is already swept (your memory)`),

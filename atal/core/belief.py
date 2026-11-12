@@ -35,7 +35,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from atal.core.sar import Mission
+from atal.core.mission import Mission
 
 SELF = "self"
 

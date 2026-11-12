@@ -24,7 +24,7 @@ defends. Every verdict is recorded with the message ids behind it (design rule 4
 from dataclasses import dataclass
 
 from atal.core.belief import LocalBelief, PeerClaim
-from atal.core.sar import Swarm
+from atal.core.mission import Swarm
 
 
 @dataclass(frozen=True)

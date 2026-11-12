@@ -29,7 +29,7 @@ pull cells toward itself.
 import math
 from collections.abc import Iterable, Mapping
 
-from atal.core.sar import SectorGrid
+from atal.core.sector_grid import SectorGrid
 from atal.search.voronoi import voronoi_partition
 
 

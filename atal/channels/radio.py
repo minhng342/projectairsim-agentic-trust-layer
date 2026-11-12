@@ -31,9 +31,9 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from atal.core.contracts import NoTrustAssessor
 from atal.core.observation import TrustAssessment, TrustStatus
 from atal.core.remote_id import RemoteIdReport
-from atal.trust_layer.assessor import NoTrustAssessor
 
 CHANNEL = "remote_id"
 
@@ -45,7 +45,7 @@ class RidContext:
     receiver_id: str | None = None   # link hooks only
 
 
-def _hook_name(hook) -> str:
+def hook_name(hook) -> str:
     return getattr(hook, "name", None) or getattr(hook, "__name__", None) or type(hook).__name__
 
 
@@ -73,7 +73,7 @@ def message_from_snapshot(uas_id: str, snap, self_id_text: str = "",
       | ({} if mission_state is None else {"mission_state": mission_state})
 
 
-def _apply_hooks(hooks, payloads: list[dict], ctx: RidContext, on_error):
+def apply_hooks(hooks, payloads: list[dict], ctx: RidContext, on_error):
     """Run hooks over each message; returns (messages, names of hooks that changed any)."""
     changed = []
     for hook in hooks:
@@ -86,8 +86,8 @@ def _apply_hooks(hooks, payloads: list[dict], ctx: RidContext, on_error):
                 on_error(hook, err)
                 continue
             r = [] if r is None else (r if isinstance(r, list) else [r])
-            if r != [before] and _hook_name(hook) not in changed:
-                changed.append(_hook_name(hook))
+            if r != [before] and hook_name(hook) not in changed:
+                changed.append(hook_name(hook))
             out.extend(x for x in r if x is not None)
         payloads = out
     return payloads, changed
@@ -222,10 +222,10 @@ class RemoteIdBus:
                         continue
                 hooks = [h for target, h in self._link_hooks if target in (None, rid)]
                 ctx = RidContext(sender_id=sender_id, sequence=sequence, receiver_id=rid)
-                got, changed = _apply_hooks(hooks, [copy.deepcopy(payload)], ctx,
+                got, changed = apply_hooks(hooks, [copy.deepcopy(payload)], ctx,
                                             lambda h, e, rid=rid: self._record(
                                                 "rid_link_error", tx_id=tx_id, receiver=rid,
-                                                hook=_hook_name(h), error=f"{type(e).__name__}: {e}"))
+                                                hook=hook_name(h), error=f"{type(e).__name__}: {e}"))
                 if not got:
                     self.stats["lost"] += 1
                     self._record("rid_lost", tx_id=tx_id, receiver=rid, link_hooks=changed or None)
@@ -283,10 +283,10 @@ class RemoteIdBroadcaster:
                 state = None
         clean = message_from_snapshot(self.uas_id, snap, self.self_id_text, target, state)
         ctx = RidContext(sender_id=self.vehicle_id, sequence=self._seq)
-        sent, changed = _apply_hooks(self._hooks, [copy.deepcopy(clean)], ctx,
+        sent, changed = apply_hooks(self._hooks, [copy.deepcopy(clean)], ctx,
                                      lambda h, e: self._record(
                                          "rid_sender_hook_error", sequence=self._seq,
-                                         hook=_hook_name(h), error=f"{type(e).__name__}: {e}"))
+                                         hook=hook_name(h), error=f"{type(e).__name__}: {e}"))
         if not sent:
             self._record("rid_not_sent", sequence=self._seq, sender_hooks=changed or None)
             return []

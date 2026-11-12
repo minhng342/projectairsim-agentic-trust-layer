@@ -43,7 +43,7 @@ For the team run, in `atal/runtime/run_team.py`:
 | Function | Job |
 |---|---|
 | `parse_args()` | Reads the command-line flags. |
-| `main()` | Loads the mission and scenario YAML (`atal/core/sar.py: load_mission`, `load_scenario`), loops over the seeded runs, writes `batch_summary.json` and `manifest.json`. |
+| `main()` | Loads the mission and scenario YAML (`atal/core/mission.py: load_mission`, `atal/core/scenario.py: load_scenario`), loops over the seeded runs, writes `batch_summary.json` and `manifest.json`. |
 | `run_one()` / `_run_one()` | **Owns one run from start to finish.** Everything below happens inside it. |
 
 `_run_one()` is six numbered steps. Each step calls one small file in `atal/runtime/`:
@@ -104,7 +104,7 @@ shown to the LLM planner.
 
 ## 4. What does the fixed chooser or the LLM return?
 
-Both return one of two typed actions defined in `atal/core/sar.py`:
+Both return one of two typed actions defined in `atal/core/action.py`:
 
 - `SweepSector(sector_id, reason)`
 - `ReturnHome(reason)`
@@ -177,7 +177,7 @@ that into the limited `ActionFeedback` the planner sees
 
 ## 7. What happens when a peer claims a sector is clear?
 
-1. The sender's `PeerMessenger.send()` (`atal/agents/team_coordinator.py`) puts a `SectorCleared` message
+1. The sender's `PeerMessenger.send()` (`atal/channels/peer_link.py`) puts a `SectorCleared` message
    (`atal/core/peer_messages.py`) on the bus.
 2. `RemoteIdBus.transmit()` (`atal/channels/radio.py`) delivers it to every other drone in
    radio range.
@@ -209,7 +209,7 @@ accepted, it ends this drone's search.
   event, waits for every background task, and records any that failed as
   `background_error`.
 - **The record.** The outermost `finally` calls `recorder.close(outcome)`
-  (`atal/evaluation/recorder.py`), so the run log is complete even after an error.
+  (`atal/runtime/recorder.py`), so the run log is complete even after an error.
 - **Watchdogs** that can end a run early: `watch_mission_time` (mission time limit),
   `sample_truth` (geofence breach or impact), `watch_sim_clock` (live simulator froze), all in
   `atal/runtime/watchers.py`.
