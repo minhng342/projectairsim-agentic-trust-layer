@@ -5,6 +5,9 @@ code is in `atal/`; code from before the search and rescue work is in `legacy/`.
 
 ## Commands
 
+The old spellings in the left column no longer work, except where the right column says
+unchanged.
+
 | Before | Now |
 |---|---|
 | `python run_sar_mission.py ...` | unchanged (or `python -m atal.runtime.run_single ...`) |
@@ -114,3 +117,22 @@ A module name follows its path: `from models.sar import Mission` is now
 | `run_sar_mission.py` | `atal/runtime/run_single.py` (a short wrapper stays at the root) |
 | `run_sar_swarm.py` | `atal/runtime/run_team.py` (a short wrapper stays at the root) |
 | `agent/providers/base.py` (`RateLimiter`), `agent/providers/__init__.py` (`rpm_for`) | `atal/agents/llm/rate_limit.py` |
+
+## Step 4: inside `atal/runtime/`
+
+Step 4 split the two runner files into small files. The flow of a run did not change.
+
+| Before (in `run_single.py` / `run_team.py`) | Now |
+|---|---|
+| `OBSERVATION_HZ`, `PAD_WAIT_S` and the other constants, `Timing` | `rates.py` |
+| choosing `KinematicSim` or `ProjectAirSimAdapter` | `simulator.py: open_simulator` |
+| the per-drone setup inside `_run_one()` | `build_drone.py: build_single_drone`, `build_team_drone`, `read_home` |
+| `_sample_truth` (two copies), `_watch_time` (two copies), `_watch_sim_clock`, the dropout task | `watchers.py: sample_truth`, `watch_mission_time`, `watch_sim_clock`, `inject_dropout`, `stop_background` |
+| `_takeoff`, and the nested `fly()` and `clear_pads()` | `landing.py: takeoff`, `fly_team_drone`, `clear_pads`, `descend_before_landing`, `shut_down` |
+| `run_failures` (two functions with one name), `run_passes` | `acceptance.py: single_run_failures`, `team_run_failures`, `single_run_passes` |
+| `prepare_llm` | `llm_setup.py` |
+| the `run_config` dictionary, the printed tables | functions `run_config`, `print_run_line`, `print_batch` in each run file |
+
+One visible difference: in a one-drone run log, when a geofence breach is recorded it now
+comes just before the `truth` record of the same instant instead of just after it (the one-drone
+and team runs now share one truth sampler, and that is the team order).

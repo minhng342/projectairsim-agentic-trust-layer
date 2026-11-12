@@ -225,8 +225,16 @@ run_sar_swarm.py              three-drone run (wrapper around atal/runtime/run_t
 
 atal/
   runtime/                    building and running a mission
-    run_single.py             one drone: N seeded runs, logs, memory, metrics, plots, verdict
-    run_team.py               three drones on one radio bus
+    run_single.py             one drone: a batch of runs, and the six steps of one run
+    run_team.py               three drones on one radio bus, same six steps
+    build_drone.py            every part of one drone, wired together
+    watchers.py               background tasks: truth record, time limit, stalled simulator, dropout
+    landing.py                takeoff, pad turn-taking, descent, shutdown
+    acceptance.py             when a run passes, and why it does not
+    rates.py                  rates and time limits; scaling for the fast offline simulator
+    simulator.py              offline simulator or Project AirSim
+    llm_setup.py              choose and ping the model before anything flies
+    context.py                what the parts of one run share
   agents/                     the deciding part of a drone
     sector_planner.py         FixedSectorPlanner: fixed sector order, no LLM
     llm_sector_planner.py     LLMSectorPlanner: an LLM picks each next sector

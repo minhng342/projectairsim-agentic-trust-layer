@@ -12,7 +12,23 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 731.08,
+        "health": {
+          "landed": {
+            "drone": true
+          },
+          "descend": {
+            "drone": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 726.12,
         "sectors_swept": 32,
         "finder": null,
         "duplicate_sweeps": null
@@ -24,7 +40,23 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 203.73,
+        "health": {
+          "landed": {
+            "drone": true
+          },
+          "descend": {
+            "drone": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 201.62,
         "sectors_swept": 5,
         "finder": null,
         "duplicate_sweeps": null
@@ -36,7 +68,23 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 636.37,
+        "health": {
+          "landed": {
+            "drone": true
+          },
+          "descend": {
+            "drone": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 624.4,
         "sectors_swept": 27,
         "finder": null,
         "duplicate_sweeps": null
@@ -47,7 +95,7 @@
     "what": "one drone, scripted stand-in for the LLM, invariant guard on",
     "command": "python run_sar_mission.py --mission missions/sar/mission_dev.yaml --scenario missions/sar/scenario_dev.yaml --planner llm --model scripted --offline --runs 3",
     "exit_code": 0,
-    "host_seconds": 51,
+    "host_seconds": 50,
     "runs": [
       {
         "run_index": 0,
@@ -56,7 +104,23 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 196.18,
+        "health": {
+          "landed": {
+            "drone": true
+          },
+          "descend": {
+            "drone": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 194.04,
         "sectors_swept": 4,
         "finder": null,
         "duplicate_sweeps": null
@@ -68,7 +132,23 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 1041.28,
+        "health": {
+          "landed": {
+            "drone": true
+          },
+          "descend": {
+            "drone": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 1028.85,
         "sectors_swept": 47,
         "finder": null,
         "duplicate_sweeps": null
@@ -80,7 +160,23 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 805.44,
+        "health": {
+          "landed": {
+            "drone": true
+          },
+          "descend": {
+            "drone": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 799.26,
         "sectors_swept": 35,
         "finder": null,
         "duplicate_sweeps": null
@@ -100,8 +196,28 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 366.73,
-        "sectors_swept": 32,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 361.33,
+        "sectors_swept": 31,
         "finder": "Drone1",
         "duplicate_sweeps": 0
       },
@@ -112,9 +228,29 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 156.25,
-        "sectors_swept": 3,
-        "finder": "Drone2",
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 151.23,
+        "sectors_swept": 2,
+        "finder": "Drone3",
         "duplicate_sweeps": 0
       },
       {
@@ -124,9 +260,29 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 306.64,
-        "sectors_swept": 23,
-        "finder": "Drone2",
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 327.77,
+        "sectors_swept": 25,
+        "finder": "Drone3",
         "duplicate_sweeps": 0
       }
     ]
@@ -135,7 +291,7 @@
     "what": "three drones, scripted stand-in for the LLM",
     "command": "python run_sar_swarm.py --planner llm --model scripted --offline --runs 3",
     "exit_code": 0,
-    "host_seconds": 48,
+    "host_seconds": 47,
     "runs": [
       {
         "run_index": 0,
@@ -144,7 +300,27 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 343.65,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 337.08,
         "sectors_swept": 27,
         "finder": "Drone1",
         "duplicate_sweeps": 0
@@ -156,7 +332,27 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 495.28,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 482.42,
         "sectors_swept": 48,
         "finder": "Drone3",
         "duplicate_sweeps": 0
@@ -168,8 +364,28 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 201.98,
-        "sectors_swept": 8,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 198.95,
+        "sectors_swept": 9,
         "finder": "Drone2",
         "duplicate_sweeps": 0
       }
@@ -179,7 +395,7 @@
     "what": "one drone fails 200 s into the search",
     "command": "python run_sar_swarm.py --dropout Drone2@200 --offline --runs 3",
     "exit_code": 0,
-    "host_seconds": 45,
+    "host_seconds": 44,
     "runs": [
       {
         "run_index": 0,
@@ -188,10 +404,30 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 523.34,
-        "sectors_swept": 38,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 521.4,
+        "sectors_swept": 40,
         "finder": "Drone3",
-        "duplicate_sweeps": 1
+        "duplicate_sweeps": 0
       },
       {
         "run_index": 1,
@@ -200,7 +436,27 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 155.87,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 155.45,
         "sectors_swept": 3,
         "finder": "Drone2",
         "duplicate_sweeps": 0
@@ -212,9 +468,29 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 425.03,
-        "sectors_swept": 30,
-        "finder": "Drone3",
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 436.57,
+        "sectors_swept": 31,
+        "finder": "Drone1",
         "duplicate_sweeps": 0
       }
     ]
@@ -232,8 +508,28 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 358.93,
-        "sectors_swept": 33,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 364.17,
+        "sectors_swept": 34,
         "finder": "Drone1",
         "duplicate_sweeps": 0
       },
@@ -244,7 +540,27 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 149.96,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 150.0,
         "sectors_swept": 2,
         "finder": "Drone3",
         "duplicate_sweeps": 0
@@ -256,7 +572,27 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 257.76,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 260.47,
         "sectors_swept": 18,
         "finder": "Drone2",
         "duplicate_sweeps": 0
@@ -276,11 +612,31 @@
         "victim_found": true,
         "passed": false,
         "fail_reasons": [
-          "1 impacts"
+          "2 impacts"
         ],
-        "time_to_find_s": 426.45,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 425.33,
         "sectors_swept": 38,
-        "finder": "Drone1",
+        "finder": "Drone2",
         "duplicate_sweeps": 0
       },
       {
@@ -290,7 +646,27 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 156.42,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 155.91,
         "sectors_swept": 3,
         "finder": "Drone2",
         "duplicate_sweeps": 0
@@ -300,9 +676,31 @@
         "seed": 44,
         "victim_sector": "E4",
         "victim_found": true,
-        "passed": true,
-        "fail_reasons": [],
-        "time_to_find_s": 312.63,
+        "passed": false,
+        "fail_reasons": [
+          "1 impacts"
+        ],
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 311.1,
         "sectors_swept": 23,
         "finder": "Drone2",
         "duplicate_sweeps": 0
@@ -313,7 +711,7 @@
     "what": "peer clears are recorded but never accepted",
     "command": "python run_sar_swarm.py --peer-clear-rule self_only --offline --runs 3",
     "exit_code": 0,
-    "host_seconds": 61,
+    "host_seconds": 59,
     "runs": [
       {
         "run_index": 0,
@@ -322,10 +720,30 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 682.54,
-        "sectors_swept": 32,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 758.49,
+        "sectors_swept": 34,
         "finder": "Drone1",
-        "duplicate_sweeps": 43
+        "duplicate_sweeps": 51
       },
       {
         "run_index": 1,
@@ -334,7 +752,27 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 156.05,
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 155.7,
         "sectors_swept": 3,
         "finder": "Drone2",
         "duplicate_sweeps": 0
@@ -346,10 +784,30 @@
         "victim_found": true,
         "passed": true,
         "fail_reasons": [],
-        "time_to_find_s": 744.8,
-        "sectors_swept": 31,
-        "finder": "Drone2",
-        "duplicate_sweeps": 51
+        "health": {
+          "landed": {
+            "Drone1": true,
+            "Drone2": true,
+            "Drone3": true
+          },
+          "descend": {
+            "Drone1": "succeeded",
+            "Drone2": "succeeded",
+            "Drone3": "succeeded"
+          },
+          "drone_errors": {},
+          "run_complete": true,
+          "run_log_outcome": "victim_found",
+          "run_error": null,
+          "background_errors": [],
+          "sim_stalled": null,
+          "processing_errors": 0,
+          "pad_zone_held_unconfirmed": []
+        },
+        "time_to_find_s": 589.07,
+        "sectors_swept": 23,
+        "finder": "Drone1",
+        "duplicate_sweeps": 36
       }
     ]
   }
