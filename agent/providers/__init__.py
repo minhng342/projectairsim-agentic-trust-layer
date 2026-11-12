@@ -2,19 +2,10 @@
 import asyncio
 import os
 
+from agent.rate_limit import (FREE_TIER_RPM, RPM_HEADROOM,  # noqa: F401  (moved)
+                              UNKNOWN_MODEL_RPM, rpm_for)
+
 DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash-lite"]
-# Free-tier requests per minute seen in AI Studio (2026-10-14). We pace at ~80% of these.
-# GEMINI_RPM overrides for every model (e.g. after enabling billing).
-FREE_TIER_RPM = {"gemini-3.6-flash": 5, "gemini-3.5-flash-lite": 15}
-UNKNOWN_MODEL_RPM = 5
-RPM_HEADROOM = 0.8
-
-
-def rpm_for(model: str) -> float:
-    env = os.environ.get("GEMINI_RPM")
-    if env:
-        return float(env)
-    return max(1.0, FREE_TIER_RPM.get(model, UNKNOWN_MODEL_RPM) * RPM_HEADROOM)
 
 
 # HTTP codes that will not fix themselves by retrying (bad key, no access, unknown model)

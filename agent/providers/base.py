@@ -14,10 +14,10 @@ A ModelTurn has text and/or tool calls. Tool calls are executed by the pilot
 loop, never by the provider (no automatic function calling): every call must go
 through the agent's own feed and action port, and every call is recorded.
 """
-import asyncio
-import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+from agent.rate_limit import RateLimiter  # noqa: F401  (moved; kept importable from here)
 
 
 @dataclass(frozen=True)
@@ -64,35 +64,3 @@ class ModelProvider(Protocol):
     model: str                 # e.g. the model id
 
     def start(self, system: str, tools: list[ToolSpec]) -> ChatSession: ...
-
-
-class RateLimiter:
-    """Client-side request pacing for one API quota (share ONE limiter between all
-    sessions/pilots that use the same key and model).
-
-    Even spacing, not a burst window: calls are at least 60/rpm seconds apart. A
-    sliding window would let a fast model burn the whole minute's quota in a few
-    seconds and then stall for up to a minute, which would age every observation
-    the model is deciding from. Even spacing bounds each wait at 60/rpm."""
-
-    def __init__(self, rpm: float, clock=None, sleep=None):
-        if not rpm > 0:
-            raise ValueError("rpm must be > 0")
-        self.rpm = rpm
-        self.interval_s = 60.0 / rpm
-        self._clock = clock or time.monotonic
-        self._sleep = sleep or asyncio.sleep
-        self._next = None
-        self._lock = None
-
-    async def acquire(self) -> float:
-        """Wait for this call's slot; returns how long it waited (seconds)."""
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        async with self._lock:              # concurrent pilots queue in order
-            now = self._clock()
-            wait = 0.0 if self._next is None else max(0.0, self._next - now)
-            if wait > 0:
-                await self._sleep(wait)
-            self._next = max(now, self._next or now) + self.interval_s
-            return wait

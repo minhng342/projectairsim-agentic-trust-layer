@@ -29,8 +29,7 @@ from pydantic_ai.exceptions import (ModelAPIError, ModelConnectionError, ModelHT
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.wrapper import WrapperModel
 
-from agent.providers import rpm_for
-from agent.providers.base import RateLimiter
+from agent.rate_limit import RateLimiter, rpm_for
 from utils.env import load_env_file
 
 DEFAULT_MODEL = "google:gemini-3.5-flash-lite"
