@@ -25,14 +25,14 @@ import os
 import sys
 import time
 
+from atal.channels.action_port import ActionPort
+from atal.channels.observation_feed import ObservationFeed
+from atal.evaluation.recorder import EvaluationRecorder
+from atal.evaluation.summarize_run import summarize
+from atal.flight.executor import ProjectAirSimExecutor
+from atal.observability import configure_observability
 from legacy.llm_pilot.llm_pilot import FlightRules, PilotLimits
 from legacy.llm_pilot.pilot_setup import HARNESSES, prepare_pilot
-from channel.action_port import ActionPort
-from channel.observation_feed import ObservationFeed
-from evaluation.recorder import EvaluationRecorder
-from evaluation.summarize_run import summarize
-from executor.projectairsim_executor import ProjectAirSimExecutor
-from observability import configure_observability
 from tests.test_executor import FAST, MultiAdapter
 
 TASK = ("Climb to 3 m above your current altitude, fly to a point 10 m north of the launch "
@@ -107,7 +107,7 @@ async def main(args) -> int:
 
 
 def list_models(model_arg) -> int:
-    from agent.model_config import DEFAULT_OLLAMA_URL, model_specs
+    from atal.agents.llm.model_config import DEFAULT_OLLAMA_URL, model_specs
     spec = model_specs(model_arg)[0]
     kind = spec.split(":", 1)[0]
     if kind in ("google", "google-cloud"):

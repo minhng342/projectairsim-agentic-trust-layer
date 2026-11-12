@@ -29,13 +29,13 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from adapters.projectairsim_adapter import ProjectAirSimAdapter
-from executor.projectairsim_executor import ProjectAirSimExecutor
-from models.action import CommandStatus
-from models.telemetry import GroundState, ValidationStatus
+from atal.simulation.airsim import ProjectAirSimAdapter
+from atal.flight.executor import ProjectAirSimExecutor
+from atal.core.action import CommandStatus
+from atal.core.telemetry import GroundState, ValidationStatus
 from legacy.fleet import run_all_or_cancel
-from utils.flight_safety import safe_shutdown
-from utils.separation import SeparationTracker, assess, format_report
+from atal.flight.shutdown import safe_shutdown
+from atal.evaluation.separation import SeparationTracker, assess, format_report
 
 
 # ---------------- Configuration ----------------

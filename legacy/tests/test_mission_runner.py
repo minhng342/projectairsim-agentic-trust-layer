@@ -5,13 +5,13 @@ import json
 
 import pytest
 
-from channel.action_port import ActionPort
-from channel.observation_feed import ObservationFeed
-from legacy.corridor.mission_runner import MissionPhase, MissionRunner
-from executor.path_follower import FollowerConfig, FollowMode
-from executor.projectairsim_executor import ProjectAirSimExecutor
-from models.action import ActionType, ProposedAction
+from atal.channels.action_port import ActionPort
+from atal.channels.observation_feed import ObservationFeed
+from atal.core.action import ActionType, ProposedAction
+from atal.flight.executor import ProjectAirSimExecutor
+from atal.flight.path_follower import FollowerConfig, FollowMode
 from legacy.corridor.mission import Corridor, DroneMission, MissionPlan
+from legacy.corridor.mission_runner import MissionPhase, MissionRunner
 from tests.channel_fakes import ListRecorder
 from tests.test_executor import FAST, FakeAdapter, FakeDrone, FakeWorld
 

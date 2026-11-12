@@ -3,7 +3,7 @@ Minimal stand-in for the `projectairsim` package so adapter logic can be tested
 without the simulator. Values come from the Pass 3 recording.
 
 install() registers it as `projectairsim` in sys.modules; call it before
-importing adapters.projectairsim_adapter.
+importing atal.simulation.airsim.
 """
 import sys
 import threading

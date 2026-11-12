@@ -44,20 +44,20 @@ import sys
 import time
 from dataclasses import asdict
 
-from adapters.projectairsim_adapter import ProjectAirSimAdapter
-from legacy.llm_pilot.scripted_agent import MissionStep, ScriptedMissionAgent
-from channel.action_port import ActionPort
-from channel.observation_feed import ObservationFeed
-from evaluation.recorder import EvaluationRecorder
-from evaluation.summarize_run import summarize
-from executor.projectairsim_executor import ExecutorConfig, ProjectAirSimExecutor
-from gate.action_gate import BypassGate
-from models.action import ActionType, CommandStatus, ProposedAction
-from models.telemetry import GroundState, ValidationStatus
-from trust.assessor import NoTrustAssessor
+from atal.channels.action_port import ActionPort
+from atal.channels.observation_feed import ObservationFeed
+from atal.core.action import ActionType, CommandStatus, ProposedAction
+from atal.core.telemetry import GroundState, ValidationStatus
+from atal.evaluation.recorder import EvaluationRecorder
+from atal.evaluation.separation import SeparationTracker, assess, format_report
+from atal.evaluation.summarize_run import summarize
+from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
+from atal.flight.shutdown import safe_shutdown
+from atal.simulation.airsim import ProjectAirSimAdapter
+from atal.trust_layer.action_gate import BypassGate
+from atal.trust_layer.assessor import NoTrustAssessor
 from legacy.fleet import PhaseBarrier, run_all_or_cancel
-from utils.flight_safety import safe_shutdown
-from utils.separation import SeparationTracker, assess, format_report
+from legacy.llm_pilot.scripted_agent import MissionStep, ScriptedMissionAgent
 
 SCENE = "scene_three_drones.jsonc"
 VEHICLES = ["Drone1", "Drone2", "Drone3"]
@@ -309,7 +309,7 @@ async def main() -> int:
             print(summarize(recorder.path))
         except Exception as err:
             print(f"(summary failed: {type(err).__name__}: {err})")
-        print(f"Summary:  python -m evaluation.summarize_run \"{recorder.path}\"")
+        print(f"Summary:  python -m atal.evaluation.summarize_run \"{recorder.path}\"")
 
 
 if __name__ == "__main__":

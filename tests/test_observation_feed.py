@@ -4,10 +4,10 @@ import math
 
 import pytest
 
-from channel.attacks import Drop, PositionOffset, Replay
-from channel.observation_feed import VERDICT_FIELDS, ObservationFeed
-from models.observation import TrustAssessment, TrustStatus
-from models.telemetry import ValidationStatus
+from atal.attacks.hooks import Drop, PositionOffset, Replay
+from atal.channels.observation_feed import VERDICT_FIELDS, ObservationFeed
+from atal.core.observation import TrustAssessment, TrustStatus
+from atal.core.telemetry import ValidationStatus
 from tests.channel_fakes import ListRecorder, SnapAdapter
 
 

@@ -4,8 +4,14 @@ import math
 
 import pytest
 
-from legacy.corridor.conflict_detection import (Minima, Track, detect, predict, prediction_view,
-                                track_from_peer)
+from legacy.corridor.conflict_detection import (
+    Minima,
+    Track,
+    detect,
+    predict,
+    prediction_view,
+    track_from_peer,
+)
 
 M = Minima(horizontal_m=5.0, vertical_m=2.0)
 

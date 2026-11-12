@@ -6,19 +6,19 @@ robustness and validation can be checked anywhere.
     python -m pytest tests                      (from the repo root)
     python -m tests.test_adapter_offline        (no pytest needed)
 """
-from collections import deque
 import math
 import sys
 import threading
 import time
+from collections import deque
 
 from tests import fake_projectairsim as fake
 
 fake.install()
 
-from adapters.projectairsim_adapter import ProjectAirSimAdapter, yaw_deg_from_quaternion  # noqa: E402
-from models.telemetry import GroundState, LandedState, Quaternion, ValidationStatus  # noqa: E402
-from validation.telemetry_validator import ValidationLimits  # noqa: E402
+from atal.core.telemetry import GroundState, LandedState, Quaternion, ValidationStatus  # noqa: E402
+from atal.simulation.airsim import ProjectAirSimAdapter, yaw_deg_from_quaternion  # noqa: E402
+from atal.simulation.telemetry_checks import ValidationLimits  # noqa: E402
 
 T0 = 9_711_000_000  # kinematics time_stamp in GOOD_KINEMATICS
 
@@ -510,7 +510,7 @@ def test_reconnect_clears_collision_log():
 def test_collision_log_keeps_the_first_contact_through_a_long_one(monkeypatch):
     """Live 2026-10-28: a lasting contact is reported every physics step; a rolling window
     lost the first contact and the report put a 31 s collision at 183 s."""
-    import adapters.projectairsim_adapter as mod
+    import atal.simulation.airsim as mod
     monkeypatch.setattr(mod, "COLLISION_HEAD", 3)
     a = make_adapter()
     fresh_pose(a)
@@ -541,7 +541,7 @@ if __name__ == "__main__":
 def test_hung_pull_request_marks_stalled_and_fails_fast():
     """Live 2026-11-05: CityEnviron stopped answering and the blocking pull froze every
     drone for 757 s. The adapter bounds each pull and then refuses at once."""
-    from adapters.projectairsim_adapter import SimStalled
+    from atal.simulation.airsim import SimStalled
     a = make_adapter(request_timeout_s=0.2)
     fresh_pose(a)
     a.get_snapshot("Drone1")                     # healthy first

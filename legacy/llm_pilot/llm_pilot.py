@@ -34,8 +34,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from uuid import uuid4
 
+from atal.core.observation import Observation
 from legacy.llm_pilot.providers.base import ModelTurn, ToolCall, ToolResult, ToolSpec
-from models.observation import Observation
 
 
 @dataclass(frozen=True)

@@ -3,8 +3,8 @@ import asyncio
 
 import pytest
 
-from executor.projectairsim_executor import ExecutorConfig, ProjectAirSimExecutor
-from models.action import CommandStatus
+from atal.core.action import CommandStatus
+from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
 from tests.test_executor import FAST, FakeAdapter, FakeDrone, FakeWorld, move, rotate
 
 

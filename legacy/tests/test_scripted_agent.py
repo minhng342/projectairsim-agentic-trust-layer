@@ -3,16 +3,21 @@ import asyncio
 
 import pytest
 
+from atal.attacks.hooks import PositionOffset
+from atal.channels.action_port import ActionPort
+from atal.channels.observation_feed import ObservationFeed
+from atal.core.action import (
+    ActionFeedback,
+    ActionType,
+    CommandStatus,
+    FeedbackStage,
+    ProposedAction,
+)
+from atal.flight.executor import ProjectAirSimExecutor
+from legacy.fleet import PhaseBarrier, run_all_or_cancel
 from legacy.llm_pilot.scripted_agent import MissionStep, ScriptedMissionAgent
-from channel.action_port import ActionPort
-from channel.attacks import PositionOffset
-from channel.observation_feed import ObservationFeed
-from executor.projectairsim_executor import ProjectAirSimExecutor
-from models.action import (ActionFeedback, ActionType, CommandStatus, FeedbackStage,
-                           ProposedAction)
 from tests.channel_fakes import ListRecorder, SnapAdapter
 from tests.test_executor import FAST, MultiAdapter
-from legacy.fleet import PhaseBarrier, run_all_or_cancel
 
 
 # ------------------------------------------------------------ PhaseBarrier
@@ -123,7 +128,7 @@ def test_no_observation_aborts_without_acting():
 
 
 def test_bad_action_from_nan_observation_aborts_cleanly():
-    from channel.attacks import HookContext  # noqa: F401
+    from atal.attacks.hooks import HookContext  # noqa: F401
 
     def wreck(payload, ctx):
         payload["position_ned_m"] = None

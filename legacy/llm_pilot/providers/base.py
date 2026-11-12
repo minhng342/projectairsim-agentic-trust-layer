@@ -17,7 +17,7 @@ through the agent's own feed and action port, and every call is recorded.
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from agent.rate_limit import RateLimiter  # noqa: F401  (moved; kept importable from here)
+from atal.agents.llm.rate_limit import RateLimiter  # noqa: F401  (moved; kept importable from here)
 
 
 @dataclass(frozen=True)

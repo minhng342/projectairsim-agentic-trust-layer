@@ -31,12 +31,12 @@ import sys
 import time
 from dataclasses import asdict, replace
 
-from adapters.projectairsim_adapter import ProjectAirSimAdapter
-from evaluation.recorder import EvaluationRecorder
-from executor.projectairsim_executor import ExecutorConfig, ProjectAirSimExecutor
-from models.action import CommandStatus
-from models.telemetry import GroundState, ValidationStatus
-from utils.flight_safety import safe_shutdown
+from atal.core.action import CommandStatus
+from atal.core.telemetry import GroundState, ValidationStatus
+from atal.evaluation.recorder import EvaluationRecorder
+from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
+from atal.flight.shutdown import safe_shutdown
+from atal.simulation.airsim import ProjectAirSimAdapter
 
 VEHICLE = "Drone1"
 LEG_M = 10.0

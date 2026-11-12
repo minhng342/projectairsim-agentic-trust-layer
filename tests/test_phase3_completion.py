@@ -7,19 +7,19 @@ import tarfile
 
 import pytest
 
-from adapters.kinematic_sim import KinematicSim
-from evaluation.archive import main as archive_main
-from evaluation.compare import bootstrap_ci, load_batch, paired_comparison, table
-from evaluation.evidence import MANIFEST, verify, write_manifest
-from evaluation.recorder import read_run
-from executor.path_follower import FollowerConfig
-from executor.projectairsim_executor import ProjectAirSimExecutor
-from executor.sector_executor import SectorExecutor
-from gate.sar_guard import SarGuard
-from models.action import ActionType, ProposedAction
-from models.belief import LocalBelief
-from models.sar import Mission
-from run_sar_mission import parse_obstacle
+from atal.core.action import ActionType, ProposedAction
+from atal.core.belief import LocalBelief
+from atal.core.sar import Mission
+from atal.evaluation.archive import main as archive_main
+from atal.evaluation.compare import bootstrap_ci, load_batch, paired_comparison, table
+from atal.evaluation.evidence import MANIFEST, verify, write_manifest
+from atal.evaluation.recorder import read_run
+from atal.flight.executor import ProjectAirSimExecutor
+from atal.flight.path_follower import FollowerConfig
+from atal.flight.sector_sweep import SectorExecutor
+from atal.runtime.run_single import parse_obstacle
+from atal.simulation.kinematic_sim import KinematicSim
+from atal.trust_layer.invariant_guard import SarGuard
 from tests.test_sar_pipeline import MISSION
 from tests.test_sar_pipeline import run as run_one_drone
 from tests.test_sar_swarm import run as run_swarm
@@ -190,7 +190,7 @@ def test_ignoring_peer_reports_lets_a_teammate_enter(tmp_path):
 
 
 def test_a_victim_in_a_blocked_sector_fails_as_unreachable():
-    from run_sar_swarm import run_failures
+    from atal.runtime.run_team import run_failures
     base = {"victim_found": False, "victim_unreachable": True, "victim_sector": "A1", "drones": {},
             "geofence_breaches": 0, "impacts": 0, "run_complete": True,
             "run_log_outcome": "searched", "messages": {}}
@@ -199,9 +199,9 @@ def test_a_victim_in_a_blocked_sector_fails_as_unreachable():
 
 
 def test_receiver_stays_out_of_a_sector_a_peer_reported_and_keeps_it_unsearched():
-    from agent.swarm import PeerMessenger, SwarmCoordinator, SwarmReceiver
-    from channel.remote_id import RemoteIdBus, RemoteIdReceiver
-    from models.swarm import SectorBlocked
+    from atal.agents.swarm import PeerMessenger, SwarmCoordinator, SwarmReceiver
+    from atal.channels.radio import RemoteIdBus, RemoteIdReceiver
+    from atal.core.peer_messages import SectorBlocked
     m = _mission()
     clock = lambda: 100.0
     bus = RemoteIdBus()
@@ -328,7 +328,7 @@ def test_archive_packs_intact_batches_and_refuses_changed_ones(tmp_path):
 
 # ------------------------------------------------------------------ pad zone
 def test_pad_zone_lets_one_drone_in_at_a_time():
-    from executor.pad_zone import PadZone
+    from atal.flight.pad_zone import PadZone
     z = PadZone.around([(0, -3), (0, 0), (0, 3)], pad_zone_m=10)
     assert z.center == (0.0, 0.0) and z.radius_m == pytest.approx(18.0)
     assert z.inside((0, 17)) and not z.inside((0, 19))
@@ -419,7 +419,7 @@ def _airborne_at(sim, vid, north, east, alt=10.0):
 def _return_home_with_zone_held(start_xy):
     """Drone1 flies home while Drone2 keeps the pad zone past the wait (review 359eb49 P1
     reproduction): the return must end pad_zone_timeout outside the zone, never go in."""
-    from executor.pad_zone import PadZone
+    from atal.flight.pad_zone import PadZone
     m = _mission()
     sim = KinematicSim({"Drone1": (0.0, 0.0)}, speedup=200)
     flight = ProjectAirSimExecutor(sim)
@@ -458,7 +458,7 @@ def test_pad_zone_timeout_from_inside_leaves_the_zone_first():
 
 
 def test_exit_point_stays_allowed():
-    from executor.pad_zone import PadZone
+    from atal.flight.pad_zone import PadZone
     z = PadZone((0.0, 0.0), 18.0)
     quadrant = lambda p: p[0] >= 0 and p[1] >= 0
     assert z.exit_point((5.0, 0.0), 2.0, quadrant) == pytest.approx((20.0, 0.0))   # straight out
@@ -470,7 +470,7 @@ def test_exit_point_stays_allowed():
 def test_leaving_the_zone_stays_inside_the_geofence():
     """A drone inside a held zone whose straight way out crosses the geofence (found as a
     flaky geofence breach in the three-drone run): it waits inside the area."""
-    from executor.pad_zone import PadZone
+    from atal.flight.pad_zone import PadZone
     m = _mission()
     sim = KinematicSim({"Drone1": (0.0, 0.0)}, speedup=200)
     zone = PadZone((0.0, 20.0), 30.0)                      # straight out from (0, 25) is (0, 52)
@@ -492,7 +492,7 @@ def test_leaving_the_zone_stays_inside_the_geofence():
 
 
 def test_approach_point_from_the_centre_is_on_the_edge():
-    from executor.pad_zone import PadZone
+    from atal.flight.pad_zone import PadZone
     z = PadZone((1.0, 2.0), 10.0)
     assert not z.inside(z.approach_point((1.0, 2.0)))
 
@@ -508,8 +508,8 @@ def _final_xy(log, vid):
 
 
 def test_runner_lands_outside_the_zone_when_the_wait_times_out(tmp_path, monkeypatch):
-    import run_sar_swarm
-    monkeypatch.setattr(run_sar_swarm, "PAD_WAIT_S", 0.5)
+    from atal.runtime import run_team
+    monkeypatch.setattr(run_team, "PAD_WAIT_S", 0.5)
     code, batch, s = run_swarm(tmp_path)
     m = s["runs"][0]
     log = read_run(batch / "run_00.jsonl")
@@ -527,15 +527,15 @@ def test_runner_lands_outside_the_zone_when_the_wait_times_out(tmp_path, monkeyp
 
 
 def test_unconfirmed_landing_keeps_the_zone_held(tmp_path, monkeypatch):
-    import run_sar_swarm
-    real = run_sar_swarm.safe_shutdown
+    from atal.runtime import run_team
+    real = run_team.safe_shutdown
 
     async def unconfirmed(*a, **kw):
         rep = await real(*a, **kw)
         rep.grounded_confirmed = False
         return rep
-    monkeypatch.setattr(run_sar_swarm, "safe_shutdown", unconfirmed)
-    monkeypatch.setattr(run_sar_swarm, "PAD_WAIT_S", 2.0)
+    monkeypatch.setattr(run_team, "safe_shutdown", unconfirmed)
+    monkeypatch.setattr(run_team, "PAD_WAIT_S", 2.0)
     code, batch, s = run_swarm(tmp_path)
     m = s["runs"][0]
     log = read_run(batch / "run_00.jsonl")

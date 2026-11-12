@@ -11,8 +11,8 @@ import argparse
 import asyncio
 import json
 
-from adapters.projectairsim_adapter import ProjectAirSimAdapter
-from utils.flight_safety import safe_shutdown
+from atal.flight.shutdown import safe_shutdown
+from atal.simulation.airsim import ProjectAirSimAdapter
 
 VEHICLE = "Drone1"
 

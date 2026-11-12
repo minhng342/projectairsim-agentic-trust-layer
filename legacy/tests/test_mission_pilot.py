@@ -10,19 +10,24 @@ import pytest
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
-from pydantic_ai.messages import (ModelResponse, TextPart, ToolCallPart,  # noqa: E402
-                                  ToolReturnPart, UserPromptPart)
+from pydantic_ai.messages import (  # noqa: E402
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import FunctionModel  # noqa: E402
 
-from legacy.corridor.mission_pilot import MissionPilot, MissionPilotConfig  # noqa: E402
-from channel.action_port import ActionPort  # noqa: E402
-from channel.observation_feed import ObservationFeed  # noqa: E402
-from channel.remote_id import RemoteIdBroadcaster, RemoteIdBus, RemoteIdReceiver  # noqa: E402
+from atal.channels.action_port import ActionPort  # noqa: E402
+from atal.channels.observation_feed import ObservationFeed  # noqa: E402
+from atal.channels.radio import RemoteIdBroadcaster, RemoteIdBus, RemoteIdReceiver  # noqa: E402
+from atal.flight.executor import ProjectAirSimExecutor  # noqa: E402
+from atal.flight.path_follower import FollowerConfig, FollowMode  # noqa: E402
 from legacy.corridor.conflict_detection import PairPrediction  # noqa: E402
-from legacy.corridor.mission_runner import MissionRunner  # noqa: E402
-from executor.path_follower import FollowerConfig, FollowMode  # noqa: E402
-from executor.projectairsim_executor import ProjectAirSimExecutor  # noqa: E402
 from legacy.corridor.mission import MissionPlan  # noqa: E402
+from legacy.corridor.mission_pilot import MissionPilot, MissionPilotConfig  # noqa: E402
+from legacy.corridor.mission_runner import MissionRunner  # noqa: E402
 from tests.channel_fakes import ListRecorder  # noqa: E402
 from tests.test_executor import FAST, MultiAdapter  # noqa: E402
 

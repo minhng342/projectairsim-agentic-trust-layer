@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atal"
+version = "0.3.0"
+description = "Agentic trust layer for drone agents: search and rescue in Project AirSim (Phases 0 to 3)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"    # the projectairsim client does not install on 3.13
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["atal*"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["search_and_rescue_stack.py"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["atal", "legacy", "tests"]

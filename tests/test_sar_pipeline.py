@@ -6,12 +6,12 @@ import json
 import pytest
 import yaml
 
-from adapters.kinematic_sim import KinematicSim
-from evaluation.recorder import read_run
-from evaluation.sar_metrics import coverage_raster
-from models.belief import Detection, LocalBelief, SectorStatus
-from models.sar import Mission
-from run_sar_mission import main, parse_args
+from atal.core.belief import Detection, LocalBelief, SectorStatus
+from atal.core.sar import Mission
+from atal.evaluation.recorder import read_run
+from atal.evaluation.sar_metrics import coverage_raster
+from atal.runtime.run_single import main, parse_args
+from atal.simulation.kinematic_sim import KinematicSim
 from tests.channel_fakes import ListRecorder
 
 MISSION = {
@@ -151,9 +151,9 @@ def test_kinematic_sim_flies_velocity_and_position_commands():
 
 
 def test_unknown_sector_and_foreign_actions_are_refused_without_flying():
-    from executor.projectairsim_executor import ProjectAirSimExecutor
-    from executor.sector_executor import SectorExecutor
-    from models.action import ActionType, ProposedAction
+    from atal.core.action import ActionType, ProposedAction
+    from atal.flight.executor import ProjectAirSimExecutor
+    from atal.flight.sector_sweep import SectorExecutor
     mission = Mission.model_validate(MISSION)
 
     async def go():
@@ -171,7 +171,7 @@ def test_unknown_sector_and_foreign_actions_are_refused_without_flying():
 
 
 def test_impact_collisions_are_logged_and_fail_the_run(tmp_path, monkeypatch):
-    from models.telemetry import CollisionState
+    from atal.core.telemetry import CollisionState
     spawn = CollisionState(has_collided=True, object_name="Landscape_1", sim_time_ns=3_000_000_000,
                            impact_speed_mps=None, is_resting_contact=None, normal_z=-1.0,
                            is_supporting_surface=True, count=1)
@@ -187,7 +187,7 @@ def test_impact_collisions_are_logged_and_fail_the_run(tmp_path, monkeypatch):
 
 
 def test_spawn_ground_contact_is_not_an_impact(tmp_path, monkeypatch):
-    from models.telemetry import CollisionState
+    from atal.core.telemetry import CollisionState
     spawn = CollisionState(has_collided=True, object_name="Landscape_1", sim_time_ns=3_000_000_000,
                            impact_speed_mps=None, is_resting_contact=None, normal_z=-1.0,
                            is_supporting_surface=True, count=1)

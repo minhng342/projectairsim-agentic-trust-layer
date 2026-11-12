@@ -3,15 +3,15 @@ file's corridors, hear each other on Remote ID, and scripted agents send maneuve
 through their ports while they fly."""
 import asyncio
 
-from legacy.corridor.scripted_maneuvers import ScriptedManeuverAgent, Trigger
-from channel.action_port import ActionPort
-from channel.observation_feed import ObservationFeed
-from channel.remote_id import RemoteIdBroadcaster, RemoteIdBus, RemoteIdReceiver
-from legacy.corridor.mission_runner import MissionRunner
-from executor.path_follower import FollowerConfig, FollowMode
-from executor.projectairsim_executor import ProjectAirSimExecutor
-from models.action import ActionType
+from atal.channels.action_port import ActionPort
+from atal.channels.observation_feed import ObservationFeed
+from atal.channels.radio import RemoteIdBroadcaster, RemoteIdBus, RemoteIdReceiver
+from atal.core.action import ActionType
+from atal.flight.executor import ProjectAirSimExecutor
+from atal.flight.path_follower import FollowerConfig, FollowMode
 from legacy.corridor.mission import MissionPlan
+from legacy.corridor.mission_runner import MissionRunner
+from legacy.corridor.scripted_maneuvers import ScriptedManeuverAgent, Trigger
 from tests.channel_fakes import ListRecorder
 from tests.test_executor import FAST, MultiAdapter
 

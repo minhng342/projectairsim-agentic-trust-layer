@@ -4,8 +4,8 @@ import math
 
 import pytest
 
-from executor.path_follower import FollowerConfig, FollowMode, PathFollower, Polyline
-from models.telemetry import GroundState, ValidationStatus
+from atal.core.telemetry import GroundState, ValidationStatus
+from atal.flight.path_follower import FollowerConfig, FollowMode, PathFollower, Polyline
 from tests.test_executor import FakeAdapter, FakeDrone, FakeWorld
 
 FAST = FollowerConfig(poll_interval_s=0.0, hover_timeout_s=0.5)

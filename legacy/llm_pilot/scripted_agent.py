@@ -18,8 +18,8 @@ cannot build a valid action, or finds its barrier broken.
 from dataclasses import dataclass
 from typing import Callable
 
-from models.action import ActionFeedback, CommandStatus, ProposedAction
-from models.observation import Observation
+from atal.core.action import ActionFeedback, CommandStatus, ProposedAction
+from atal.core.observation import Observation
 from legacy.fleet import PhaseBarrier
 
 

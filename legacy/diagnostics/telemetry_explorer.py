@@ -1,7 +1,7 @@
 """
 telemetry_explorer.py
 Shows every non-camera telemetry stream Project AirSim exposes for Drone1,
-so we know what the adapter can map into models/telemetry.py.
+so we know what the adapter can map into atal/core/telemetry.py.
 
 1. Subscribes to robot_info topics (actual_pose, collision_info, rotor_info)
    and sensor topics (IMU, GPS, barometer, magnetometer).
@@ -18,9 +18,9 @@ import json
 import os
 import time
 
-from projectairsim import ProjectAirSimClient, Drone, World
+from projectairsim import Drone, ProjectAirSimClient, World
 
-from utils.flight_safety import safe_shutdown
+from atal.flight.shutdown import safe_shutdown
 
 SIM_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "sim_config") + os.sep
 SCENE = "scene_basic_drone.jsonc"

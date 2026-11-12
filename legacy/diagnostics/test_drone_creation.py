@@ -8,10 +8,9 @@ Run from the repo root with Blocks.exe running.
 """
 import asyncio
 import math
-
 import os
 
-from projectairsim import ProjectAirSimClient, Drone, World
+from projectairsim import Drone, ProjectAirSimClient, World
 from projectairsim.utils import projectairsim_log
 
 # Scene/robot configs vendored in this repo (copied from Project AirSim v1.0.1 samples)

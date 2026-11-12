@@ -17,9 +17,9 @@ import math
 import time
 from dataclasses import dataclass, field
 
-from channel.remote_id import traffic_for_model
-from executor.path_follower import Polyline
-from models.action import ActionType, ProposedAction
+from atal.channels.radio import traffic_for_model
+from atal.core.action import ActionType, ProposedAction
+from atal.flight.path_follower import Polyline
 from legacy.corridor.mission import Corridor
 
 

@@ -9,7 +9,7 @@ from legacy.llm_pilot.providers import rpm_for
 from legacy.llm_pilot.providers.base import ModelTurn, RateLimiter
 from legacy.llm_pilot.providers.gemini import GeminiProvider
 from legacy.tests.test_gemini_provider import FakeClient, fake_types, response, text
-from legacy.tests.test_llm_pilot import FakeProvider, PlannedPilot, TURN, build
+from legacy.tests.test_llm_pilot import TURN, FakeProvider, PlannedPilot, build
 
 
 class FakeTime:

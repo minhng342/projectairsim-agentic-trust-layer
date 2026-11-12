@@ -3,7 +3,7 @@ test_navigation.py
 Takeoff -> climb -> rotate nose -> move along tracks -> return to launch -> land,
 printing heading AND track after each step so the two are never confused.
 
-Command semantics (see models/telemetry.py):
+Command semantics (see atal/core/telemetry.py):
 - rotate_to_heading: turns the nose (yaw) in place; the flight path doesn't change.
 - move_along_track:  moves in a direction at a speed for a duration; the nose
                      is left where it is.
@@ -18,9 +18,9 @@ import os
 
 from projectairsim import Drone, ProjectAirSimClient, World
 
-from adapters.projectairsim_adapter import track_deg_from_velocity, yaw_deg_from_quaternion
-from models.telemetry import Quaternion, Vector3
-from utils.flight_safety import safe_shutdown
+from atal.core.telemetry import Quaternion, Vector3
+from atal.flight.shutdown import safe_shutdown
+from atal.simulation.airsim import track_deg_from_velocity, yaw_deg_from_quaternion
 
 SIM_CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "sim_config") + os.sep
 SCENE = "scene_basic_drone.jsonc"

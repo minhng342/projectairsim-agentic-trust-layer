@@ -31,19 +31,19 @@ import sys
 import time
 from dataclasses import asdict
 
-from adapters.projectairsim_adapter import ProjectAirSimAdapter
+from atal.channels.action_port import ActionPort
+from atal.channels.observation_feed import ObservationFeed
+from atal.core.telemetry import GroundState, ValidationStatus
+from atal.evaluation.recorder import EvaluationRecorder
+from atal.evaluation.summarize_run import summarize
+from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
+from atal.flight.shutdown import safe_shutdown
+from atal.observability import configure_observability
+from atal.simulation.airsim import ProjectAirSimAdapter
+from atal.trust_layer.action_gate import BypassGate
+from atal.trust_layer.assessor import NoTrustAssessor
 from legacy.llm_pilot.llm_pilot import FlightRules, PilotLimits
 from legacy.llm_pilot.pilot_setup import HARNESSES, prepare_pilot
-from channel.action_port import ActionPort
-from channel.observation_feed import ObservationFeed
-from evaluation.recorder import EvaluationRecorder
-from evaluation.summarize_run import summarize
-from executor.projectairsim_executor import ExecutorConfig, ProjectAirSimExecutor
-from gate.action_gate import BypassGate
-from models.telemetry import GroundState, ValidationStatus
-from observability import configure_observability
-from trust.assessor import NoTrustAssessor
-from utils.flight_safety import safe_shutdown
 
 VEHICLE = "Drone1"
 SCENE = "scene_basic_drone.jsonc"

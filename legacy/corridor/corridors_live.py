@@ -33,26 +33,31 @@ import sys
 import time
 from dataclasses import asdict
 
-from adapters.projectairsim_adapter import ProjectAirSimAdapter
-from legacy.corridor.mission_pilot import MissionPilot, MissionPilotConfig
-from legacy.corridor.scripted_maneuvers import ScriptedManeuverAgent, Trigger
-from channel.action_port import ActionPort
-from channel.observation_feed import ObservationFeed
-from channel.remote_id import RemoteIdBroadcaster, RemoteIdBus, RemoteIdReceiver, traffic_for_model
-from evaluation.recorder import EvaluationRecorder
-from evaluation.summarize_run import summarize
-from legacy.corridor.mission_runner import MissionRunner
-from executor.path_follower import FollowerConfig, FollowMode
-from executor.projectairsim_executor import ExecutorConfig, ProjectAirSimExecutor
-from gate.action_gate import BypassGate
-from models.action import ActionType, CommandStatus
+from atal.channels.action_port import ActionPort
+from atal.channels.observation_feed import ObservationFeed
+from atal.channels.radio import (
+    RemoteIdBroadcaster,
+    RemoteIdBus,
+    RemoteIdReceiver,
+    traffic_for_model,
+)
+from atal.core.action import ActionType, CommandStatus
+from atal.core.telemetry import GroundState, ValidationStatus
+from atal.evaluation.recorder import EvaluationRecorder
+from atal.evaluation.separation import SeparationTracker, assess, format_report
+from atal.evaluation.summarize_run import summarize
+from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
+from atal.flight.path_follower import FollowerConfig, FollowMode
+from atal.flight.shutdown import safe_shutdown
+from atal.observability import configure_observability
+from atal.simulation.airsim import ProjectAirSimAdapter
+from atal.trust_layer.action_gate import BypassGate
+from atal.trust_layer.assessor import NoTrustAssessor
 from legacy.corridor.mission import MissionPlan
-from models.telemetry import GroundState, ValidationStatus
-from observability import configure_observability
-from trust.assessor import NoTrustAssessor
+from legacy.corridor.mission_pilot import MissionPilot, MissionPilotConfig
+from legacy.corridor.mission_runner import MissionRunner
+from legacy.corridor.scripted_maneuvers import ScriptedManeuverAgent, Trigger
 from legacy.fleet import run_all_or_cancel
-from utils.flight_safety import safe_shutdown
-from utils.separation import SeparationTracker, assess, format_report
 
 OBSERVATION_HZ = 5.0
 RID_HZ = 1.0
@@ -155,7 +160,7 @@ async def main(args) -> int:
     model = model_spec = None
     traced = False
     if llm:
-        from agent.model_config import pick_model
+        from atal.agents.llm.model_config import pick_model
         traced = configure_observability()
         print("checking model availability...")
         try:

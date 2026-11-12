@@ -35,8 +35,8 @@ import asyncio
 import time
 from enum import Enum
 
-from executor.path_follower import FollowerConfig, FollowMode, FollowResult, PathFollower
-from models.action import ActionType, CommandResult, CommandStatus, ProposedAction
+from atal.core.action import ActionType, CommandResult, CommandStatus, ProposedAction
+from atal.flight.path_follower import FollowerConfig, FollowMode, FollowResult, PathFollower
 from legacy.corridor.mission import DroneMission
 
 

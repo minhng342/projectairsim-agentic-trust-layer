@@ -3,8 +3,8 @@ import math
 
 import pytest
 
-from models.telemetry import CollisionState
-from utils.separation import SeparationTracker, assess, format_report
+from atal.core.telemetry import CollisionState
+from atal.evaluation.separation import SeparationTracker, assess, format_report
 
 IDS = ["Drone1", "Drone2", "Drone3"]
 T = 10_000_000_000

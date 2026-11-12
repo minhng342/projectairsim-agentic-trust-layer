@@ -8,18 +8,23 @@ import pytest
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
 from pydantic_ai.exceptions import ModelNotFoundError, ModelServerError  # noqa: E402
-from pydantic_ai.messages import (ModelResponse, TextPart, ToolCallPart,  # noqa: E402
-                                  ToolReturnPart)
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart  # noqa: E402
 from pydantic_ai.models.function import FunctionModel  # noqa: E402
 
+from atal.agents.llm.model_config import (  # noqa: E402
+    ResilientModel,
+    default_rpm,
+    is_transient,
+    make_model,
+    model_specs,
+    pick_model,
+)
+from atal.attacks.hooks import PositionOffset  # noqa: E402
+from atal.channels.action_port import ActionPort  # noqa: E402
+from atal.channels.observation_feed import ObservationFeed  # noqa: E402
+from atal.flight.executor import ProjectAirSimExecutor  # noqa: E402
 from legacy.llm_pilot.llm_pilot import PilotLimits  # noqa: E402
-from agent.model_config import (ResilientModel, default_rpm, is_transient, make_model,  # noqa: E402
-                                model_specs, pick_model)
 from legacy.llm_pilot.pydantic_pilot import PydanticPilot  # noqa: E402
-from channel.action_port import ActionPort  # noqa: E402
-from channel.attacks import PositionOffset  # noqa: E402
-from channel.observation_feed import ObservationFeed  # noqa: E402
-from executor.projectairsim_executor import ProjectAirSimExecutor  # noqa: E402
 from tests.channel_fakes import ListRecorder, SnapAdapter  # noqa: E402
 from tests.test_action_port import Clock, FakeExecutor  # noqa: E402
 from tests.test_executor import FAST, MultiAdapter  # noqa: E402
@@ -300,8 +305,7 @@ def test_ollama_model_builds_offline_with_a_default_local_url(monkeypatch):
 
 
 def test_transient_vs_permanent_errors():
-    from pydantic_ai.exceptions import (ModelHTTPError, ModelOverloadedError,
-                                        ModelRateLimitError)
+    from pydantic_ai.exceptions import ModelHTTPError, ModelOverloadedError, ModelRateLimitError
     assert is_transient(ModelOverloadedError("m", "busy"))
     assert is_transient(ModelRateLimitError("m", "slow down"))
     assert is_transient(ModelHTTPError(503, "m"))

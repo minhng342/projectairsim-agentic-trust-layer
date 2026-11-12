@@ -3,10 +3,10 @@ import asyncio
 
 import pytest
 
-from executor.projectairsim_executor import ProjectAirSimExecutor
-from models.action import ActionType, ProposedAction
-from tests.test_executor import FAST, MultiAdapter
+from atal.core.action import ActionType, ProposedAction
+from atal.flight.executor import ProjectAirSimExecutor
 from legacy.fleet import run_all_or_cancel
+from tests.test_executor import FAST, MultiAdapter
 
 
 def run(coro):

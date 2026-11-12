@@ -17,12 +17,12 @@ import asyncio
 import sys
 import time
 
-from adapters.projectairsim_adapter import ProjectAirSimAdapter
-from executor.completion import heading_error_deg, horizontal_distance_m
-from executor.projectairsim_executor import ProjectAirSimExecutor
-from models.action import CommandStatus
-from models.telemetry import GroundState, ValidationStatus
-from utils.flight_safety import safe_shutdown
+from atal.core.action import CommandStatus
+from atal.core.telemetry import GroundState, ValidationStatus
+from atal.flight.completion import heading_error_deg, horizontal_distance_m
+from atal.flight.executor import ProjectAirSimExecutor
+from atal.flight.shutdown import safe_shutdown
+from atal.simulation.airsim import ProjectAirSimAdapter
 
 VEHICLE = "Drone1"
 

@@ -1,8 +1,8 @@
 """safe_shutdown tests with a fake async drone (no simulator)."""
 import asyncio
 
-from models.telemetry import GroundState, ValidationStatus
-from utils.flight_safety import safe_shutdown
+from atal.core.telemetry import GroundState, ValidationStatus
+from atal.flight.shutdown import safe_shutdown
 
 QUIET = dict(log=lambda *_: None, confirm_timeout_s=0.2, confirm_poll_s=0.01)
 

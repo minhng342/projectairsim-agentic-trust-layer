@@ -12,10 +12,15 @@ from datetime import datetime, timezone
 
 import pytest
 
-from executor.projectairsim_executor import ExecutorConfig, ProjectAirSimExecutor
-from models.action import ActionType, CommandStatus, ProposedAction
-from models.telemetry import (GroundState, Quaternion, TelemetrySnapshot, ValidationStatus,
-                              Vector3)
+from atal.core.action import ActionType, CommandStatus, ProposedAction
+from atal.core.telemetry import (
+    GroundState,
+    Quaternion,
+    TelemetrySnapshot,
+    ValidationStatus,
+    Vector3,
+)
+from atal.flight.executor import ExecutorConfig, ProjectAirSimExecutor
 
 # final_approach="none": most tests here exercise the corrections path (Simple Flight's own
 # position hold). The velocity final approach, the live default, has its own tests below.
@@ -604,10 +609,11 @@ def test_unexpected_error_while_waiting_for_task_fails_and_hovers():
 
 
 def test_every_reason_code_used_in_tests_is_declared():
-    from executor.projectairsim_executor import REASON_CODES
     import inspect
     import re
     import sys
+
+    from atal.flight.executor import REASON_CODES
     src = inspect.getsource(sys.modules[__name__])
     used = set(re.findall(r'r\.reason_code == "(\w+)"', src))
     assert used and used <= set(REASON_CODES)

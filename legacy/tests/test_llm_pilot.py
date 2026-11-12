@@ -6,12 +6,12 @@ import json
 
 import pytest
 
+from atal.attacks.hooks import PositionOffset
+from atal.channels.action_port import ActionPort
+from atal.channels.observation_feed import ObservationFeed
+from atal.flight.executor import ProjectAirSimExecutor
 from legacy.llm_pilot.llm_pilot import LLMPilot, PilotLimits, observation_for_model, tool_specs
 from legacy.llm_pilot.providers.base import ModelTurn, ToolCall
-from channel.action_port import ActionPort
-from channel.attacks import PositionOffset
-from channel.observation_feed import ObservationFeed
-from executor.projectairsim_executor import ProjectAirSimExecutor
 from tests.channel_fakes import ListRecorder, SnapAdapter
 from tests.test_action_port import Clock, FakeExecutor
 from tests.test_executor import FAST, MultiAdapter

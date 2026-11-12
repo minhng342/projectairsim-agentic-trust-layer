@@ -4,7 +4,7 @@ import math
 import pytest
 from pydantic import ValidationError
 
-from models.action import ActionType, CommandResult, CommandStatus, ProposedAction
+from atal.core.action import ActionType, CommandResult, CommandStatus, ProposedAction
 
 
 def act(action_type, **params):

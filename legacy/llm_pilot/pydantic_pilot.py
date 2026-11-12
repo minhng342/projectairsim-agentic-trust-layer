@@ -1,5 +1,5 @@
 """
-PydanticPilot: the pilot agent on Pydantic AI (any model: agent/model_config.py).
+PydanticPilot: the pilot agent on Pydantic AI (any model: atal/agents/llm/model_config.py).
 
 Same contract as LLMPilot (legacy/llm_pilot/llm_pilot.py), whose PilotCore it shares: the same
 system prompt and task, the same two tools running the same code against the agent's
@@ -13,13 +13,19 @@ AI's default is concurrent). Arguments that do not fit a tool's schema are answe
 by Pydantic AI itself with the validation errors and never reach the port; they are
 recorded as "tool_rejected" so malformed proposals still show up in the run log.
 
-Observability: if Logfire is configured (observability.py), every model request and
+Observability: if Logfire is configured (atal/observability.py), every model request and
 tool call is traced there too; the JSONL run record is written either way.
 """
 from typing import Literal
 
-from pydantic_ai import (Agent, RunContext, RunTimedOut, UnexpectedModelBehavior,
-                         UsageLimitExceeded, UsageLimits)
+from pydantic_ai import (
+    Agent,
+    RunContext,
+    RunTimedOut,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UsageLimits,
+)
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 

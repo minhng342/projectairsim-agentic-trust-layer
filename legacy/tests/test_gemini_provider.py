@@ -146,7 +146,7 @@ def test_missing_key_is_a_clear_error(monkeypatch):
 
 
 def test_env_file_loader_sets_only_unset_keys(tmp_path, monkeypatch):
-    from utils.env import load_env_file
+    from atal.env import load_env_file
     f = tmp_path / ".env"
     f.write_text('# comment\nGEMINI_API_KEY="abc"\nexport GEMINI_MODEL=m1\nALREADY=new\n\nbad line\n')
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)

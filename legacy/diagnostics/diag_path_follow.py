@@ -25,12 +25,12 @@ import sys
 import time
 from dataclasses import asdict
 
-from adapters.projectairsim_adapter import ProjectAirSimAdapter
-from evaluation.recorder import EvaluationRecorder
-from executor.path_follower import FollowerConfig, FollowMode, PathFollower
-from executor.projectairsim_executor import ProjectAirSimExecutor
-from models.telemetry import GroundState, ValidationStatus
-from utils.flight_safety import safe_shutdown
+from atal.core.telemetry import GroundState, ValidationStatus
+from atal.evaluation.recorder import EvaluationRecorder
+from atal.flight.executor import ProjectAirSimExecutor
+from atal.flight.path_follower import FollowerConfig, FollowMode, PathFollower
+from atal.flight.shutdown import safe_shutdown
+from atal.simulation.airsim import ProjectAirSimAdapter
 
 VEHICLE = "Drone1"
 SCENE = "scene_basic_drone.jsonc"

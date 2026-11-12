@@ -6,9 +6,14 @@ import math
 
 import pytest
 
-from channel.remote_id import (RemoteIdBroadcaster, RemoteIdBus, RemoteIdReceiver,
-                               message_from_snapshot, traffic_for_model)
-from models.observation import TrustAssessment, TrustStatus
+from atal.channels.radio import (
+    RemoteIdBroadcaster,
+    RemoteIdBus,
+    RemoteIdReceiver,
+    message_from_snapshot,
+    traffic_for_model,
+)
+from atal.core.observation import TrustAssessment, TrustStatus
 from tests.channel_fakes import ListRecorder, SnapAdapter, snapshot
 from tests.test_action_port import Clock
 

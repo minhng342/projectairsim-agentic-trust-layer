@@ -4,14 +4,14 @@ can run under the same guard."""
 import asyncio
 import json
 
-from agent.sector_planner import FixedSectorPlanner
-from evaluation.recorder import read_run
-from evaluation.sar_metrics import coverage_raster
-from executor.sector_executor import SectorExecutor
-from models.action import ActionType, CommandResult, CommandStatus
-from models.belief import Detection
-from models.sar import Mission
-from run_sar_mission import run_failures, run_passes
+from atal.agents.sector_planner import FixedSectorPlanner
+from atal.core.action import ActionType, CommandResult, CommandStatus
+from atal.core.belief import Detection
+from atal.core.sar import Mission
+from atal.evaluation.recorder import read_run
+from atal.evaluation.sar_metrics import coverage_raster
+from atal.flight.sector_sweep import SectorExecutor
+from atal.runtime.run_single import run_failures, run_passes
 from tests.test_sar_pipeline import MISSION, run
 
 
@@ -56,9 +56,9 @@ def test_detection_during_a_decision_ends_the_search(tmp_path, monkeypatch):
 
 
 def test_the_guard_refuses_sweeps_once_the_victim_is_found(tmp_path):
-    from gate.sar_guard import SarGuard
-    from models.action import ProposedAction
-    from models.belief import LocalBelief
+    from atal.core.action import ProposedAction
+    from atal.core.belief import LocalBelief
+    from atal.trust_layer.invariant_guard import SarGuard
     m = Mission.model_validate(MISSION)
     b = LocalBelief("Drone1", m)
     g = SarGuard(m, b, (0.0, 0.0))
@@ -116,7 +116,7 @@ def test_fixed_planner_under_the_guard_goes_home_when_time_runs_short(tmp_path):
 
 
 def test_an_exception_after_a_successful_search_fails_the_run(tmp_path, monkeypatch):
-    from executor.projectairsim_executor import ProjectAirSimExecutor
+    from atal.flight.executor import ProjectAirSimExecutor
 
     async def boom(self, *a, **kw):
         raise RuntimeError("injected descent failure")

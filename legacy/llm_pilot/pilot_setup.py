@@ -7,7 +7,7 @@ Choose a harness and a model, check the model answers, then build pilots.
 
 pydantic  PydanticPilot on any Pydantic AI model string (LLM_MODEL / --model, e.g.
           "ollama:qwen3.5:9b" or "google:gemini-3.5-flash-lite"), paced and retried by
-          ResilientModel (agent/model_config.py). The default.
+          ResilientModel (atal/agents/llm/model_config.py). The default.
 native    LLMPilot on this repo's own Gemini provider (GEMINI_MODEL / --model, bare
           Gemini model names). Kept as the framework-free reference harness.
 
@@ -37,7 +37,7 @@ class PilotSetup:
 
 async def prepare_pilot(harness: str, model_arg: str | None = None, log=print) -> PilotSetup:
     if harness == "pydantic":
-        from agent.model_config import pick_model
+        from atal.agents.llm.model_config import pick_model
         from legacy.llm_pilot.pydantic_pilot import PydanticPilot
         model, spec, tried = await pick_model(model_arg, log=log)
 

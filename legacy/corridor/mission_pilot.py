@@ -43,17 +43,30 @@ import time
 from dataclasses import asdict, dataclass, field
 from uuid import uuid4
 
-from pydantic_ai import (Agent, RunContext, RunTimedOut, UnexpectedModelBehavior,
-                         UsageLimitExceeded, UsageLimits)
+from pydantic_ai import (
+    Agent,
+    RunContext,
+    RunTimedOut,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UsageLimits,
+)
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 
-from legacy.llm_pilot.llm_pilot import observation_for_model
-from channel.remote_id import traffic_for_model
-from legacy.corridor.conflict_detection import (Minima, Track, detect, intent_track_from_peer, prediction_view,
-                                track_from_observation, track_from_peer)
-from executor.path_follower import Polyline
+from atal.channels.radio import traffic_for_model
+from atal.flight.path_follower import Polyline
+from legacy.corridor.conflict_detection import (
+    Minima,
+    Track,
+    detect,
+    intent_track_from_peer,
+    prediction_view,
+    track_from_observation,
+    track_from_peer,
+)
 from legacy.corridor.mission import DroneMission
+from legacy.llm_pilot.llm_pilot import observation_for_model
 
 MANEUVERS = ("maintain", "hold", "resume", "change_speed", "change_altitude")
 

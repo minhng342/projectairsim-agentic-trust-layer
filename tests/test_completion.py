@@ -3,11 +3,23 @@ from datetime import datetime, timezone
 
 import pytest
 
-from executor.completion import (Deadline, DwellTracker, altitude_settled, grounded,
-                                 heading_error_deg, heading_settled, position_settled,
-                                 track_velocity_ok)
-from models.telemetry import (GroundState, Quaternion, TelemetrySnapshot, ValidationStatus,
-                              Vector3)
+from atal.core.telemetry import (
+    GroundState,
+    Quaternion,
+    TelemetrySnapshot,
+    ValidationStatus,
+    Vector3,
+)
+from atal.flight.completion import (
+    Deadline,
+    DwellTracker,
+    altitude_settled,
+    grounded,
+    heading_error_deg,
+    heading_settled,
+    position_settled,
+    track_velocity_ok,
+)
 
 
 def snap(n=0.0, e=0.0, alt=10.0, vn=0.0, ve=0.0, vs=0.0, heading=90.0, track=None,

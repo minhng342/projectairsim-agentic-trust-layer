@@ -2,8 +2,7 @@
 import asyncio
 import os
 
-from agent.rate_limit import (FREE_TIER_RPM, RPM_HEADROOM,  # noqa: F401  (moved)
-                              UNKNOWN_MODEL_RPM, rpm_for)
+from atal.agents.llm.rate_limit import FREE_TIER_RPM, RPM_HEADROOM, UNKNOWN_MODEL_RPM, rpm_for  # noqa: F401  (moved)
 
 DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash-lite"]
 
@@ -15,7 +14,7 @@ _PERMANENT = {400, 401, 403, 404}
 def gemini_models_from_env(model: str | None = None) -> list[str]:
     """Preference list: `model` (CLI) or GEMINI_MODEL, comma-separated, e.g.
     "gemini-3.5-flash-lite,gemini-3.6-flash". Loads the repo's .env first."""
-    from utils.env import load_env_file
+    from atal.env import load_env_file
     load_env_file()
     raw = model or os.environ.get("GEMINI_MODEL") or ",".join(DEFAULT_GEMINI_MODELS)
     return [m.strip() for m in raw.split(",") if m.strip()]
