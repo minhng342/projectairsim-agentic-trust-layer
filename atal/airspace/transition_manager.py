@@ -171,6 +171,7 @@ class TransitionManager:
         self.pauses: dict[str, set[str]] = {}
         self._on_pause, self._on_resume = on_pause, on_resume
         self._paused_since: dict[str, float] = {}
+        self._skipped: set = set()        # (vid, owner) pauses not made inside d_h
         self.pause_count: dict[str, int] = {}
         self.paused_s: dict[str, float] = {}
 
@@ -534,15 +535,31 @@ class TransitionManager:
     def _pause_inside(self, r: Reservation) -> None:
         """Every drone that could move horizontally inside r's span and within its
         exclusion radius (whether or not already paused for something else) is paused,
-        with r as an owner, so it stays stopped for as long as r needs it."""
+        with r as an owner, so it stays stopped for as long as r needs it.
+
+        Except a drone already within d_h of r's column: pausing it there would hold it
+        where it blocks r, and r would wait for it to its deadline (a deadlock the
+        manager made). It is left to its own flight plan, never moved aside, and still
+        blocks r (as a mover, or as a holder within d_h) until it is clear; it is paused
+        once it is outside d_h. (Found on dev: a drone above its pad, 2.8 m from a
+        teammate's landing column, paused there for 790 s.)"""
         radius = self.bounds.exclusion_radius(abs(r.to_m - r.from_m))
         for vid in sorted(self.roster):
             tr = self.tracks[vid]
             s = tr.sample
             if vid == r.vehicle_id or s is None or s.grounded:
                 continue
-            if (tr.phase in MOVERS or self.pauses.get(vid)) and r.contains(s.alt_m) \
-                    and math.dist(s.xy, r.center_xy) <= radius:
+            if not ((tr.phase in MOVERS or self.pauses.get(vid)) and r.contains(s.alt_m)):
+                continue
+            d = math.dist(s.xy, r.center_xy)
+            if d < self.bounds.d_h:
+                if (vid, r.reservation_id) not in self._skipped:
+                    self._skipped.add((vid, r.reservation_id))
+                    self._event("traffic_pause_skipped", vehicle_id=vid,
+                                owner=r.reservation_id, distance_m=round(d, 2),
+                                reason="inside d_h of the column: left to move clear")
+                continue
+            if d <= radius:
                 self._pause(vid, r.reservation_id, "rule 5")
 
     def _release_owner(self, owner: str) -> None:

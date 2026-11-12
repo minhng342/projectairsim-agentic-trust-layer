@@ -537,6 +537,9 @@ def test_a_searching_teammate_inside_the_span_is_paused_then_the_climb_is_grante
 
 
 def test_a_teammate_that_stops_too_close_is_not_moved_and_the_request_runs_out():
+    """D1 is 6 m from D0's column (inside d_h 8 m) when D0 asks. The manager does not
+    pause it there (that would hold it where it blocks D0) and never moves it; D1 stops
+    there on its own, and D0's request runs out (bounded, UNRESOLVED for the drone)."""
     w, calls = paused_world({"D0": air(50, 50, 150), "D1": air(56, 50, 160, vh=5.0)},
                             ["D0", "D1"])
     phases(w.mgr, D0=Phase.REQUEST, D1=Phase.SEARCHING)
@@ -545,23 +548,28 @@ def test_a_teammate_that_stops_too_close_is_not_moved_and_the_request_runs_out()
     r = m.request("D0", "a", Kind.CLIMB, (50, 50), 150, 180, wait_until=w.t + 5)
     stop(w, "D1")
     w.step(2.0)
-    assert r.state == State.REQUESTED and r.reason == "holding:D1"   # 6 m < d_h 8 m
+    assert r.state == State.REQUESTED and r.reason == "mover:D1"
     w.step(3.2)
-    assert r.state == State.EXPIRED
-    assert calls.log == [("pause", "D1"), ("resume", "D1")]          # released, not moved
-    assert w.pos["D1"]["x"] == 56
+    assert r.state == State.EXPIRED and "mover:D1" in r.reason
+    assert calls.log == []                                           # never paused
+    assert w.pos["D1"]["x"] == 56                                    # never moved
+    assert ("D1", r.reservation_id) in m._skipped
 
 
 def test_the_clearance_uses_the_configured_d_h():
+    """d_h = 11 m here: a teammate 10 m from the column is inside it (not paused, still
+    blocking); one 12 m away is paused and, once stationary, clear."""
     b = Bounds(e_h=3.0)                                  # d_h = 5 + 2 x 3 = 11 m
-    w, _ = paused_world({"D0": air(50, 50, 150), "D1": air(60, 50, 160, vh=5.0)},
-                        ["D0", "D1"], bounds=b)
-    phases(w.mgr, D0=Phase.REQUEST, D1=Phase.SEARCHING)
-    w.step(1.4)
-    r = w.mgr.request("D0", "a", Kind.CLIMB, (50, 50), 150, 180, wait_until=w.t + 60)
-    stop(w, "D1")
-    w.step(2.0)
-    assert r.state == State.REQUESTED and r.reason == "holding:D1"   # 10 m < 11 m
+    for x, paused, granted in ((60, False, False), (62, True, True)):
+        w, calls = paused_world({"D0": air(50, 50, 150), "D1": air(x, 50, 160, vh=5.0)},
+                                ["D0", "D1"], bounds=b)
+        phases(w.mgr, D0=Phase.REQUEST, D1=Phase.SEARCHING)
+        w.step(1.4)
+        r = w.mgr.request("D0", "a", Kind.CLIMB, (50, 50), 150, 180, wait_until=w.t + 60)
+        stop(w, "D1")
+        w.step(3.0)
+        assert (("pause", "D1") in calls.log) is paused
+        assert (r.state == State.GRANTED) is granted, (x, r.state, r.reason)
 
 
 def test_a_drone_paused_for_two_reasons_resumes_only_when_both_end():
@@ -670,3 +678,24 @@ def test_a_completed_move_leaves_its_drone_holding():
     w.step(4.0)
     assert up.state == State.COMPLETED
     assert w.mgr.tracks["D0"].phase == Phase.HOLDING
+
+
+def test_a_drone_over_the_pads_is_not_frozen_in_a_teammates_landing_column():
+    """The dev deadlock (790 s): D1, just airborne over its pad 3 m from D0's landing
+    column, was paused there by D0's landing request and so blocked it to its deadline.
+    Now D1 is left to fly out to the pad-zone edge on its own plan; once it is beyond
+    d_h it is paused, stationary, and the landing is granted."""
+    w, calls = paused_world({"D0": air(0, 0, 150), "D1": air(3, 0, 140, vh=5.0),
+                             "D2": air(300, 300, 170)}, TEAM)
+    phases(w.mgr, D0=Phase.HOLDING, D1=Phase.RETURNING, D2=Phase.HOLDING)
+    w.step(1.4)
+    land = w.mgr.request("D0", "land", Kind.LANDING, (0, 0), 150, 0, wait_until=w.t + 300)
+    w.step(DT)
+    assert land.state == State.REQUESTED and calls.log == []
+    for _ in range(15):                                 # D1 flies out at 5 m/s, 3 s
+        w.pos["D1"]["x"] += 1.0
+        w.step(DT)
+    stop(w, "D1")
+    w.step(3.0)
+    assert ("pause", "D1") in calls.log
+    assert land.state == State.GRANTED
