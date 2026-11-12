@@ -8,8 +8,7 @@ claims may change a drone's beliefs. The research question is how fast a team fi
 victim, and what a dishonest teammate does to that.
 
 Phases 0 to 2 are built: one drone without an LLM, and one LLM drone. Phases 3 (three cooperating
-honest drones), 4 (an insider attack), and 5 (defenses) are paused while the code is
-made easy to read and explain.
+honest drones), 4 (an insider attack), and 5 (defenses) are next.
 
 ## Start here
 
