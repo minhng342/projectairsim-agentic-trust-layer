@@ -27,13 +27,38 @@ async def takeoff(adapter, vid, recorder, timeout_s):
 
 
 async def descend_before_landing(ctx, drone) -> str:
-    """Come down to just above the launch height. Returns the command's status."""
-    r = await ctx.flight.change_altitude(
-        drone.vehicle_id, round(drone.launch_altitude_m + rates.DESCEND_ABOVE_LAUNCH_M, 2),
-        reason="setup: descend before landing")
-    ctx.recorder.record("setup", step="descend", vehicle_id=drone.vehicle_id,
-                        status=r.status.value)
+    """Come down to just above the launch height. Returns the command's status.
+
+    One retry, only when the descent stopped because telemetry was invalid mid-command
+    (reason_code telemetry_lost, e.g. the pose topic and kinematics briefly disagreeing).
+    The executor has already hovered, the drone has not moved off its pad column, and in
+    team runs the landing reservation is still ACTIVE (it ends only at touchdown), so
+    the same descent is still authorised. Any other failure is not retried: the
+    shutdown then lands from wherever the drone is."""
+    vid = drone.vehicle_id
+    target = round(drone.launch_altitude_m + rates.DESCEND_ABOVE_LAUNCH_M, 2)
+    for attempt in (1, 2):
+        r = await ctx.flight.change_altitude(vid, target, reason="setup: descend before landing")
+        ctx.recorder.record("setup", step="descend", vehicle_id=vid, status=r.status.value,
+                            reason_code=r.reason_code, attempt=attempt)
+        if attempt == 1 and r.reason_code == "telemetry_lost":
+            ctx.log(f"  {vid} descent stopped on invalid telemetry; retrying once")
+            await asyncio.sleep(ctx.timing.poll(rates.DESCEND_RETRY_WAIT_S))
+            continue
+        return r.status.value
     return r.status.value
+
+
+def land_timeout_s(ctx, drone) -> float:
+    """Wall seconds allowed for the land command: the flat floor, or longer when the drone
+    is still high (a failed descent leaves it at mission altitude, e.g. 160 m, which a
+    flat 120 s cannot cover). Unknown height: the floor."""
+    snap = ctx.adapter.get_snapshot(drone.vehicle_id)
+    if snap is None or snap.validation_status != ValidationStatus.VALID:
+        return rates.LAND_TIMEOUT_MIN_S
+    height = max(0.0, snap.altitude_local_m - drone.launch_altitude_m)
+    return max(rates.LAND_TIMEOUT_MIN_S,
+               height / rates.LAND_SPEED_FLOOR_MPS + rates.LAND_TIMEOUT_MARGIN_S)
 
 
 async def shut_down(ctx, drone, landing_cleared=None, on_touchdown=None):
@@ -44,6 +69,7 @@ async def shut_down(ctx, drone, landing_cleared=None, on_touchdown=None):
     report = await safe_shutdown(ctx.adapter.drone(vid), adapter=ctx.adapter, vehicle_id=vid,
                                  log=lambda s: ctx.log(f"[{vid}] {s}"),
                                  confirm_poll_s=ctx.timing.poll(0.1),
+                                 land_timeout_s=land_timeout_s(ctx, drone),
                                  landing_cleared=landing_cleared, on_touchdown=on_touchdown)
     ctx.recorder.record("shutdown", vehicle_id=vid, report=report)
     return report
