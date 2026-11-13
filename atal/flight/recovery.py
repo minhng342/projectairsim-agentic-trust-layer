@@ -89,6 +89,7 @@ class Recovery:
         self.outcome: str | None = None  # "lost" or "unresolved" once the drone gives up
         self.startup = None              # its startup reservation (set by the runner)
         self.landing_wait: dict | None = None   # the landing request's queue wait
+        self.landing = None              # the landing reservation it is descending under
         self._ids = itertools.count(1)
 
     # ------------------------------------------------------------ where it flies
@@ -246,6 +247,7 @@ class Recovery:
                 answer = self.mgr.start(r.reservation_id, r.request_id, self.vehicle_id)
                 if answer == "started":
                     self.phase(Phase.MOVING)
+                    self.landing = r
                     return True
                 if answer != "not_holding":                  # lapsed or cancelled
                     self._record("landing_not_cleared", reason=f"grant not started: {answer}")
@@ -323,6 +325,92 @@ class Recovery:
             self.phase(Phase.STUCK)
             await self.flight.hold()
         return "stuck"
+
+    async def landing_descent(self, to_m: float, ground_m: float, deadline_s: float) -> str:
+        """Landing step 6: the descent to just above the pad (to_m), under the landing
+        reservation clear_landing started. Returns "descended" (holding just above the
+        pad, the landing reservation still ACTIVE) or why not: "not_cleared" (no active
+        landing reservation) or "stuck" (it stopped and no follow-up grant got it down).
+
+        The move never runs past the reservation's validity time (_within_validity). If
+        it stops because telemetry went invalid mid-command (telemetry_lost; the executor
+        has already hovered), it is sent again ONCE under the same reservation, and only
+        when that reservation is still ACTIVE inside its validity time and the drone's own
+        telemetry is valid again and shows it stationary. Any other stop, a second one, or
+        a reservation that overran into a keep-out is STUCK and goes through the follow-up
+        process every reserved move uses: keep-out, confirmed stationary, a fresh LANDING
+        grant from where it stopped, at most max_stuck_retries times, and never waiting
+        past deadline_s (the drone's one cleanup deadline). No timeout authorises a move."""
+        r = self.landing
+        if r is None or r.state != State.ACTIVE or r.kind != Kind.LANDING:
+            return "not_cleared"
+        same_reservation_retry = True
+        follow_ups = 0
+        while True:
+            self.phase(Phase.MOVING)
+            done = await self._within_validity(r, self.flight.change_altitude(to_m))
+            if done == "completed" and r.state == State.ACTIVE:
+                return "descended"
+            self._record("landing_descent_stopped", reservation_id=r.reservation_id,
+                         result=done, reservation_state=r.state.value)
+            if done == "telemetry_lost" and same_reservation_retry:
+                same_reservation_retry = False
+                if (await self._confirm_holding(None, stationary=True)
+                        and r.state == State.ACTIVE and self._now() < r.valid_until):
+                    self._record("landing_descent_retry", reservation_id=r.reservation_id,
+                                 validity_left_s=round(r.valid_until - self._now(), 2))
+                    continue
+            if r.state == State.ACTIVE:
+                self.mgr.report_stuck(self.vehicle_id, f"landing descent: {done}")
+            self.phase(Phase.STUCK)
+            await self.flight.hold()
+            self._record("transition_stuck", transition=Kind.LANDING.value, to_m=to_m,
+                         result=done)
+            f = None
+            while f is None and follow_ups < self.max_stuck_retries \
+                    and self._now() < deadline_s:
+                follow_ups += 1
+                f = await self._landing_follow_up(ground_m, deadline_s, follow_ups)
+            if f is None:
+                self.landing = None
+                return "stuck"
+            r = self.landing = f
+
+    async def _landing_follow_up(self, ground_m: float, deadline_s: float, attempt: int):
+        """A fresh LANDING grant from where a stuck landing stopped (confirmed stationary),
+        started atomically; None if there is none by deadline_s."""
+        if not await self._confirm_holding(None, stationary=True):
+            self._record("stuck_retry_refused", attempt=attempt, reason="not_stationary")
+            return None
+        while True:
+            tel = self.flight.telemetry()
+            if tel is None:
+                self._record("stuck_retry_refused", attempt=attempt, reason="no_telemetry")
+                return None
+            f = await self._ask(Kind.LANDING, tel.alt_m, ground_m, stationary=True,
+                                until=deadline_s)
+            if f.state == State.DENIED and f.reason == "not_holding" \
+                    and self._now() < deadline_s:
+                await self._sleep(self.poll_s)                # see _vertical
+                continue
+            break
+        if f.state != State.GRANTED:
+            self._record("stuck_retry_refused", attempt=attempt,
+                         reason=f.reason or f.state.value)
+            return None
+        if self.mgr.start(f.reservation_id, f.request_id, self.vehicle_id) != "started":
+            self._record("stuck_retry_refused", attempt=attempt, reason="start_refused")
+            return None
+        return f
+
+    def landing_validity_left_s(self) -> float | None:
+        """Sim seconds left in the active landing reservation's validity; None without one
+        (no manager, or not cleared): the land command must finish inside it."""
+        r = self.landing
+        if r is None or r.state not in (State.ACTIVE, State.KEEP_OUT) \
+                or r.valid_until is None:
+            return None
+        return max(0.0, r.valid_until - self._now()) if r.state == State.ACTIVE else 0.0
 
     async def _ask(self, kind, from_m, to_m, wait_s=None, stationary=False, until=None):
         """Request and wait for the answer; the drone keeps holding meanwhile. The
@@ -440,6 +528,8 @@ class DroneFlight:
             s = self.adapter.get_snapshot(self.vehicle_id)
         except Exception:                 # noqa: BLE001
             return None
+        if s is None or s.validation_status.value != "valid":
+            return None                   # stale or invalid is not the drone's own state
         return Telemetry(s.sim_time_s, s.position_ned_m.x, s.position_ned_m.y,
                          s.altitude_local_m, s.ground_speed_mps, s.vertical_speed_mps)
 

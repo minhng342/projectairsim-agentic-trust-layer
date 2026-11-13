@@ -98,6 +98,9 @@ async def main(args) -> int:
     if args.obstacle and not args.offline:
         print("--obstacle is for the offline kinematic sim only (live, the buildings are real)")
         return 2
+    if args.pose_skew_on_descent and not args.offline:
+        print("--pose-skew-on-descent is an offline test fault (the kinematic sim only)")
+        return 2
     reference = None
     if args.reference:
         try:
@@ -510,6 +513,9 @@ def parse_args(argv=None):
     ap.add_argument("--dropout", type=parse_dropout, default=None, metavar="DRONE@SECONDS",
                     help="experiment: DRONE fails SECONDS into the search (drops out and lands "
                          "where it is), e.g. Drone2@120")
+    ap.add_argument("--pose-skew-on-descent", action="append", default=None, metavar="DRONE",
+                    help="offline test fault: DRONE's descent before landing gets the live "
+                         "2026-11-13 pose/kinematics skew (732 ms for 0.5 s), repeatable")
     ap.add_argument("--offline", action="store_true", help="kinematic sim instead of AirSim")
     ap.add_argument("--speedup", type=float, default=50.0)
     ap.add_argument("--corner-slowdown", action="store_true",

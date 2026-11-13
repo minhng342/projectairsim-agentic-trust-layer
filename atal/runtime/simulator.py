@@ -19,7 +19,9 @@ def open_simulator(args, starts: dict, timing):
     if args.offline:
         from atal.simulation.kinematic_sim import KinematicSim
         return KinematicSim(dict(starts), speedup=timing.k,
-                            obstacles=getattr(args, "obstacle", None) or ())
+                            obstacles=getattr(args, "obstacle", None) or (),
+                            pose_skew_on_descent=getattr(args, "pose_skew_on_descent", None)
+                            or ())
     from atal.simulation.airsim import ProjectAirSimAdapter
     folder, name = find_scene(args.scene)
     return ProjectAirSimAdapter(vehicle_ids=list(starts), scene=name,

@@ -45,6 +45,13 @@ A vehicle that would move into a box below its top stays where it was horizontal
 wall contact is added to collision_log (not resting, not a supporting surface: an impact),
 at most one per second. Over a box, its top is the floor: a vehicle coming down slides
 along the roof at roof height (no impact), and lands on it when told to land.
+
+Telemetry fault (testing only): `pose_skew_on_descent` lists vehicles whose FIRST long
+descent (a position command more than POSE_SKEW_MIN_DROP_M below where it is, i.e. the
+descent before landing) gets the fault seen live on 2026-11-13: from POSE_SKEW_AFTER_S
+after the command, for POSE_SKEW_FOR_S, the pose topic lags the kinematics by POSE_SKEW_MS
+and the snapshot is validated (so it is INVALID, as the live adapter reports it). The
+world itself is unaffected.
 """
 import asyncio
 import math
@@ -60,6 +67,12 @@ from atal.core.telemetry import (
     ValidationStatus,
     Vector3,
 )
+from atal.simulation.telemetry_checks import validate_snapshot
+
+POSE_SKEW_MIN_DROP_M = 50.0
+POSE_SKEW_AFTER_S = 1.5
+POSE_SKEW_FOR_S = 0.5     # live: shorter than a_s (no separation_unverified flag was raised)
+POSE_SKEW_MS = 732.0
 
 
 class _Vehicle:
@@ -142,6 +155,8 @@ class _Drone:
         self._sim.integrate()
         v = self._v
         if not v.grounded:
+            if -float(down) < v.alt - POSE_SKEW_MIN_DROP_M:
+                self._sim._arm_pose_skew(v.vid)
             v.mode, v.target, v.speed = "position", (float(north), float(east), -float(down)), float(velocity)
         return self._wait(lambda: v.mode != "position" or v.at_target())
 
@@ -175,7 +190,7 @@ class KinematicSim:
                  speedup: float = 20.0, max_step_s: float = 0.02, max_accel_mps2: float = 4.0,
                  max_vertical_mps: float = 3.0, land_speed_mps: float = 1.0,
                  takeoff_height_m: float = 3.0, clock=time.monotonic, obstacles=(),
-                 tick_s: float = 0.001, max_lag_s: float = 0.5):
+                 tick_s: float = 0.001, max_lag_s: float = 0.5, pose_skew_on_descent=()):
         if speedup <= 0:
             raise ValueError("speedup must be > 0")
         self.vehicle_ids = list(starts)
@@ -200,6 +215,9 @@ class KinematicSim:
         self.obstacles = [dict(o) for o in obstacles]
         self._collisions: dict[str, list[CollisionState]] = {vid: [] for vid in self._v}
         self._contact_since: dict[str, float] = {}
+        self._skew_pending = set(pose_skew_on_descent)
+        self._skew_window: dict[str, tuple[float, float]] = {}
+        self.pose_skews: list[dict] = []          # what was injected, for the evidence
 
     # ------------------------------------------------------------ adapter API
     def __enter__(self):
@@ -250,7 +268,24 @@ class KinematicSim:
     def drone(self, vid):
         return self._drones[vid]
 
+    def _arm_pose_skew(self, vid) -> None:
+        if vid in self._skew_pending:
+            self._skew_pending.discard(vid)
+            t0 = self.now_s + POSE_SKEW_AFTER_S
+            self._skew_window[vid] = (t0, t0 + POSE_SKEW_FOR_S)
+            self.pose_skews.append({"vehicle_id": vid, "from_s": round(t0, 3),
+                                    "to_s": round(t0 + POSE_SKEW_FOR_S, 3),
+                                    "skew_ms": POSE_SKEW_MS})
+
     def get_snapshot(self, vid) -> TelemetrySnapshot:
+        snap = self._snapshot(vid)
+        w = self._skew_window.get(vid)
+        if w is not None and w[0] <= self.now_s < w[1]:
+            snap.pose_topic_sim_time_ns = snap.sim_time_ns - int(POSE_SKEW_MS * 1e6)
+            snap = validate_snapshot(snap)
+        return snap
+
+    def _snapshot(self, vid) -> TelemetrySnapshot:
         self.integrate()
         v = self._v[vid]
         yaw = math.radians(v.heading)
