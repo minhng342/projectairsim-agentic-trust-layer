@@ -58,7 +58,16 @@ class FollowMode(str, Enum):
     STOPPED = "stopped"        # stop() called: hovering where it is, path abandoned
 
 
-# The live altitude-hold candidate (zeus-g 2026-11-12), switched on by --corner-slowdown.
+# The live altitude-hold candidate, switched on by --corner-slowdown. EXPERIMENTAL.
+# Purpose: live (zeus-g 2026-11-12) Simple Flight climbed up to ~2 m, once 3.1 m, at lane
+# corners and new-path starts while the follower commanded descent; the climbs lined up with
+# the horizontal command swinging at speed. This shapes only the horizontal command in
+# CRUISE: slow before a corner, and change the command gradually, starting a new path from
+# the drone's measured velocity (which also covers the handoff after a stopped sweep).
+# Limits: it does not touch the vertical command; the hover sent when a path is stopped is a
+# separate simulator command and is not shaped; braking for a hold or stop is never slowed.
+# Offline with it on, one-drone searches took ~22% longer and one dropout reference run
+# ended in a pad-zone-timeout contingency landing (unresolved).
 CORNER_SLOWDOWN = {"max_cmd_accel_mps2": 3.0, "corner_speed_mps": 1.5}
 
 
@@ -210,6 +219,7 @@ class PathFollower:
         self._trace_ns: int | None = None      # sim time of the last follower_trace
         self._cmd: tuple[float, float, int] | None = None   # last horizontal command, sim ns
         self._last_cmd_host: float | None = None
+        self._trace_window: dict = {}          # extremes since the last follower_trace
 
     # ------------------------------------------------------------ maneuvers
     def hold(self) -> None:
@@ -462,24 +472,44 @@ class PathFollower:
         return vn, ve
 
     def _trace(self, snap: TelemetrySnapshot, vn: float, ve: float, vup: float) -> None:
-        """Record the command about to be sent beside the measured state, rate-limited."""
+        """Record the command exactly as it is dispatched (after every limit) beside the
+        measured state. Called for every command; an event is written at most every
+        trace_period_s of sim time, and it carries the extremes since the previous event
+        (altitude error, command gap), so an excursion between events is not lost.
+
+        Sign conventions: v_north/v_east/v_down_cmd_mps are the NED values sent to
+        move_by_velocity (v_down > 0 = descend); vz_up_mps is measured, > 0 = climbing;
+        alt_err_*_m = altitude - target, > 0 = above the target."""
         now_host = self._clock()
         gap = None if self._last_cmd_host is None else now_host - self._last_cmd_host
         self._last_cmd_host = now_host
+        err = snap.altitude_local_m - self.altitude_target_m
+        w = self._trace_window
+        w["err_max"] = err if w.get("err_max") is None else max(w["err_max"], err)
+        w["err_min"] = err if w.get("err_min") is None else min(w["err_min"], err)
+        if gap is not None:
+            w["gap_max"] = gap if w.get("gap_max") is None else max(w["gap_max"], gap)
+        w["n"] = w.get("n", 0) + 1
         period = self.config.trace_period_s
         if period is None or snap.sim_time_ns is None:
             return
         if self._trace_ns is not None and snap.sim_time_ns - self._trace_ns < period * 1e9:
             return
         self._trace_ns = snap.sim_time_ns
-        self._emit("follower_trace", sim_time_ns=snap.sim_time_ns, mode=self.mode.value,
-                   alt_target_m=round(self.altitude_target_m, 2),
-                   alt_m=round(snap.altitude_local_m, 2),
-                   vz_cmd_mps=round(vup, 2), vz_mps=round(snap.vertical_speed_mps, 2),
-                   vh_cmd_mps=round(math.hypot(vn, ve), 2),
-                   vh_mps=round(math.hypot(snap.velocity_ned_mps.x, snap.velocity_ned_mps.y), 2),
-                   cmd_gap_s=None if gap is None else round(gap, 3),
-                   progress_m=round(self.progress_m, 2))
+        self._trace_window = {}
+
+        def r(x, nd=3):
+            return None if x is None else round(x, nd)
+        self._emit("follower_trace", sim_time_ns=snap.sim_time_ns,
+                   telemetry_age_ms=r(snap.telemetry_age_ms, 1), mode=self.mode.value,
+                   alt_target_m=r(self.altitude_target_m, 2), alt_m=r(snap.altitude_local_m),
+                   v_north_cmd_mps=r(vn), v_east_cmd_mps=r(ve), v_down_cmd_mps=r(-vup),
+                   cmd_duration_s=self.config.cmd_duration_s,
+                   vz_up_mps=r(snap.vertical_speed_mps),
+                   vh_mps=r(math.hypot(snap.velocity_ned_mps.x, snap.velocity_ned_mps.y)),
+                   alt_err_max_m=r(w["err_max"]), alt_err_min_m=r(w["err_min"]),
+                   cmd_gap_s=r(gap), cmd_gap_max_s=r(w.get("gap_max")), commands=w["n"],
+                   progress_m=r(self.progress_m, 2))
 
     def _emit(self, kind: str, **fields) -> None:
         if self._on_event is None:

@@ -389,12 +389,17 @@ def test_braking_for_a_hold_is_not_slew_limited():
 
 
 def test_follower_trace_records_command_beside_measurement():
-    f, _w, _d, events, _ = make(speed=3.0, config=DEFAULTS)
+    f, _w, drone, events, _ = make(speed=3.0, config=DEFAULTS)
     run(f)
     t = [d for k, d in events if k == "follower_trace"][1]
-    for key in ("alt_target_m", "alt_m", "vz_cmd_mps", "vz_mps", "vh_cmd_mps", "vh_mps",
-                "cmd_gap_s", "mode", "sim_time_ns"):
+    for key in ("alt_target_m", "alt_m", "v_north_cmd_mps", "v_east_cmd_mps", "v_down_cmd_mps",
+                "cmd_duration_s", "vz_up_mps", "vh_mps", "telemetry_age_ms", "alt_err_max_m",
+                "alt_err_min_m", "cmd_gap_s", "cmd_gap_max_s", "commands", "mode", "sim_time_ns"):
         assert key in t
+    # the traced command is exactly what was dispatched (after every limit), NED signs
+    cmds = {(round(vn, 3), round(ve, 3), round(vd, 3)) for vn, ve, vd in drone.velocities}
+    for d in [d for k, d in events if k == "follower_trace"]:
+        assert (d["v_north_cmd_mps"], d["v_east_cmd_mps"], d["v_down_cmd_mps"]) in cmds
     times = [d["sim_time_ns"] for k, d in events if k == "follower_trace"]
     assert min(b - a for a, b in itertools.pairwise(times)) >= DEFAULTS.trace_period_s * 1e9
 
@@ -413,3 +418,31 @@ def test_corner_slowdown_is_off_by_default_and_the_runner_switch_turns_it_on():
         on = Timing(k, corner_slowdown=True).follower()
         assert (on.corner_speed_mps, on.max_cmd_accel_mps2) == (
             CORNER_SLOWDOWN["corner_speed_mps"], CORNER_SLOWDOWN["max_cmd_accel_mps2"])
+
+
+def test_trace_keeps_the_altitude_extremes_between_events():
+    """A climb that comes and goes between two trace events still shows in the next one."""
+    box = {}
+
+    def bump():
+        w = box["w"]
+        w.alt += 2.5
+        w.target_alt = w.alt
+    f, world, _d, events, _ = make(speed=3.0, config=DEFAULTS, at={3: bump})
+    box.update(f=f, w=world)
+    run(f)
+    assert max(d["alt_err_max_m"] for k, d in events if k == "follower_trace") >= 2.0
+
+
+def test_a_new_path_starting_while_moving_the_other_way_is_slewed_from_the_measured_velocity():
+    """The 3.10 m live excursion: a sweep stopped by a victim report, then the return-home
+    path started in the opposite direction while the drone still moved at ~3.5 m/s."""
+    box = {}
+    f, world, drone, _e, _ = make(path=[(-1.0, 8.0), (-1.0, -30.0)], speed=5.0,
+                                  config=DEFAULTS, at={4: lambda: setattr(box["w"], "ve", 0.0)})
+    box["w"] = world
+    world.ve = 3.5                     # still flying east; the new path goes west
+    run(f)
+    _vn0, ve0, _ = drone.velocities[0]
+    step = DEFAULTS.max_cmd_accel_mps2 * 0.1                 # one fake sim step
+    assert 0 < ve0 and abs(ve0 - 3.5) <= step + 1e-9       # eastward, eased off, not reversed
