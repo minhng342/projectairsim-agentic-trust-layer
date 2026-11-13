@@ -97,7 +97,7 @@ async def main(args) -> int:
         mission = mission.model_copy(update={"termination": mission.termination.model_copy(
             update={"stop_on_detection": False})})
     runs = args.runs or scenario.runs
-    timing = Timing(args.speedup if args.offline else 1.0)
+    timing = Timing(args.speedup if args.offline else 1.0, corner_slowdown=args.corner_slowdown)
     llm = None
     if args.planner == "llm":
         try:
@@ -333,6 +333,9 @@ def parse_args(argv=None):
     ap.add_argument("--runs", type=int, default=None, help="override scenario.runs")
     ap.add_argument("--offline", action="store_true", help="kinematic sim instead of AirSim")
     ap.add_argument("--speedup", type=float, default=50.0, help="offline sim time / host time")
+    ap.add_argument("--corner-slowdown", action="store_true",
+                    help="path follower slows before corners and limits how fast its horizontal "
+                         "command changes (live altitude-hold candidate, off by default)")
     ap.add_argument("--full-sweep", action="store_true",
                     help="keep sweeping after the detection (checks 'sweeps every sector')")
     ap.add_argument("--scene", default="bundled:sim_config/scene_sar_one_drone.jsonc", 

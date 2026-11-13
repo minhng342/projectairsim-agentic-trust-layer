@@ -6,12 +6,18 @@ import math
 import pytest
 
 from atal.core.telemetry import GroundState, ValidationStatus
-from atal.flight.path_follower import FollowerConfig, FollowMode, PathFollower, Polyline
+from atal.flight.path_follower import (
+    CORNER_SLOWDOWN,
+    FollowerConfig,
+    FollowMode,
+    PathFollower,
+    Polyline,
+)
 from tests.flight.test_executor import FakeAdapter, FakeDrone, FakeWorld
 
 FAST = FollowerConfig(poll_interval_s=0.0, hover_timeout_s=0.5)
-# The corner slowdown and command slew (live altitude-hold fix) have their own tests below;
-# the older tests check path geometry and modes without them.
+# The corner slowdown and command slew (--corner-slowdown, off by default) have their own
+# tests below; the older tests check path geometry and modes without them.
 PLAIN = FollowerConfig(poll_interval_s=0.0, hover_timeout_s=0.5, max_cmd_accel_mps2=None,
                        corner_speed_mps=None)
 # FakeWorld starts airborne at N=-1, E=8, altitude 5, heading 315
@@ -339,7 +345,8 @@ def test_hold_pins_the_point_after_the_brake_limit_even_if_still_moving():
 # with the horizontal command swinging at speed, so the follower now slows before a corner
 # and limits how fast the horizontal command changes in CRUISE.
 # cmd_duration_s 0.1 = the fake world's sim step, so distance and time agree in these tests
-DEFAULTS = FollowerConfig(poll_interval_s=0.0, hover_timeout_s=0.5, cmd_duration_s=0.1)
+DEFAULTS = FollowerConfig(poll_interval_s=0.0, hover_timeout_s=0.5, cmd_duration_s=0.1,
+                          **CORNER_SLOWDOWN)
 
 
 def test_slows_before_a_corner_and_still_flies_the_path():
@@ -396,3 +403,13 @@ def test_next_corner_ignores_straight_points():
     p = Polyline([(0, 0), (5, 0), (10, 0), (10, 10), (10, 20)])
     assert p.next_corner(0.0, 30.0) == pytest.approx(10.0)
     assert p.next_corner(10.0, 30.0) is None
+
+
+def test_corner_slowdown_is_off_by_default_and_the_runner_switch_turns_it_on():
+    from atal.runtime.rates import Timing
+    assert FollowerConfig().corner_speed_mps is None and FollowerConfig().max_cmd_accel_mps2 is None
+    for k in (1.0, 50.0):
+        assert Timing(k).follower().corner_speed_mps is None
+        on = Timing(k, corner_slowdown=True).follower()
+        assert (on.corner_speed_mps, on.max_cmd_accel_mps2) == (
+            CORNER_SLOWDOWN["corner_speed_mps"], CORNER_SLOWDOWN["max_cmd_accel_mps2"])

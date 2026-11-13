@@ -106,7 +106,7 @@ async def main(args) -> int:
             print(f"--reference {args.reference}: {err}")
             return 2
     runs = args.runs or scenario.runs
-    timing = Timing(args.speedup if args.offline else 1.0)
+    timing = Timing(args.speedup if args.offline else 1.0, corner_slowdown=args.corner_slowdown)
     llm = None
     if args.planner == "llm":
         try:
@@ -512,6 +512,9 @@ def parse_args(argv=None):
                          "where it is), e.g. Drone2@120")
     ap.add_argument("--offline", action="store_true", help="kinematic sim instead of AirSim")
     ap.add_argument("--speedup", type=float, default=50.0)
+    ap.add_argument("--corner-slowdown", action="store_true",
+                    help="path follower slows before corners and limits how fast its horizontal "
+                         "command changes (live altitude-hold candidate, off by default)")
     ap.add_argument("--full-sweep", action="store_true")
     ap.add_argument("--min-coverage", type=float, default=FULL_SWEEP_MIN_COVERAGE)
     ap.add_argument("--scene", default="bundled:sim_config/scene_sar_three_drones.jsonc",

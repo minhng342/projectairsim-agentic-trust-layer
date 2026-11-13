@@ -58,6 +58,10 @@ class FollowMode(str, Enum):
     STOPPED = "stopped"        # stop() called: hovering where it is, path abandoned
 
 
+# The live altitude-hold candidate (zeus-g 2026-11-12), switched on by --corner-slowdown.
+CORNER_SLOWDOWN = {"max_cmd_accel_mps2": 3.0, "corner_speed_mps": 1.5}
+
+
 @dataclass(frozen=True)
 class FollowerConfig:
     poll_interval_s: float = 0.1
@@ -91,14 +95,15 @@ class FollowerConfig:
     # The horizontal velocity command changes by at most this much per second of SIM time
     # (starting from the measured velocity). Live, Simple Flight climbs up to ~2 m against
     # a full descent command when the horizontal command swings at a corner or a new path
-    # (zeus-g 2026-11-12). CRUISE only: braking for a hold or a stop is never slowed, so the
+    # (zeus-g 2026-11-12). Off by default; --corner-slowdown turns both on with the values in
+    # CORNER_SLOWDOWN (still being checked live). CRUISE only: braking for a hold or a stop is never slowed, so the
     # stopping distances behind the transition manager's stop-line are unchanged. None = off.
-    max_cmd_accel_mps2: float | None = 3.0
+    max_cmd_accel_mps2: float | None = None
     # Slow down before a corner (a turn of at least corner_turn_deg) so the command swings at
     # corner_speed_mps, not at cruise speed: v <= sqrt(v_c^2 + 2 a d), d = distance to the
     # point where the carrot passes the corner. Without it the slew limit above would carry
     # the drone past the corner. None = off.
-    corner_speed_mps: float | None = 1.5
+    corner_speed_mps: float | None = None
     corner_decel_mps2: float = 2.0
     corner_turn_deg: float = 30.0
 
