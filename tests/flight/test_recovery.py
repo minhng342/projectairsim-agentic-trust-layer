@@ -296,3 +296,138 @@ def test_a_landing_onto_an_occupied_pad_is_never_cleared():
     assert any(k == "landing_not_cleared" for k, _ in recs)
     assert w.d["D1"]["alt"] == pytest.approx(160)
 
+
+
+# ---------------------------------------------------------------- landing descent
+class FaultyFlight(Flight):
+    """Descents that go wrong in scripted ways, one entry per change_altitude call:
+    "lost" stops 10 m down with telemetry_lost and no telemetry for blind_s sim s;
+    "hang" never returns (the move stalls in place); None flies normally."""
+    def __init__(self, world, vid, script, blind_s=2.0):
+        super().__init__(world, vid)
+        self.script, self.blind_s, self.blind_until = list(script), blind_s, -1.0
+        self.calls = 0
+
+    def telemetry(self):
+        return None if self.w.t < self.blind_until else super().telemetry()
+
+    async def change_altitude(self, alt_m):
+        self.calls += 1
+        fault = self.script.pop(0) if self.script else None
+        if fault == "hang":
+            while True:
+                await asyncio.sleep(0.001)
+        if fault == "lost":
+            stop_at = self.p["alt"] - 10.0
+            self.p["vz"] = -V_Z
+            while self.p["alt"] > stop_at:
+                await asyncio.sleep(0.001)
+            self.p["vz"] = 0.0
+            self.blind_until = self.w.t + self.blind_s
+            return "telemetry_lost"
+        return await super().change_altitude(alt_m)
+
+
+def landing_world():
+    w = World({"D0": (0, -3, 0), "D1": (0, 0, 160)})
+    w.mgr.roster.discard("D2")
+    w.d["D0"]["grounded"] = True
+    return w
+
+
+def faulty_recovery(w, script, recs, **kw):
+    rec = recovery(w, "D1", 1, recs, **kw)
+    rec.flight = FaultyFlight(w, "D1", script)
+    return rec
+
+
+def test_a_descent_lost_to_telemetry_is_resent_once_under_the_same_landing_reservation():
+    w, recs = landing_world(), []
+    rec = faulty_recovery(w, ["lost"], recs)
+
+    async def body():
+        assert await rec.clear_landing()
+        first = rec.landing
+        out = await rec.landing_descent(1.5, ground_m=0.0, deadline_s=w.t + 300)
+        return out, first
+    out, first = run(w, body)
+    assert out == "descended"
+    assert rec.landing is first and first.state == State.ACTIVE
+    assert len(w.mgr.reservations) == 1                      # no new grant was needed
+    assert [k for k, _ in recs].count("landing_descent_retry") == 1
+    assert w.d["D1"]["alt"] == pytest.approx(1.5)
+    assert rec.landing_validity_left_s() > 0
+
+
+def test_the_same_reservation_retry_waits_for_valid_telemetry_again():
+    w, recs = landing_world(), []
+    rec = faulty_recovery(w, ["lost"], recs)
+    rec.flight.blind_s = 5.0
+
+    async def body():
+        assert await rec.clear_landing()
+        await rec.landing_descent(1.5, ground_m=0.0, deadline_s=w.t + 300)
+    run(w, body)
+    retry_t = next(f for k, f in recs if k == "landing_descent_retry")
+    stopped = next(f for k, f in recs if k == "landing_descent_stopped")
+    assert stopped["result"] == "telemetry_lost"
+    assert retry_t["validity_left_s"] > 0
+    assert rec.flight.calls == 2
+
+
+def test_a_second_telemetry_loss_is_stuck_and_needs_a_fresh_landing_grant():
+    w, recs = landing_world(), []
+    rec = faulty_recovery(w, ["lost", "lost"], recs)
+
+    async def body():
+        assert await rec.clear_landing()
+        first = rec.landing
+        out = await rec.landing_descent(1.5, ground_m=0.0, deadline_s=w.t + 300)
+        return out, first
+    out, first = run(w, body)
+    assert out == "descended"
+    assert first.state == State.SUPERSEDED                   # its keep-out was taken over
+    assert rec.landing is not first and rec.landing.from_stationary
+    assert rec.landing.replaces == first.reservation_id
+    assert rec.landing.from_m == pytest.approx(140, abs=0.5)  # from where it stopped
+
+
+def test_a_landing_descent_that_overruns_its_validity_becomes_stuck_then_gets_a_fresh_grant():
+    w, recs = landing_world(), []
+    rec = faulty_recovery(w, ["hang"], recs)
+
+    async def body():
+        assert await rec.clear_landing()
+        first = rec.landing
+        out = await rec.landing_descent(1.5, ground_m=0.0, deadline_s=w.t + 600)
+        return out, first
+    out, first = run(w, body)
+    assert out == "descended"
+    stopped = next(f for k, f in recs if k == "landing_descent_stopped")
+    assert stopped["result"] == "overran_validity"
+    assert not any(k == "landing_descent_retry" for k, _ in recs)
+    assert first.state == State.SUPERSEDED and rec.landing.replaces == first.reservation_id
+
+
+def test_no_follow_up_grant_past_the_cleanup_deadline_leaves_it_stuck_where_it_stopped():
+    w, recs = landing_world(), []
+    rec = faulty_recovery(w, ["lost", "lost"], recs)
+
+    async def body():
+        assert await rec.clear_landing()
+        # the cleanup deadline has passed by the second stop: no follow-up request
+        return await rec.landing_descent(1.5, ground_m=0.0, deadline_s=w.t + 5)
+    assert run(w, body) == "stuck"
+    assert rec.landing is None and rec.landing_validity_left_s() is None
+    assert w.d["D1"]["alt"] > 100                            # it did not keep descending
+    assert any(r.state == State.KEEP_OUT for r in w.mgr.reservations.values())
+
+
+def test_no_landing_descent_without_an_active_landing_reservation():
+    w, recs = landing_world(), []
+    rec = faulty_recovery(w, [], recs)
+
+    async def body():
+        return await rec.landing_descent(1.5, ground_m=0.0, deadline_s=w.t + 60)
+    assert run(w, body) == "not_cleared"
+    assert rec.flight.calls == 0 and w.d["D1"]["alt"] == pytest.approx(160)
