@@ -263,5 +263,6 @@ atal/
 legacy/                       code from before the search and rescue work; atal/ never imports it
 tests/                        one folder per atal/ folder, plus architecture/; shared fakes at the top
 tools/reference_cases.py      offline reference runs used to check the restructuring
+tools/live_alt_report.py      live altitude-hold comparison of run batches (follower traces, separation, landings)
 search_and_rescue_stack.py    Sam's SAR prototype (only its imports are ever edited)
 ```
